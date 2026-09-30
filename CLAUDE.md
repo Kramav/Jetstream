@@ -87,6 +87,9 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> --noesis <exe>` and from the app's Run button.
 
+**Status: M1 complete (2026-09-30).** All three criteria below are met; the user confirmed the tool-built mod
+works end to end.
+
 Done when:
 - The graph runs from both the app and the CLI.
 - One RE4R loading-screen/UI texture mod built by the tool loads correctly in game via Fluffy.
@@ -222,8 +225,8 @@ Fill these in from the manual spike before implementing the affected code:
       the first real target is still to be chosen.
 - [ ] Does Fluffy accept a loose-file archive for RE4R, or is a REtool-built PAK needed?
       **Partial (spike 2026-09-30):** Fluffy *installs* a loose-file archive built by `remod package`.
-      The user states from modding experience that this loads in game. It hasn't yet been tested with a
-      tool-built texture; §4's done-criterion still needs that one in-game check.
+      **Confirmed working end to end with a tool-built mod (user, 2026-09-30).** Loose-file .zip is enough for
+      RE4R; no REtool PAK needed.
 - [ ] PAK file list source for the current game version.
 - [x] RE4R game version the spike was done on: Steam App ID 2050650, **Build ID 22377325** (spike 2026-09-30).
 - [ ] Does the RE4R `tex_suffix` (143221013) change across game updates?
