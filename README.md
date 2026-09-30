@@ -22,6 +22,12 @@ Neither is bundled (licensing); you point the tool at your `Noesis64.exe`.
 
 ## Build
 
+**Quick way:** double-click **`rebuild.bat`** in the repo root. It finds Visual Studio itself, configures on
+first use and builds. `rebuild.bat test` also runs the tests. Close `remod-app` first; the script
+stops and tells you if it's still open.
+
+**Manual way:**
+
 1. Open **Developer PowerShell for VS 2026** from the Start menu. A normal PowerShell window won't work,
    because the developer shell is what puts CMake and the compiler on PATH and sets `VCPKG_ROOT`.
 2. Go to the repo root (the folder containing `CMakePresets.json`) and build:
@@ -77,14 +83,17 @@ Otherwise fill in LoadTex's `game_path`.
 
 **From the app:**
 1. Start `build\app\remod-app.exe`.
-2. In the **Pipeline** panel, enter the graph file path, click **Load** (or build one: right-click the canvas
-   to add nodes, drag from an output pin to an input pin to link, Delete key removes), fill in the Noesis
-   path and click **Run**.
-3. The panel lists any problems (missing fields, unconnected inputs) and shows the run log.
-4. **Save** writes the graph, including node positions.
+2. In the **Pipeline** panel, pick a graph with the **`...`** button next to *Graph file* (this loads it),
+   or build one: right-click the canvas to add nodes, drag from an output pin to an input pin to link,
+   and press Delete to remove. Pick `Noesis64.exe` with its `...` button, then click **Run**.
+3. Every path field in a node has a **`...`** button that opens the Windows file or folder picker.
+4. The panel lists any problems (missing fields, unconnected inputs) and shows the run log.
+5. **Save** / **Save As...** write the graph, including node positions.
 
-The app looks for the `profiles` folder in the current folder, then next to and above the exe. From
-`build\app` it finds the repo's. Setting the `REMOD_NOESIS` environment variable pre-fills the Noesis path.
+The app remembers the graph file and Noesis paths between sessions in `%APPDATA%\remod\settings.json`.
+It writes that file only when you Load, Save or Run and a path changed.
+It looks for the `profiles` folder in the current folder, then next to and above the exe; from
+`build\app` it finds the repo's.
 
 **From the CLI** (normal PowerShell, repo root):
 

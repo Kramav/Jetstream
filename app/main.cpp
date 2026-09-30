@@ -3,7 +3,10 @@
 // Win32 + DX11 setup follows imgui/examples/example_win32_directx11 (v1.92.9-docking).
 #include "graph.hpp"
 #include "profile.hpp"
+#include "settings.hpp"
 #include "texture_converter.hpp"
+
+#include <nfd.h>
 
 #include <imgui.h>
 #include <imgui_internal.h>  // DockBuilder: fixed startup layout
@@ -152,9 +155,41 @@ std::string env(const char* name) {
     return s;
 }
 
+// Windows file/folder picker. Returns true and updates `value` if the user picked something.
+// ponytail: paths are treated as ASCII/ANSI like the rest of the app; non-ASCII paths need UTF-8 handling end to end.
+bool browse(remod::PathKind kind, const char* filter, std::string& value) {
+    std::string dir;
+    if (!value.empty()) {
+        std::error_code ec;
+        const std::filesystem::path p(value);
+        dir = (std::filesystem::is_directory(p, ec) ? p : p.parent_path()).string();
+        if (!std::filesystem::is_directory(dir, ec)) dir.clear();
+    }
+    const char* start = dir.empty() ? nullptr : dir.c_str();
+    const nfdu8filteritem_t item{"Files", filter};
+    const nfdu8filteritem_t* filters = filter ? &item : nullptr;
+    const nfdfiltersize_t count = filter ? 1 : 0;
+    const std::string name = value.empty() ? "" : std::filesystem::path(value).filename().string();
+
+    nfdu8char_t* out = nullptr;
+    nfdresult_t r = NFD_CANCEL;
+    switch (kind) {
+    case remod::PathKind::OpenFile: r = NFD_OpenDialogU8(&out, filters, count, start); break;
+    case remod::PathKind::SaveFile: r = NFD_SaveDialogU8(&out, filters, count, start, name.c_str()); break;
+    case remod::PathKind::Folder: r = NFD_PickFolderU8(&out, start); break;
+    case remod::PathKind::None: return false;
+    }
+    if (r != NFD_OKAY) return false;
+    value = out;
+    NFD_FreePathU8(out);
+    return true;
+}
+
 struct State {
-    std::string graph_path = "graph.json";
-    std::string noesis_path = env("REMOD_NOESIS");
+    const std::filesystem::path settings_file = remod::default_settings_path();
+    remod::Settings saved = remod::load_settings(settings_file);
+    std::string graph_path = saved.graph_path.empty() ? "graph.json" : saved.graph_path;
+    std::string noesis_path = saved.noesis_path.empty() ? env("REMOD_NOESIS") : saved.noesis_path;
     remod::Graph graph;
     std::string status = "New graph. Right-click the canvas to add nodes.";
     bool push_positions = false;  // after a load: move editor nodes to the positions in the file
@@ -164,6 +199,31 @@ struct State {
     std::mutex log_mutex;
     std::vector<std::string> log;  // written by the run thread
 };
+
+// Writes the settings file only when the paths changed.
+void remember_paths(State& s) {
+    const remod::Settings now{.graph_path = s.graph_path, .noesis_path = s.noesis_path};
+    if (now == s.saved || s.settings_file.empty()) return;
+    try {
+        remod::save_settings(now, s.settings_file);
+        s.saved = now;
+    } catch (const std::exception& e) {
+        s.status = std::string("Couldn't save settings: ") + e.what();
+    }
+}
+
+void load_graph_file(State& s) {
+    s.graph_path = unquote(s.graph_path);
+    try {
+        s.graph = remod::load_graph(s.graph_path);
+        s.push_positions = true;
+        s.status = "Loaded " + s.graph_path + ": " + std::to_string(s.graph.nodes.size()) + " nodes, " +
+                   std::to_string(s.graph.links.size()) + " links";
+        remember_paths(s);
+    } catch (const std::exception& e) {
+        s.status = std::string("Error: ") + e.what();
+    }
+}
 
 void start_run(State& s) {
     {
@@ -198,35 +258,37 @@ void poll_run(State& s) {
 
 void draw_side_panel(State& s) {
     ImGui::Begin("Pipeline");
-    ImGui::InputText("Graph file", &s.graph_path);
+    ImGui::InputText("##graph", &s.graph_path);
+    ImGui::SameLine();
+    if (ImGui::Button("...##graph") && browse(remod::PathKind::OpenFile, "json", s.graph_path)) load_graph_file(s);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Graph file");
     if (ImGui::Button("New")) {
         s.graph = {};
         s.status = "New graph. Right-click the canvas to add nodes.";
     }
     ImGui::SameLine();
-    if (ImGui::Button("Load")) {
-        s.graph_path = unquote(s.graph_path);
-        try {
-            s.graph = remod::load_graph(s.graph_path);
-            s.push_positions = true;
-            s.status = "Loaded " + s.graph_path + ": " + std::to_string(s.graph.nodes.size()) + " nodes, " +
-                       std::to_string(s.graph.links.size()) + " links";
-        } catch (const std::exception& e) {
-            s.status = std::string("Error: ") + e.what();
-        }
-    }
+    if (ImGui::Button("Load")) load_graph_file(s);
     ImGui::SameLine();
     if (ImGui::Button("Save")) {
         s.graph_path = unquote(s.graph_path);
         s.save_requested = true;
     }
+    ImGui::SameLine();
+    if (ImGui::Button("Save As...") && browse(remod::PathKind::SaveFile, "json", s.graph_path))
+        s.save_requested = true;
 
-    ImGui::InputText("Noesis64.exe", &s.noesis_path);
+    ImGui::InputText("##noesis", &s.noesis_path);
+    ImGui::SameLine();
+    if (ImGui::Button("...##noesis")) browse(remod::PathKind::OpenFile, "exe", s.noesis_path);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Noesis64.exe");
     const bool running = s.run.valid();
     ImGui::BeginDisabled(running);
     if (ImGui::Button(running ? "Running..." : "Run")) {
         s.graph_path = unquote(s.graph_path);
         s.noesis_path = unquote(s.noesis_path);
+        remember_paths(s);
         start_run(s);
     }
     ImGui::EndDisabled();
@@ -270,8 +332,16 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         ImGui::TextUnformatted(n.type.c_str());
         if (spec) {
             for (const auto& p : spec->params) {
+                ImGui::PushID(p.name);
                 ImGui::SetNextItemWidth(field_width);
-                ImGui::InputText(p.required ? (std::string(p.name) + " *").c_str() : p.name, &n.params[p.name]);
+                ImGui::InputText("##v", &n.params[p.name]);
+                if (p.path != remod::PathKind::None) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("...")) browse(p.path, p.filter, n.params[p.name]);
+                }
+                ImGui::SameLine();
+                ImGui::TextUnformatted(p.required ? (std::string(p.name) + " *").c_str() : p.name);
+                ImGui::PopID();
             }
             for (size_t i = 0; i < spec->inputs.size(); ++i) {
                 ed::BeginPin(pin_id(n.id, false, i), ed::PinKind::Input);
@@ -364,6 +434,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         try {
             remod::save_graph(s.graph, s.graph_path);
             s.status = "Saved " + s.graph_path;
+            remember_paths(s);
         } catch (const std::exception& e) {
             s.status = std::string("Error: ") + e.what();
         }
@@ -406,7 +477,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ed::Config config;
     config.SettingsFile = nullptr;  // positions are saved in the graph file instead of NodeEditor.json
     ed::EditorContext* editor = ed::CreateEditor(&config);
+    const bool nfd_ok = NFD_Init() == NFD_OKAY;  // pickers just won't open if this fails
     State state;
+    if (!nfd_ok) state.status = std::string("File picker unavailable: ") + NFD_GetError();
 
     for (bool done = false; !done;) {
         MSG msg;
@@ -460,6 +533,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     }
 
     if (state.run.valid()) state.run.wait();  // let a running graph finish (every tool call has a timeout)
+    remember_paths(state);
+    if (nfd_ok) NFD_Quit();
     ed::DestroyEditor(editor);
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

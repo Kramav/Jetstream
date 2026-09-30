@@ -36,8 +36,8 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
     Dear ImGui 1.92.9 docking (MIT), imgui-node-editor 0.9.3#4 (MIT; upstream lightly maintained,
     last tag Oct 2023, vcpkg patches it for ImGui 1.92). Issue #230's fix (#205, commit 3fdb8e3) is in v0.9.3.
   - **Adopted for the graph file:** nlohmann/json 3.12.0#2 (MIT), core-private.
-  - **Verified, deferred until needed:** nativefiledialog-extended 1.4.0 (Zlib; add with the first file dialog).
-    GoogleTest not used.
+  - **Adopted for the app's file pickers:** nativefiledialog-extended 1.4.0 (Zlib), app-only (never in core).
+  - GoogleTest verified but not used.
 - Build (Developer PowerShell for VS 2026, which sets `VCPKG_ROOT`):
   `cmake --preset default` → `cmake --build build` → `ctest --test-dir build --output-on-failure`
 - Long-term polished UI: undecided. Keep the core-to-UI boundary clean so it can be swapped.

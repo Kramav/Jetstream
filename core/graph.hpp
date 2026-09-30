@@ -25,10 +25,15 @@ struct PortSpec {
     const char* name;
     PortType type;
 };
+// Which picker a front end should offer for a parameter.
+enum class PathKind { None, OpenFile, SaveFile, Folder };
+
 struct ParamSpec {
     const char* name;
     bool required;
     const char* hint;
+    PathKind path = PathKind::None;
+    const char* filter = nullptr;  // extensions for file pickers, e.g. "png,jpg"; nullptr = all files
 };
 struct NodeSpec {
     const char* type;
