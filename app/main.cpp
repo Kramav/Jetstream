@@ -6,6 +6,7 @@
 #include "texture_converter.hpp"
 
 #include <imgui.h>
+#include <imgui_internal.h>  // DockBuilder: fixed startup layout
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 #include <imgui_stdlib.h>
@@ -135,6 +136,13 @@ std::optional<remod::Link> make_link(const remod::Graph& g, ed::PinId a, ed::Pin
     return remod::Link{from.node, fs->outputs[from.slot].name, to.node, ts->inputs[to.slot].name};
 }
 
+// Explorer's "Copy as path" wraps paths in quotes.
+std::string unquote(std::string s) {
+    while (!s.empty() && (s.front() == '"' || s.front() == ' ')) s.erase(s.begin());
+    while (!s.empty() && (s.back() == '"' || s.back() == ' ')) s.pop_back();
+    return s;
+}
+
 std::string env(const char* name) {
     char* v = nullptr;
     size_t n = 0;
@@ -197,21 +205,30 @@ void draw_side_panel(State& s) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Load")) {
+        s.graph_path = unquote(s.graph_path);
         try {
             s.graph = remod::load_graph(s.graph_path);
             s.push_positions = true;
-            s.status = "Loaded " + s.graph_path;
+            s.status = "Loaded " + s.graph_path + ": " + std::to_string(s.graph.nodes.size()) + " nodes, " +
+                       std::to_string(s.graph.links.size()) + " links";
         } catch (const std::exception& e) {
             s.status = std::string("Error: ") + e.what();
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Save")) s.save_requested = true;
+    if (ImGui::Button("Save")) {
+        s.graph_path = unquote(s.graph_path);
+        s.save_requested = true;
+    }
 
     ImGui::InputText("Noesis64.exe", &s.noesis_path);
     const bool running = s.run.valid();
     ImGui::BeginDisabled(running);
-    if (ImGui::Button(running ? "Running..." : "Run")) start_run(s);
+    if (ImGui::Button(running ? "Running..." : "Run")) {
+        s.graph_path = unquote(s.graph_path);
+        s.noesis_path = unquote(s.noesis_path);
+        start_run(s);
+    }
     ImGui::EndDisabled();
 
     ImGui::Separator();
@@ -418,7 +435,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         ImGui::NewFrame();
 
         poll_run(state);
-        ImGui::DockSpaceOverViewport();
+        const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
+        static bool layout_done = false;
+        if (!layout_done) {  // Pipeline on the left, Graph filling the rest
+            layout_done = true;
+            ImGui::DockBuilderRemoveNode(dockspace);
+            ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->Size);
+            ImGuiID left = 0, right = 0;
+            ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Left, 0.3f, &left, &right);
+            ImGui::DockBuilderDockWindow("Pipeline", left);
+            ImGui::DockBuilderDockWindow("Graph", right);
+            ImGui::DockBuilderFinish(dockspace);
+        }
         draw_side_panel(state);
         draw_canvas(state, editor);
 
