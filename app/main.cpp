@@ -8,16 +8,21 @@
 
 #include <nfd.h>
 
+#define IMGUI_DEFINE_MATH_OPERATORS  // required by the node editor's internal header
 #include <imgui.h>
-#include <imgui_internal.h>  // DockBuilder: fixed startup layout
+#include <imgui_internal.h>  // DockBuilder (startup layout), SetFontRasterizerDensity (sharp zoomed text)
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 #include <imgui_stdlib.h>
 #include <imgui-node-editor/imgui_node_editor.h>
+// ponytail: internal API (pinned 0.9.3) for a fit-to-content that doesn't zoom in; the public
+// NavigateToContent always fills the view.
+#include <imgui-node-editor/imgui_node_editor_internal.h>
 
 #include <d3d11.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <future>
 #include <mutex>
@@ -166,7 +171,7 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value) {
         if (!std::filesystem::is_directory(dir, ec)) dir.clear();
     }
     const char* start = dir.empty() ? nullptr : dir.c_str();
-    const nfdu8filteritem_t item{"Files", filter};
+    const nfdu8filteritem_t item{kind == remod::PathKind::OpenTexture ? "RE Engine textures" : "Files", filter};
     const nfdu8filteritem_t* filters = filter ? &item : nullptr;
     const nfdfiltersize_t count = filter ? 1 : 0;
     const std::string name = value.empty() ? "" : std::filesystem::path(value).filename().string();
@@ -174,7 +179,8 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value) {
     nfdu8char_t* out = nullptr;
     nfdresult_t r = NFD_CANCEL;
     switch (kind) {
-    case remod::PathKind::OpenFile: r = NFD_OpenDialogU8(&out, filters, count, start); break;
+    case remod::PathKind::OpenFile:
+    case remod::PathKind::OpenTexture: r = NFD_OpenDialogU8(&out, filters, count, start); break;
     case remod::PathKind::SaveFile: r = NFD_SaveDialogU8(&out, filters, count, start, name.c_str()); break;
     case remod::PathKind::Folder: r = NFD_PickFolderU8(&out, start); break;
     case remod::PathKind::None: return false;
@@ -182,6 +188,9 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value) {
     if (r != NFD_OKAY) return false;
     value = out;
     NFD_FreePathU8(out);
+    // A name typed without an extension in the save dialog gets the filter's first one.
+    if (kind == remod::PathKind::SaveFile && filter && std::filesystem::path(value).extension().empty())
+        value += "." + std::string(filter).substr(0, std::string(filter).find(','));
     return true;
 }
 
@@ -190,6 +199,15 @@ struct State {
     remod::Settings saved = remod::load_settings(settings_file);
     std::string graph_path = saved.graph_path.empty() ? "graph.json" : saved.graph_path;
     std::string noesis_path = saved.noesis_path.empty() ? env("REMOD_NOESIS") : saved.noesis_path;
+    bool show_help = saved.show_help;
+    std::vector<std::string> profile_errors;
+    const std::vector<remod::Profile> profiles = remod::load_profiles(remod::find_profiles_dir(), &profile_errors);
+    // Picker filter for textures of every known game: "tex,143221013,..." (plain .tex and each version suffix).
+    const std::string texture_filter = [this] {
+        std::string f = "tex";
+        for (const auto& p : profiles) f += "," + p.tex_suffix;
+        return f;
+    }();
     remod::Graph graph;
     std::string status = "New graph. Right-click the canvas to add nodes.";
     bool push_positions = false;  // after a load: move editor nodes to the positions in the file
@@ -200,9 +218,22 @@ struct State {
     std::vector<std::string> log;  // written by the run thread
 };
 
-// Writes the settings file only when the paths changed.
+// After a texture is picked: switch the graph to that texture's game, or say why not.
+void detect_game(State& s, const std::string& texture) {
+    if (const remod::Profile* p = remod::profile_for_texture(texture, s.profiles)) {
+        s.graph.profile = p->id;
+        s.status = "Detected a " + p->name + " texture.";
+    } else if (const auto version = remod::read_tex_version(texture)) {
+        s.status = "This is an RE Engine texture of version " + std::to_string(*version) +
+                   ", but no game profile uses that version yet. Add one to the profiles folder.";
+    } else {
+        s.status = "That file isn't an RE Engine texture.";
+    }
+}
+
+// Writes the settings file only when something changed.
 void remember_paths(State& s) {
-    const remod::Settings now{.graph_path = s.graph_path, .noesis_path = s.noesis_path};
+    const remod::Settings now{.graph_path = s.graph_path, .noesis_path = s.noesis_path, .show_help = s.show_help};
     if (now == s.saved || s.settings_file.empty()) return;
     try {
         remod::save_settings(now, s.settings_file);
@@ -258,6 +289,16 @@ void poll_run(State& s) {
 
 void draw_side_panel(State& s) {
     ImGui::Begin("Pipeline");
+    if (ImGui::Checkbox("Show help", &s.show_help)) remember_paths(s);
+    if (s.show_help) {
+        ImGui::TextWrapped("1. Original texture: pick the game's .tex file.");
+        ImGui::TextWrapped("2. Export PNG for editing: the first Run writes the PNG and stops.");
+        ImGui::TextWrapped("3. Edit the PNG in any image editor. Keep the same size.");
+        ImGui::TextWrapped("4. Run again: Convert PNG to texture and Package for Fluffy build the mod .zip.");
+        ImGui::TextDisabled("Right-click the canvas to add nodes. Drag from a pin to a pin to link.");
+        ImGui::TextDisabled("Delete removes the selection. Mouse wheel zooms. Hover a field for help.");
+        ImGui::Separator();
+    }
     ImGui::InputText("##graph", &s.graph_path);
     ImGui::SameLine();
     if (ImGui::Button("...##graph") && browse(remod::PathKind::OpenFile, "json", s.graph_path)) load_graph_file(s);
@@ -277,12 +318,25 @@ void draw_side_panel(State& s) {
     ImGui::SameLine();
     if (ImGui::Button("Save As...") && browse(remod::PathKind::SaveFile, "json", s.graph_path))
         s.save_requested = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Fit view")) s.navigate = true;
 
     ImGui::InputText("##noesis", &s.noesis_path);
     ImGui::SameLine();
     if (ImGui::Button("...##noesis")) browse(remod::PathKind::OpenFile, "exe", s.noesis_path);
     ImGui::SameLine();
     ImGui::TextUnformatted("Noesis64.exe");
+
+    // Which game (profile) the graph targets. Picking a texture sets this automatically.
+    const auto current = std::ranges::find(s.profiles, s.graph.profile, &remod::Profile::id);
+    if (ImGui::BeginCombo("Game", current != s.profiles.end() ? current->name.c_str() : s.graph.profile.c_str())) {
+        for (const auto& p : s.profiles)
+            if (ImGui::Selectable(p.name.c_str(), p.id == s.graph.profile)) s.graph.profile = p.id;
+        ImGui::EndCombo();
+    }
+    if (current == s.profiles.end())
+        ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "No profile '%s' in the profiles folder.", s.graph.profile.c_str());
+    for (const auto& e : s.profile_errors) ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", e.c_str());
     const bool running = s.run.valid();
     ImGui::BeginDisabled(running);
     if (ImGui::Button(running ? "Running..." : "Run")) {
@@ -310,54 +364,131 @@ void draw_side_panel(State& s) {
     ImGui::End();
 }
 
+// Pin colour by data type, so it's visible what can plug into what.
+ImU32 port_color(remod::PortType type) {
+    return type == remod::PortType::Tex ? IM_COL32(235, 150, 60, 255) : IM_COL32(90, 200, 110, 255);
+}
+
+// One pin row: a small circle on the node border (links attach to its centre, drags start from it) and the
+// label inside the node, left-aligned for inputs and right-aligned for outputs. Filled once connected.
+void draw_pin(ed::PinId id, const remod::PortSpec& port, bool output, bool connected, float x0, float node_width,
+              float edge_x) {
+    ed::BeginPin(id, output ? ed::PinKind::Output : ed::PinKind::Input);
+    if (output) ImGui::SetCursorPosX(x0 + node_width - ImGui::CalcTextSize(port.label).x);
+    const float y = ImGui::GetCursorScreenPos().y + ImGui::GetTextLineHeight() * 0.5f;
+    ImGui::TextUnformatted(port.label);
+
+    const ImVec2 center(edge_x, y);
+    const float r = ImGui::GetFontSize() * 0.3f;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    if (connected)
+        draw->AddCircleFilled(center, r, port_color(port.type));
+    else
+        draw->AddCircle(center, r, port_color(port.type), 0, 2.0f);
+    ed::PinPivotRect(center, center);
+    ed::PinRect(center - ImVec2(r * 2, r * 2), center + ImVec2(r * 2, r * 2));
+    ed::EndPin();
+}
+
+// Frames the graph without magnifying it. Zoom = fit-to-view, capped at kMaxFitZoom (above 100% text gets
+// big and soft) and floored at kMinFitZoom so a wide graph stays readable; when floored, the view starts at
+// the graph's left edge (where the pipeline begins) instead of its centre.
+// The editor adds ~10% margin on top, so on screen these come out at roughly 90% and 55%.
+constexpr float kMaxFitZoom = 1.0f, kMinFitZoom = 0.6f;
+
+void fit_view(ed::EditorContext* editor, ImVec2 view) {
+    auto* ctx = reinterpret_cast<ed::Detail::EditorContext*>(editor);
+    const ImRect content = ctx->GetContentBounds();
+    if (content.GetWidth() <= 0 || content.GetHeight() <= 0 || view.x <= 0 || view.y <= 0) return;
+    const float fit = ImMin(view.x / content.GetWidth(), view.y / content.GetHeight());
+    const float zoom = ImClamp(fit, kMinFitZoom, kMaxFitZoom);
+    const ImVec2 size = view / zoom;
+    const ImVec2 min = zoom > fit ? content.Min : content.GetCenter() - size * 0.5f;
+    ctx->NavigateTo(ImRect(min, min + size), true, 0.0f);
+}
+
 void draw_canvas(State& s, ed::EditorContext* editor) {
     ImGui::Begin("Graph");
+    const ImVec2 view_size = ImGui::GetContentRegionAvail();
     ed::SetCurrentEditor(editor);
     ed::Begin("canvas");
+
+    // Rasterize node text at the on-screen zoom so it stays sharp when zoomed. Quantized to 1/8 steps so the
+    // font cache doesn't get a new size every frame of a zoom animation.
+    const float zoom = reinterpret_cast<ed::Detail::EditorContext*>(editor)->GetView().Scale;
+    const float old_density = ImGui::GetFontRasterizerDensity();
+    ImGui::SetFontRasterizerDensity(old_density * ImClamp(std::round(zoom * 8.0f) / 8.0f, 0.25f, 4.0f));
 
     if (s.push_positions) {
         for (const auto& n : s.graph.nodes) ed::SetNodePosition(n.id, ImVec2(n.x, n.y));
         s.push_positions = false;
         s.navigate = true;
     } else if (s.navigate) {  // one frame later, once node sizes are known
-        ed::NavigateToContent(0.0f);
+        fit_view(editor, view_size);
         s.navigate = false;
     }
 
-    const float field_width = ImGui::GetFontSize() * 16;
+    const float font = ImGui::GetFontSize();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float label_width = font * 7, field_width = font * 14;
+    const float button_width = ImGui::CalcTextSize("...").x + style.FramePadding.x * 2;
+    const float node_width = label_width + field_width + style.ItemSpacing.x + button_width;  // content width
+    const ImVec4 padding = ed::GetStyle().NodePadding;  // x = left, z = right
+    const char* hovered_hint = nullptr;  // tooltip drawn after the nodes, outside the canvas transform
     for (auto& n : s.graph.nodes) {
         const remod::NodeSpec* spec = remod::find_spec(n.type);
         ed::BeginNode(n.id);
         ImGui::PushID(n.id);
-        ImGui::TextUnformatted(n.type.c_str());
-        if (spec) {
+        const float x0 = ImGui::GetCursorPosX();
+        const float left_edge = ImGui::GetCursorScreenPos().x - padding.x;  // node border, where pins sit
+        const float right_edge = ImGui::GetCursorScreenPos().x + node_width + padding.z;
+        if (!spec) {
+            ImGui::Text("%s (unknown node type)", n.type.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1, 1), "%s", spec->title);
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", n.type.c_str());
+            ImGui::PushTextWrapPos(x0 + node_width);
+            ImGui::TextDisabled("%s", spec->summary);
+            ImGui::PopTextWrapPos();
+
             for (const auto& p : spec->params) {
                 ImGui::PushID(p.name);
+                ImGui::TextUnformatted(p.required ? (std::string(p.label) + " *").c_str() : p.label);
+                if (ImGui::IsItemHovered()) hovered_hint = p.hint;
+                // Not SameLine(x): inside a node (an ImGui group) that offset is group-relative, so x0 would be
+                // counted twice and nodes would widen with their canvas position.
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(x0 + label_width);
                 ImGui::SetNextItemWidth(field_width);
                 ImGui::InputText("##v", &n.params[p.name]);
+                if (ImGui::IsItemHovered()) hovered_hint = p.hint;
                 if (p.path != remod::PathKind::None) {
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("...")) browse(p.path, p.filter, n.params[p.name]);
+                    const bool texture = p.path == remod::PathKind::OpenTexture;
+                    if (ImGui::SmallButton("...") &&
+                        browse(p.path, texture ? s.texture_filter.c_str() : p.filter, n.params[p.name]) && texture)
+                        detect_game(s, n.params[p.name]);
+                    if (ImGui::IsItemHovered()) hovered_hint = "Browse...";
                 }
-                ImGui::SameLine();
-                ImGui::TextUnformatted(p.required ? (std::string(p.name) + " *").c_str() : p.name);
                 ImGui::PopID();
             }
-            for (size_t i = 0; i < spec->inputs.size(); ++i) {
-                ed::BeginPin(pin_id(n.id, false, i), ed::PinKind::Input);
-                ImGui::Text("> %s", spec->inputs[i].name);
-                ed::EndPin();
-            }
-            for (size_t i = 0; i < spec->outputs.size(); ++i) {
-                ed::BeginPin(pin_id(n.id, true, i), ed::PinKind::Output);
-                ImGui::Text("%s >", spec->outputs[i].name);
-                ed::EndPin();
-            }
-        } else {
-            ImGui::TextUnformatted("(unknown node type)");
+            for (size_t i = 0; i < spec->inputs.size(); ++i)
+                draw_pin(pin_id(n.id, false, i), spec->inputs[i], false,
+                         s.graph.is_connected(n.id, spec->inputs[i].name, false), x0, node_width, left_edge);
+            for (size_t i = 0; i < spec->outputs.size(); ++i)
+                draw_pin(pin_id(n.id, true, i), spec->outputs[i], true,
+                         s.graph.is_connected(n.id, spec->outputs[i].name, true), x0, node_width, right_edge);
         }
+        ImGui::Dummy(ImVec2(node_width, 0));  // fixes the node width so the right border (and its pins) line up
         ImGui::PopID();
         ed::EndNode();
+    }
+    ImGui::SetFontRasterizerDensity(old_density);  // tooltips and menus below are drawn unzoomed
+    if (hovered_hint) {
+        ed::Suspend();
+        ImGui::SetTooltip("%s", hovered_hint);
+        ed::Resume();
     }
 
     for (size_t i = 0; i < s.graph.links.size(); ++i) {
@@ -367,8 +498,9 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         const remod::NodeSpec* fs = from ? remod::find_spec(from->type) : nullptr;
         const remod::NodeSpec* ts = to ? remod::find_spec(to->type) : nullptr;
         if (!fs || !ts) continue;
-        ed::Link(kLinkBase + i, pin_id(l.from_node, true, slot_of(fs->outputs, l.from_port)),
-                 pin_id(l.to_node, false, slot_of(ts->inputs, l.to_port)));
+        const size_t out_slot = slot_of(fs->outputs, l.from_port);
+        ed::Link(kLinkBase + i, pin_id(l.from_node, true, out_slot), pin_id(l.to_node, false, slot_of(ts->inputs, l.to_port)),
+                 ImGui::ColorConvertU32ToFloat4(port_color(fs->outputs[out_slot].type)), 2.0f);
     }
 
     // Dragging a new link: core decides whether it's allowed.
@@ -477,8 +609,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ed::Config config;
     config.SettingsFile = nullptr;  // positions are saved in the graph file instead of NodeEditor.json
     ed::EditorContext* editor = ed::CreateEditor(&config);
+    ed::SetCurrentEditor(editor);
+    ed::GetStyle().LinkStrength = 0.0f;  // straight links; ponytail: restore curves (default 100) later
+    ed::SetCurrentEditor(nullptr);
     const bool nfd_ok = NFD_Init() == NFD_OKAY;  // pickers just won't open if this fails
     State state;
+    if (std::error_code ec; !state.saved.graph_path.empty() && std::filesystem::is_regular_file(state.graph_path, ec))
+        load_graph_file(state);  // reopen the last graph, fitted to the view
     if (!nfd_ok) state.status = std::string("File picker unavailable: ") + NFD_GetError();
 
     for (bool done = false; !done;) {

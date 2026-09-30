@@ -8,6 +8,7 @@ namespace remod {
 struct Settings {
     std::string graph_path;
     std::string noesis_path;
+    bool show_help = true;
     bool operator==(const Settings&) const = default;
 };
 

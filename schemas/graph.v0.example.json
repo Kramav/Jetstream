@@ -15,13 +15,13 @@
       "id": 2,
       "type": "ExportImage",
       "params": { "png": "my_texture.png" },
-      "pos": [320, 0]
+      "pos": [450, 0]
     },
     {
       "id": 3,
       "type": "SaveTex",
       "params": {},
-      "pos": [640, 0]
+      "pos": [900, 0]
     },
     {
       "id": 4,
@@ -34,7 +34,7 @@
         "description": "",
         "screenshot": ""
       },
-      "pos": [960, 0]
+      "pos": [1350, 0]
     }
   ],
   "links": [

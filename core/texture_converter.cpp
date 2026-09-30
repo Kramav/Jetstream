@@ -3,6 +3,7 @@
 #include "process.hpp"
 
 #include <array>
+#include <cctype>
 #include <fstream>
 #include <map>
 #include <random>
@@ -71,6 +72,22 @@ void require_absent(const fs::path& out) {
 
 }  // namespace
 
+std::optional<std::uint32_t> read_tex_version(const fs::path& tex) {
+    std::error_code ec;
+    if (!fs::is_regular_file(tex, ec)) return std::nullopt;
+    const std::string b = read_prefix(tex, 8);
+    if (b.size() < 8 || le32(b, 0) != 0x00584554) return std::nullopt;  // "TEX\0"
+    return le32(b, 4);
+}
+
+const Profile* profile_for_texture(const fs::path& tex, const std::vector<Profile>& profiles) {
+    const auto version = read_tex_version(tex);
+    if (!version) return nullptr;
+    for (const auto& p : profiles)
+        if (p.tex_suffix == std::to_string(*version)) return &p;
+    return nullptr;
+}
+
 TexMeta read_tex_meta(const fs::path& tex, const Profile& profile) {
     // [plugin source] magic@0 "TEX\0", version@4, width@8, height@10, images@14, mip header bytes@15 (16 per mip),
     // DXGI format@16. ponytail: this is the layout for tex versions > 27 (RE4R); other games need the plugin's
@@ -79,8 +96,9 @@ TexMeta read_tex_meta(const fs::path& tex, const Profile& profile) {
     if (b.size() < 20 || le32(b, 0) != 0x00584554)
         throw ConvertError(tex.string() + " is not an RE Engine .tex file");
     if (std::to_string(le32(b, 4)) != profile.tex_suffix)
-        throw ConvertError(tex.string() + ": tex version " + std::to_string(le32(b, 4)) + " does not match profile " +
-                           profile.id + " (expected " + profile.tex_suffix + ")");
+        throw ConvertError(tex.string() + " is an RE Engine texture of version " + std::to_string(le32(b, 4)) +
+                           ", but the graph's game is " + profile.name + " (version " + profile.tex_suffix +
+                           "). Pick the matching game, or a texture from " + profile.name + ".");
     TexMeta m;
     m.game_profile = profile.id;
     m.width = le16(b, 8);
@@ -103,15 +121,51 @@ NoesisConverter::NoesisConverter(fs::path noesis_exe, std::chrono::milliseconds 
     if (!fs::is_regular_file(exe_)) throw ConvertError("Noesis not found: " + exe_.string());
 }
 
-// Noesis writes its messages straight to the console, not to stdout/stderr, so they can't be captured
-// (CLAUDE.md §9), and it exits 0 even when a conversion fails. Success is judged only from the output file.
+// Noesis exits 0 even when a conversion fails, and its console text never reaches stdout/stderr (CLAUDE.md §9).
+// So success is judged from the output file, and its messages are collected with -logfile to explain failures.
+namespace {
+
+std::string noesis_said(const fs::path& log) {
+    std::ifstream in(log);
+    std::string text, line;
+    while (std::getline(in, line) && text.size() < 2000)
+        if (!line.empty()) text += "\n  " + line;
+    return text.empty() ? " (Noesis gave no reason)" : " Noesis said:" + text;
+}
+
+}  // namespace
+
+ProcessResult NoesisConverter::run(std::vector<std::wstring> args, const fs::path& log) const {
+    args.push_back(L"-logfile");
+    args.push_back(log.wstring());
+    try {
+        // private desktop: plugin errors open MessageBoxes (CLAUDE.md §9).
+        // PYTHONIOENCODING: without it Noesis's embedded Python fails to start when its output is piped (as here)
+        // and the parent environment doesn't already set it (e.g. the app launched from Explorer). The plugins
+        // then never load and every RE texture is "Detected file type: Unknown" (CLAUDE.md §9).
+        return run_process(exe_, args, timeout_, /*private_desktop=*/true, {{L"PYTHONIOENCODING", L"utf-8"}});
+    } catch (const ProcessError& e) {  // a dialog or a timeout: add what Noesis logged before it stopped
+        throw ConvertError(std::string(e.what()) + noesis_said(log));
+    }
+}
+
 TexMeta NoesisConverter::load_tex(const fs::path& tex, const fs::path& png_out, const Profile& profile) {
     const TexMeta meta = read_tex_meta(tex, profile);
+    // Noesis picks the output format from the extension; without ".png" it silently writes "<name>.png".
+    std::string ext = png_out.extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext != ".png") throw ConvertError("PNG output path must end in .png: " + png_out.string());
     require_absent(png_out);
-    const auto r = run_process(exe_, {L"?cmode", tex.wstring(), png_out.wstring()}, timeout_);
+    TempDir tmp;
+    const fs::path log = tmp.path / "noesis.log";
+    // Noesis picks its reader by extension (".143221013" -> the plugin's RE texture reader), so a copy named
+    // "src.tex.<version>" makes any file name work: plain ".tex", renamed files, etc.
+    const fs::path src = tmp.path / ("src.tex." + profile.tex_suffix);
+    fs::copy_file(tex, src);
+    const auto r = run({L"?cmode", src.wstring(), png_out.wstring()}, log);
     if (r.exit_code != 0 || !fs::is_regular_file(png_out))
-        throw ConvertError("Noesis failed to convert " + tex.string() + " to PNG (exit " +
-                           std::to_string(r.exit_code) + ")");
+        throw ConvertError("Noesis couldn't convert " + tex.string() + " to " + png_out.string() + " (exit " +
+                           std::to_string(r.exit_code) + ")." + noesis_said(log));
     if (png_size(png_out) != std::pair{meta.width, meta.height}) {
         fs::remove(png_out);
         throw ConvertError("Noesis wrote a PNG whose size differs from the .tex (" + describe(meta) + ")");
@@ -144,10 +198,11 @@ TexMeta NoesisConverter::save_tex(const fs::path& png, const fs::path& original_
     std::vector<std::wstring> args{L"?cmode", edit.wstring(), out.wstring()};
     std::istringstream options(profile.noesis_export);  // e.g. "-b" for RE4R
     for (std::string opt; options >> opt;) args.emplace_back(opt.begin(), opt.end());
-    const auto r = run_process(exe_, args, timeout_);
+    const fs::path log = tmp.path / "noesis.log";
+    const auto r = run(args, log);
     if (r.exit_code != 0 || !fs::is_regular_file(out))
-        throw ConvertError("Noesis failed to convert " + png.string() + " to .tex (exit " +
-                           std::to_string(r.exit_code) + ")");
+        throw ConvertError("Noesis couldn't convert " + png.string() + " to a texture (exit " +
+                           std::to_string(r.exit_code) + ")." + noesis_said(log));
     const TexMeta result = read_tex_meta(out, profile);
     if (!same_texture(result, original))
         throw ConvertError("Noesis output does not match the original: got " + describe(result) + ", expected " +

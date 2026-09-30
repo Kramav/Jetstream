@@ -58,13 +58,48 @@ TEST_CASE("read_tex_meta reads the header fields") {
 TEST_CASE("read_tex_meta rejects non-tex files and other tex versions") {
     TempDir tmp;
     CHECK_THROWS_WITH(remod::read_tex_meta(fake_tex(tmp.path, 36, 4, 4, 1, 1, 99), re4r()),
-                      ContainsSubstring("does not match profile re4r"));
+                      ContainsSubstring("version 36") && ContainsSubstring("Resident Evil 4 (2023)"));
     const fs::path junk = tmp.path / "junk.tex.143221013";
     std::ofstream(junk) << "not a texture at all, just text";
     CHECK_THROWS_WITH(remod::read_tex_meta(junk, re4r()), ContainsSubstring("not an RE Engine .tex"));
     std::ofstream(tmp.path / "short.tex.143221013") << "TEX";
     CHECK_THROWS_AS(remod::read_tex_meta(tmp.path / "short.tex.143221013", re4r()), ConvertError);
     CHECK_THROWS_AS(remod::read_tex_meta(tmp.path / "missing.tex.143221013", re4r()), ConvertError);
+}
+
+TEST_CASE("textures are recognised by content, whatever their name") {
+    TempDir tmp;
+    const fs::path re4 = tmp.path / "plain name.tex";  // no version suffix in the name
+    test::write_fake_tex(re4, 143221013, 64, 64, 1, 5, 99);
+    const fs::path other = tmp.path / "other.tex.36";
+    test::write_fake_tex(other, 36, 64, 64, 1, 5, 99);
+    test::write_file(tmp.path / "junk.tex", "definitely not a texture");
+
+    CHECK(remod::read_tex_version(re4) == 143221013u);
+    CHECK(remod::read_tex_version(other) == 36u);
+    CHECK_FALSE(remod::read_tex_version(tmp.path / "junk.tex"));
+    CHECK_FALSE(remod::read_tex_version(tmp.path / "missing.tex"));
+
+    const std::vector<remod::Profile> profiles{re4r()};
+    CHECK(remod::profile_for_texture(re4, profiles) == &profiles[0]);
+    CHECK(remod::profile_for_texture(other, profiles) == nullptr);
+    CHECK_THROWS_WITH(remod::read_tex_meta(other, re4r()), ContainsSubstring("version 36"));
+    CHECK(remod::read_tex_meta(re4, re4r()).width == 64);
+}
+
+TEST_CASE("load_profiles lists every valid profile and reports broken ones") {
+    CHECK(std::ranges::count(remod::load_profiles(REMOD_PROFILES_DIR), std::string("re4r"), &remod::Profile::id) == 1);
+
+    TempDir tmp;
+    fs::copy_file(REMOD_PROFILES_DIR "/re4r.toml", tmp.path / "re4r.toml");
+    test::write_file(tmp.path / "broken.toml", "[game]\nid = \"x\"\n");
+    test::write_file(tmp.path / "notes.txt", "ignored");
+    std::vector<std::string> errors;
+    const auto profiles = remod::load_profiles(tmp.path, &errors);
+    REQUIRE(profiles.size() == 1);
+    CHECK(profiles[0].id == "re4r");
+    REQUIRE(errors.size() == 1);
+    CHECK_THAT(errors[0], ContainsSubstring("'name' must be a non-empty string"));
 }
 
 TEST_CASE("png_size reads IHDR") {
@@ -87,12 +122,31 @@ TEST_CASE("NoesisConverter checks inputs before running Noesis") {
                                     tmp.path / "o.tex.143221013", re4r()),
                       ContainsSubstring("multi-image"));
     CHECK_THROWS_WITH(conv.save_tex(fake_png(tmp.path, 64, 64), tex, tex, re4r()), ContainsSubstring("already exists"));
-    CHECK_THROWS_WITH(conv.load_tex(tex, tex, re4r()), ContainsSubstring("already exists"));
+    CHECK_THROWS_WITH(conv.load_tex(tex, fake_png(tmp.path, 1, 1), re4r()), ContainsSubstring("already exists"));
+    CHECK_THROWS_WITH(conv.load_tex(tex, tmp.path / "no_extension", re4r()), ContainsSubstring("must end in .png"));
 
     remod::Profile tbd = re4r();
     tbd.noesis_export = "TBD";
     CHECK_THROWS_WITH(conv.save_tex(fake_png(tmp.path, 64, 64), tex, tmp.path / "o.tex.143221013", tbd),
                       ContainsSubstring("noesis_export"));
+}
+
+TEST_CASE("a failed Noesis conversion reports what Noesis said") {
+    const std::string noesis = env("REMOD_NOESIS");
+    if (noesis.empty()) SKIP("set REMOD_NOESIS to run");
+    remod::NoesisConverter conv(noesis);
+    TempDir tmp;
+    // Valid header, no image data: passes our checks, then the plugin errors inside Noesis.
+    const auto start = std::chrono::steady_clock::now();
+    const fs::path tex = fake_tex(tmp.path, 143221013, 64, 64, 1, 5, 99);
+    try {
+        conv.load_tex(tex, tmp.path / "out.png", re4r());
+        FAIL("expected a ConvertError");
+    } catch (const ConvertError& e) {
+        UNSCOPED_INFO(e.what());
+        CHECK_THAT(std::string(e.what()), ContainsSubstring("Noesis said:") || ContainsSubstring("dialog said:"));
+    }
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(30));  // not the 2-minute timeout
 }
 
 // CLAUDE.md §8: needs local fixtures + Noesis, never committed. Skips unless both env vars are set.
@@ -118,6 +172,11 @@ TEST_CASE("round trip: tex -> png -> tex reproduces the original's TexMeta") {
         CHECK(saved.format == loaded.format);
         CHECK(saved.mip_count == loaded.mip_count);
         // Pixels aren't compared: BC7 re-encoding is lossy, so exact image data can't round-trip.
+
+        // The same texture named plain ".tex" must convert too.
+        const fs::path plain = tmp.path / (stem + " plain.tex");
+        fs::copy_file(e.path(), plain);
+        CHECK(conv.load_tex(plain, tmp.path / (stem + " plain.png"), re4r()).width == loaded.width);
     }
     REQUIRE(count > 0);
 }

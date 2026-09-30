@@ -74,12 +74,16 @@ TEST_CASE("connect enforces port names, types, single inputs and no loops") {
     g.add_node("ExportImage");  // 2
     g.add_node("SaveTex");      // 3
     CHECK(g.connect({1, "tex", 2, "tex"}).empty());
-    CHECK_THAT(g.connect({1, "tex", 3, "image"}), ContainsSubstring("different types"));
+    CHECK_THAT(g.connect({1, "tex", 3, "image"}), ContainsSubstring("that input needs a PNG"));
     CHECK_THAT(g.connect({1, "nope", 3, "original"}), ContainsSubstring("no output 'nope'"));
     CHECK_THAT(g.connect({1, "tex", 3, "nope"}), ContainsSubstring("no input 'nope'"));
-    CHECK_THAT(g.connect({1, "tex", 2, "tex"}), ContainsSubstring("already connected"));
+    CHECK_THAT(g.connect({1, "tex", 2, "tex"}), ContainsSubstring("already has a link"));
     CHECK_THAT(g.connect({1, "tex", 9, "tex"}), ContainsSubstring("missing node"));
     CHECK(g.connect({2, "image", 3, "image"}).empty());
+    CHECK(g.is_connected(1, "tex", true));
+    CHECK(g.is_connected(3, "image", false));
+    CHECK_FALSE(g.is_connected(3, "original", false));
+    CHECK_FALSE(g.is_connected(2, "tex", true));  // ExportImage has an input 'tex', not an output
     g.disconnect(0);  // free ExportImage.tex, then try to feed it from SaveTex: a loop
     CHECK_THAT(g.connect({3, "tex", 2, "tex"}), ContainsSubstring("loop"));
     CHECK(g.links.size() == 1);
@@ -96,17 +100,29 @@ TEST_CASE("validate lists every problem") {
     auto has = [&](const std::string& s) {
         return std::ranges::any_of(errors, [&](const std::string& e) { return e.find(s) != std::string::npos; });
     };
-    CHECK(has("'name' is required"));
-    CHECK(has("'out' is required"));
-    CHECK(has("input 'tex' is not connected"));
+    CHECK(has("Mod name is required"));
+    CHECK(has("Output folder is required"));
+    CHECK(has("input 'new texture' is not connected"));
     CHECK(has("unknown parameter 'typo'"));
-    CHECK(has("node 7 (Bogus): unknown node type"));
-    CHECK(pipeline("a", "b", "c").validate().empty());
+    CHECK(has("Bogus (node 7): unknown node type"));
+    CHECK(pipeline("a", "b.png", "c").validate().empty());
+}
+
+TEST_CASE("validate checks file extensions where a node lists them") {
+    Graph g = pipeline("a.tex.143221013", "edit", "out");  // png without extension: Noesis would write edit.png
+    const auto errors = g.validate();
+    REQUIRE(errors.size() == 1);
+    CHECK_THAT(errors[0], ContainsSubstring("PNG file must end in .png"));
+    g.find(2)->params["png"] = "EDIT.PNG";
+    g.find(4)->params["screenshot"] = "shot.gif";
+    REQUIRE(g.validate().size() == 1);
+    CHECK_THAT(g.validate()[0], ContainsSubstring("Screenshot must end in .png, .jpg, .tga, .bmp"));
 }
 
 TEST_CASE("graph file round-trips") {
     TempDir tmp;
     Graph g = pipeline("C:/x/a.tex.143221013", "a.png", "out");
+    REQUIRE(g.validate().empty());
     g.find(2)->x = 320.5f;
     g.find(2)->y = -40;
     remod::save_graph(g, tmp.path / "g.json");
@@ -165,9 +181,9 @@ TEST_CASE("run: export pauses for editing, second run packages") {
     CHECK(conv.saves == 1);
     CHECK(fs::is_regular_file(tmp.path / "out/M/natives/STM/_chainsaw/ui/a.tex.143221013"));
     CHECK(fs::is_regular_file(tmp.path / "out/M.zip"));
-    CHECK_THAT(log.back(), ContainsSubstring("node 4 (PackageMod): packaged"));
+    CHECK_THAT(log.back(), ContainsSubstring("Package for Fluffy (node 4): packaged"));
 
-    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("node 4 (PackageMod)") &&
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("Package for Fluffy (node 4)") &&
                                                      ContainsSubstring("already exists"));
 }
 
@@ -181,7 +197,7 @@ TEST_CASE("run: failures name the node, and nothing runs on an invalid graph") {
     test::write_fake_tex(tex, 143221013, 64, 32, 1, 5, 99);
     test::write_fake_png(tmp.path / "a.png", 64, 32);
     CHECK_THROWS_WITH(remod::run_graph(pipeline(tex.string(), "a.png", "out"), opt),
-                      ContainsSubstring("node 4 (PackageMod)") && ContainsSubstring("game path unknown"));
+                      ContainsSubstring("Package for Fluffy (node 4)") && ContainsSubstring("game path unknown"));
 
     Graph with_path = pipeline(tex.string(), "a.png", "out");
     with_path.find(1)->params["game_path"] = "ui/loose.tex.143221013";
@@ -190,7 +206,7 @@ TEST_CASE("run: failures name the node, and nothing runs on an invalid graph") {
 
     Graph invalid = pipeline(tex.string(), "a.png", "out2");
     invalid.find(4)->params["name"] = "";
-    CHECK_THROWS_WITH(remod::run_graph(invalid, opt), ContainsSubstring("'name' is required"));
+    CHECK_THROWS_WITH(remod::run_graph(invalid, opt), ContainsSubstring("Mod name is required"));
     CHECK(conv.saves == 2);  // the two runs above reached SaveTex; the invalid graph ran nothing
 
     Graph other = pipeline(tex.string(), "a.png", "out3");

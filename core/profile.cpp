@@ -93,6 +93,22 @@ Profile load_profile(const std::filesystem::path& file) {
     }
 }
 
+std::vector<Profile> load_profiles(const std::filesystem::path& profiles_dir, std::vector<std::string>* errors) {
+    std::vector<Profile> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(profiles_dir, ec)) {
+        if (e.path().extension() != ".toml") continue;
+        try {
+            out.push_back(load_profile(e.path()));
+        } catch (const ProfileError& err) {
+            if (errors) errors->push_back(err.what());
+        }
+    }
+    if (ec && errors) errors->push_back("can't read profiles folder " + profiles_dir.string() + ": " + ec.message());
+    std::ranges::sort(out, {}, &Profile::name);
+    return out;
+}
+
 Profile load_profile_by_id(const std::filesystem::path& profiles_dir, const std::string& id) {
     const bool plain = !id.empty() && std::ranges::all_of(id, [](unsigned char c) {
         return std::isalnum(c) || c == '_' || c == '-';

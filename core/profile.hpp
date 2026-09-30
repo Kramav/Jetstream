@@ -29,6 +29,11 @@ struct Profile {
 Profile load_profile(const std::filesystem::path& file);
 Profile parse_profile(std::string_view toml_text);
 
+// Every valid <profiles_dir>/*.toml, sorted by name. A broken profile doesn't hide the others: its problem is
+// appended to `errors` (if given) instead.
+std::vector<Profile> load_profiles(const std::filesystem::path& profiles_dir,
+                                   std::vector<std::string>* errors = nullptr);
+
 // <profiles_dir>/<id>.toml. The id must be a plain name (letters, digits, '_', '-').
 Profile load_profile_by_id(const std::filesystem::path& profiles_dir, const std::string& id);
 

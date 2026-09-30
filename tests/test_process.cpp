@@ -59,6 +59,32 @@ TEST_CASE("run_process kills the whole process tree on timeout") {
     CHECK(std::chrono::steady_clock::now() - start < 10s);
 }
 
+TEST_CASE("run_process on a private desktop: dialogs are caught at once, never shown") {
+    // A MessageBox on the invisible desktop would wait forever; it must end the run quickly, with its text.
+    const auto start = std::chrono::steady_clock::now();
+    CHECK_THROWS_WITH(
+        remod::run_process(system32(L"WindowsPowerShell\\v1.0\\powershell.exe"),
+                           {L"-NoProfile", L"-Command",
+                            L"Add-Type -AssemblyName System.Windows.Forms; "
+                            L"[System.Windows.Forms.MessageBox]::Show('texture broke', 'Plugin error')"},
+                           60s, true),
+        ContainsSubstring("stopped with a dialog") && ContainsSubstring("Plugin error") &&
+            ContainsSubstring("texture broke"));
+    CHECK(std::chrono::steady_clock::now() - start < 30s);
+
+    // Normal programs still run and report their exit code there.
+    CHECK(remod::run_process(system32(L"cmd.exe"), {L"/c", L"exit 4"}, 10s, true).exit_code == 4);
+}
+
+TEST_CASE("run_process adds environment variables for the child only") {
+    const auto r = remod::run_process(system32(L"cmd.exe"), {L"/c", L"echo [%REMOD_TEST_VAR%] [%SystemRoot%]"}, 10s,
+                                      false, {{L"REMOD_TEST_VAR", L"set for child"}});
+    CHECK_THAT(r.output, ContainsSubstring("[set for child]"));
+    CHECK_THAT(r.output, !ContainsSubstring("[%SystemRoot%]"));  // the rest of the environment is inherited
+    const auto plain = remod::run_process(system32(L"cmd.exe"), {L"/c", L"echo [%REMOD_TEST_VAR%]"}, 10s);
+    CHECK_THAT(plain.output, ContainsSubstring("[%REMOD_TEST_VAR%]"));  // not leaked into our own environment
+}
+
 TEST_CASE("run_process reports a missing executable") {
     CHECK_THROWS_AS(remod::run_process("C:/does/not/exist.exe", {}, 1s), remod::ProcessError);
 }

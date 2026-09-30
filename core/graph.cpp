@@ -9,6 +9,7 @@
 #include <fstream>
 #include <random>
 #include <set>
+#include <sstream>
 #include <utility>
 
 namespace remod {
@@ -19,36 +20,51 @@ using json = nlohmann::json;
 const std::vector<NodeSpec>& node_specs() {
     static const std::vector<NodeSpec> specs{
         {"LoadTex",
-         "Original game texture",
+         "Original texture",
+         "Picks the game's original .tex. Nothing is converted here: its size and format are read so the later "
+         "steps can match them.",
          {},
-         {{"tex", PortType::Tex}},
-         {{"tex", true, "original .tex file", PathKind::OpenFile},
-          {"game_path", false, "path under natives root; inferred if the .tex is inside natives/..."}}},
+         {{"tex", PortType::Tex, "texture"}},
+         {{"tex", true, "Texture file",
+           "The original texture, e.g. from your extracted game files. Named .tex or .tex.<version> - either "
+           "works; the game is detected from the file itself.",
+           PathKind::OpenTexture},
+          {"game_path", false, "In-game path",
+           "Where the texture lives in the game, under natives/STM. Leave empty if the file is inside a "
+           "natives\\STM\\... folder: it's worked out automatically. The .tex version suffix is added for you."}}},
         {"ExportImage",
-         "Texture -> PNG for editing. If the PNG already exists it is kept (your edit) and passed on.",
-         {{"tex", PortType::Tex}},
-         {{"image", PortType::Image}},
-         {{"png", true, "PNG to write/edit", PathKind::SaveFile, "png"}}},
+         "Export PNG for editing",
+         "Converts the texture to a PNG, then stops the run so you can edit it. On the next run your edited "
+         "PNG is kept and passed on.",
+         {{"tex", PortType::Tex, "texture"}},
+         {{"image", PortType::Image, "edited PNG"}},
+         {{"png", true, "PNG file", "Where to write the PNG you'll edit (must end in .png).", PathKind::SaveFile,
+           "png"}}},
         {"ImportImage",
-         "Use an already-edited PNG",
+         "Use existing PNG",
+         "Uses a PNG you've already edited, instead of exporting one.",
          {},
-         {{"image", PortType::Image}},
-         {{"png", true, "edited PNG", PathKind::OpenFile, "png"}}},
+         {{"image", PortType::Image, "PNG"}},
+         {{"png", true, "PNG file", "The edited PNG. It must be the same size as the original texture.",
+           PathKind::OpenFile, "png"}}},
         {"SaveTex",
-         "PNG -> texture matching the original's size, format and mips",
-         {{"image", PortType::Image}, {"original", PortType::Tex}},
-         {{"tex", PortType::Tex}},
+         "Convert PNG to texture",
+         "Turns the edited PNG back into a game texture with the original's size, format and mipmaps.",
+         {{"image", PortType::Image, "edited PNG"}, {"original", PortType::Tex, "original texture"}},
+         {{"tex", PortType::Tex, "new texture"}},
          {}},
         {"PackageMod",
-         "Fluffy Mod Manager folder + zip",
-         {{"tex", PortType::Tex}},
+         "Package for Fluffy",
+         "Builds the mod folder and a .zip to add in Fluffy Mod Manager.",
+         {{"tex", PortType::Tex, "new texture"}},
          {},
-         {{"name", true, "mod name (folder/zip name)"},
-          {"out", true, "output folder", PathKind::Folder},
-          {"version", false, ""},
-          {"author", false, ""},
-          {"description", false, ""},
-          {"screenshot", false, "jpg/png/tga/bmp", PathKind::OpenFile, "png,jpg,tga,bmp"}}},
+         {{"name", true, "Mod name", "Shown in Fluffy; also the folder and .zip name."},
+          {"out", true, "Output folder", "Where <Mod name>\\ and <Mod name>.zip are created.", PathKind::Folder},
+          {"version", false, "Version", "Shown in Fluffy."},
+          {"author", false, "Author", "Shown in Fluffy."},
+          {"description", false, "Description", "Shown in Fluffy."},
+          {"screenshot", false, "Screenshot", "Preview image shown in Fluffy (png, jpg, tga or bmp).",
+           PathKind::OpenFile, "png,jpg,tga,bmp"}}},
     };
     return specs;
 }
@@ -67,7 +83,22 @@ const PortSpec* find_port(const std::vector<PortSpec>& ports, const std::string&
     return nullptr;
 }
 
-std::string node_label(const Node& n) { return "node " + std::to_string(n.id) + " (" + n.type + ")"; }
+// "Export PNG for editing (node 2)": the user-facing name first, the id to find it by.
+std::string node_label(const Node& n) {
+    const NodeSpec* spec = find_spec(n.type);
+    return std::string(spec ? spec->title : n.type.c_str()) + " (node " + std::to_string(n.id) + ")";
+}
+
+// True if `path` ends in one of the comma-separated extensions in `filter` ("png,jpg"), ignoring case.
+bool has_extension(const std::string& path, const char* filter) {
+    std::string ext = fs::path(path).extension().string();
+    std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext.size() < 2) return false;
+    std::istringstream list(filter);
+    for (std::string item; std::getline(list, item, ',');)
+        if (ext.substr(1) == item) return true;
+    return false;
+}
 
 // Kahn's algorithm; ties keep file order so runs are deterministic. Returns fewer nodes than exist on a cycle.
 std::vector<const Node*> topo_order(const Graph& g) {
@@ -105,8 +136,8 @@ std::string check_link(const Graph& g, const Link& l) {
     if (!out) return node_label(*from) + " has no output '" + l.from_port + "'";
     if (!in) return node_label(*to) + " has no input '" + l.to_port + "'";
     if (out->type != in->type)
-        return "'" + l.from_port + "' of " + node_label(*from) + " can't connect to '" + l.to_port + "' of " +
-               node_label(*to) + " (different types)";
+        return std::string("'") + out->label + "' can't go into '" + in->label + "': that input needs " +
+               (in->type == PortType::Tex ? "a texture" : "a PNG");
     return "";
 }
 
@@ -146,7 +177,8 @@ std::string Graph::can_connect(const Link& link) const {
     if (auto err = check_link(*this, link); !err.empty()) return err;
     for (const auto& l : links)
         if (l.to_node == link.to_node && l.to_port == link.to_port)
-            return "input '" + link.to_port + "' is already connected";
+            return std::string("'") + find_port(find_spec(find(link.to_node)->type)->inputs, link.to_port)->label +
+                   "' already has a link; delete that one first";
     Graph trial = *this;  // ponytail: copies the graph per check; fine for hand-built graphs of a few nodes
     trial.links.push_back(link);
     if (topo_order(trial).size() != trial.nodes.size()) return "that link would create a loop";
@@ -161,6 +193,12 @@ std::string Graph::connect(const Link& link) {
 
 void Graph::disconnect(size_t link_index) {
     if (link_index < links.size()) links.erase(links.begin() + static_cast<std::ptrdiff_t>(link_index));
+}
+
+bool Graph::is_connected(int node, const std::string& port, bool output) const {
+    return std::ranges::any_of(links, [&](const Link& l) {
+        return output ? l.from_node == node && l.from_port == port : l.to_node == node && l.to_port == port;
+    });
 }
 
 const Node* Graph::find(int id) const {
@@ -186,8 +224,13 @@ std::vector<std::string> Graph::validate() const {
         }
         for (const auto& p : spec->params) {
             const auto it = n.params.find(p.name);
-            if (p.required && (it == n.params.end() || it->second.empty()))
-                errors.push_back(node_label(n) + ": '" + p.name + "' is required");
+            const bool empty = it == n.params.end() || it->second.empty();
+            if (p.required && empty) errors.push_back(node_label(n) + ": " + p.label + " is required");
+            if (!empty && p.filter && !has_extension(it->second, p.filter)) {
+                std::string exts = ".";
+                for (const char* c = p.filter; *c; ++c) exts += *c == ',' ? std::string(", .") : std::string(1, *c);
+                errors.push_back(node_label(n) + ": " + p.label + " must end in " + exts);
+            }
         }
         for (const auto& [key, _] : n.params)
             if (std::ranges::none_of(spec->params, [&](const ParamSpec& p) { return key == p.name; }))
@@ -195,8 +238,8 @@ std::vector<std::string> Graph::validate() const {
         for (const auto& in : spec->inputs) {
             const auto count = std::ranges::count_if(
                 links, [&](const Link& l) { return l.to_node == n.id && l.to_port == in.name; });
-            if (count == 0) errors.push_back(node_label(n) + ": input '" + in.name + "' is not connected");
-            if (count > 1) errors.push_back(node_label(n) + ": input '" + in.name + "' is connected more than once");
+            if (count == 0) errors.push_back(node_label(n) + ": input '" + in.label + "' is not connected");
+            if (count > 1) errors.push_back(node_label(n) + ": input '" + in.label + "' is connected more than once");
         }
     }
     for (const auto& l : links)
@@ -329,8 +372,8 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
             } else if (n.type == "PackageMod") {
                 const Value& tex = input("tex");
                 if (tex.game_path.empty())
-                    throw GraphError("game path unknown: set 'game_path' on the LoadTex node (the .tex isn't "
-                                     "inside a " + opt.profile.natives_root + " folder)");
+                    throw GraphError("game path unknown: fill in 'In-game path' on the Original texture node (the "
+                                     ".tex isn't inside a " + opt.profile.natives_root + " folder)");
                 PackageSpec spec{.mod_name = param("name"),
                                  .out_dir = resolve(param("out")),
                                  .info = {.name = param("name"),

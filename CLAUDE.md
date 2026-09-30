@@ -107,6 +107,11 @@ array_count
 ```
 SaveTex must reproduce the original's width/height/format/mips.
 
+Texture identity comes from **content, not names**: the header's version number (e.g. 143221013) equals a
+profile's `tex_suffix`, which identifies the game (`profile_for_texture`). Files may be named `.tex` or
+`.tex.<version>`. LoadTex feeds Noesis a temp copy named `src.tex.<version>`, and packaging appends the suffix
+to a plain `.tex` game path.
+
 ### Manifest v0
 ```json
 {
@@ -174,10 +179,19 @@ Fill these in from the manual spike before implementing the affected code:
       (now `noesis_export = "-b"` in `profiles/re4r.toml`). Implemented as `NoesisConverter` in
       `core/texture_converter.cpp`; the round-trip test passes against the spike textures.
       Noesis behavior the wrapper relies on (observed 2026-09-30):
-      - Its console text is **not** written to stdout/stderr (0 bytes when redirected), so it can't be captured.
+      - Its console text is **not** written to stdout/stderr (0 bytes when redirected).
+        **`-logfile <path>` does capture it** (ReadMe: "direct all output for the given module to a file").
+        The wrapper passes it on every call and puts the log in the error when a conversion fails.
       - It **exits 0 even when a conversion fails** (a junk input gave exit 0 and no output; a missing input gave exit 1).
-      - Success is therefore judged from the output file only: it must exist and its PNG size or `.tex` header
+        Success is therefore judged from the output file only: it must exist and its PNG size or `.tex` header
         must match the original.
+      - **Noesis's embedded Python needs `PYTHONIOENCODING` when its output is piped.** Without it (e.g. the app
+        started from Explorer), the Python plugins silently don't load and every RE texture is
+        `Detected file type: Unknown`. With `PYTHONIOENCODING=utf-8` they load. Reproduced 2026-09-30 (system ACP 1252);
+        the exact failure inside Python 3.2 is unknown. The wrapper sets it for Noesis only.
+      - **A plugin (Python) error opens a MessageBox and waits forever**, even in `?cmode` (ReadMe; seen with a
+        header-only `.tex`). The wrapper runs Noesis on a private invisible desktop, so the dialog never reaches the
+        user's screen. It watches that desktop, and on a dialog kills Noesis at once and reports the dialog text.
       **Import confirmed (spike 2026-09-30, Noesis v4474 `Noesis64.exe`, fmt_RE_MESH already installed):**
       `Noesis64.exe ?cmode <in>.tex.143221013 <out>.png` works headless (no dialog), prints
       `Detected file type: RE Engine Texture [PC]` and `BC7_UNORM_SRGB 8` (= format name + bits per pixel,

@@ -81,6 +81,11 @@ It takes **two runs**:
 If the `.tex` sits inside an extracted `natives\STM\...` folder, LoadTex works out the in-game path by itself.
 Otherwise fill in LoadTex's `game_path`.
 
+Texture file names don't matter: `x.tex`, `x.tex.143221013` or a renamed file all work. The game is
+detected from the texture's header, and the in-game version suffix (e.g. `.143221013`) is added when
+packaging. Picking a texture in the app switches the graph's **Game** to the one the texture belongs to.
+Supporting another RE Engine game means adding a profile in `profiles\`; its textures are then recognised too.
+
 **From the app:**
 1. Start `build\app\remod-app.exe`.
 2. In the **Pipeline** panel, pick a graph with the **`...`** button next to *Graph file* (this loads it),

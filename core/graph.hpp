@@ -21,22 +21,28 @@ struct GraphError : std::runtime_error {
 // Everything flowing along a link is a file on disk.
 enum class PortType { Tex, Image };
 
+// `name`s are the stable ids stored in graph files; `title`, `label` and `hint` are what users read.
 struct PortSpec {
     const char* name;
     PortType type;
+    const char* label;
 };
-// Which picker a front end should offer for a parameter.
-enum class PathKind { None, OpenFile, SaveFile, Folder };
+
+// Which picker a front end should offer for a parameter. OpenTexture: an RE Engine texture of any known game
+// (front ends build the filter from the profiles' tex suffixes).
+enum class PathKind { None, OpenFile, OpenTexture, SaveFile, Folder };
 
 struct ParamSpec {
     const char* name;
     bool required;
+    const char* label;
     const char* hint;
     PathKind path = PathKind::None;
     const char* filter = nullptr;  // extensions for file pickers, e.g. "png,jpg"; nullptr = all files
 };
 struct NodeSpec {
     const char* type;
+    const char* title;
     const char* summary;
     std::vector<PortSpec> inputs;  // all inputs must be connected
     std::vector<PortSpec> outputs;
@@ -71,6 +77,7 @@ struct Graph {
     std::string can_connect(const Link& link) const;  // why the link isn't allowed, or "" if it is
     std::string connect(const Link& link);            // can_connect, then add; returns the error or ""
     void disconnect(size_t link_index);
+    bool is_connected(int node, const std::string& port, bool output) const;  // any link on that pin?
     const Node* find(int id) const;
     Node* find(int id);
     std::vector<std::string> validate() const;  // every problem that would stop a run; empty = runnable

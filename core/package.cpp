@@ -66,14 +66,17 @@ fs::path package_path(const Profile& profile, const std::string& mod_name, const
     if (!is_safe_relative(game_path))
         throw PackageError("game path '" + game_path.generic_string() + "' must be relative to the natives root, without '..'");
 
-    // [guide] RE4R textures are named <name>.tex.<tex_suffix>.
+    // [guide] In the game, textures are named <name>.tex.<tex_suffix>. A plain ".tex" gets the profile's suffix
+    // added, so users never have to type it; any other suffix is a different game's texture.
+    fs::path in_game = game_path;
     const std::string file = lower(game_path.filename().string());
-    const bool is_tex = file.ends_with(".tex") || file.find(".tex.") != std::string::npos;
-    if (is_tex && !file.ends_with(".tex." + profile.tex_suffix))
-        throw PackageError("texture '" + game_path.generic_string() + "' must end in .tex." + profile.tex_suffix +
-                           " for profile " + profile.id);
-
-    return (fs::path(mod_name) / profile.natives_root / game_path).lexically_normal();
+    if (file.ends_with(".tex")) {
+        in_game += "." + profile.tex_suffix;
+    } else if (file.find(".tex.") != std::string::npos && !file.ends_with(".tex." + profile.tex_suffix)) {
+        throw PackageError("texture '" + game_path.generic_string() + "' has a different game's suffix; " +
+                           profile.name + " textures end in .tex." + profile.tex_suffix);
+    }
+    return (fs::path(mod_name) / profile.natives_root / in_game).lexically_normal();
 }
 
 std::string write_modinfo(const ModInfo& info) {

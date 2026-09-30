@@ -47,8 +47,12 @@ TEST_CASE("path mapping rejects unsafe paths, bad mod names and wrong tex suffix
     CHECK_THROWS_AS(remod::package_path(kProfile, "M", ""), PackageError);
     for (const char* bad : {"", ".", "..", "a/b", "a\\b", "a:b", "a?", "a*", "a<", "a|", "a\"", "trailing.", "trailing "})
         CHECK_THROWS_AS(remod::package_path(kProfile, bad, "x.tex.143221013"), PackageError);
-    CHECK_THROWS_WITH(remod::package_path(kProfile, "M", "ui/x.tex"), ContainsSubstring(".tex.143221013"));
     CHECK_THROWS_WITH(remod::package_path(kProfile, "M", "ui/x.tex.999"), ContainsSubstring(".tex.143221013"));
+}
+
+TEST_CASE("a plain .tex game path gets the profile's suffix") {
+    CHECK(remod::package_path(kProfile, "M", "ui/x.tex") == fs::path("M/natives/STM/ui/x.tex.143221013").lexically_normal());
+    CHECK(remod::package_path(kProfile, "M", "ui/X.TEX") == fs::path("M/natives/STM/ui/X.TEX.143221013").lexically_normal());
 }
 
 TEST_CASE("modinfo.ini contents") {
