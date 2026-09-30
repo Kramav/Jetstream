@@ -2,8 +2,8 @@
 
 Node-based modding tool for Capcom RE Engine games. First target: Resident Evil 4 (2023).
 
-**Status:** Milestone 1 in progress. The CLI can convert a texture to PNG, convert the edited PNG back,
-and package it as a Fluffy-ready zip. The node graph isn't built yet.
+**Status:** Milestone 1 in progress. A node graph (texture → PNG → edited texture → Fluffy-ready zip)
+runs from the desktop app and from the CLI.
 
 ## Requirements
 
@@ -56,13 +56,47 @@ ctest --test-dir build --output-on-failure
 
 | File | What it is |
 |---|---|
-| `build\app\remod-app.exe` | Desktop app. Currently an empty node-editor canvas. |
-| `build\cli\remod.exe` | Command-line tool: `tex2png`, `png2tex`, `package`. |
+| `build\app\remod-app.exe` | Desktop app: node graph editor with a Run button. |
+| `build\cli\remod.exe` | Command-line tool: `run` (a saved graph), `tex2png`, `png2tex`, `package`. |
 | `build\tests\remod_tests.exe` | Test runner (usually run through `ctest`). |
 
-## Making a texture mod with the CLI
+## Making a texture mod with a graph
 
-Run from the repo root. A normal PowerShell window is fine for this part. `$noesis` is just shorthand:
+A graph chains the steps: **LoadTex → ExportImage → SaveTex → PackageMod** (plus a link from LoadTex to
+SaveTex's `original` input). `schemas\graph.v0.example.json` is a ready-made one; copy it and change the paths.
+Relative paths in a graph are relative to the graph file's folder.
+
+It takes **two runs**:
+1. **First run:** exports the texture to the PNG named in ExportImage, then stops and tells you to edit it.
+2. Edit the PNG. Keep the same width and height.
+3. **Second run:** ExportImage keeps your edited PNG, SaveTex encodes it like the original, and PackageMod
+   writes the mod folder and zip.
+
+If the `.tex` sits inside an extracted `natives\STM\...` folder, LoadTex works out the in-game path by itself.
+Otherwise fill in LoadTex's `game_path`.
+
+**From the app:**
+1. Start `build\app\remod-app.exe`.
+2. In the **Pipeline** panel, enter the graph file path, click **Load** (or build one: right-click the canvas
+   to add nodes, drag from an output pin to an input pin to link, Delete key removes), fill in the Noesis
+   path and click **Run**.
+3. The panel lists any problems (missing fields, unconnected inputs) and shows the run log.
+4. **Save** writes the graph, including node positions.
+
+The app looks for the `profiles` folder in the current folder, then next to and above the exe. From
+`build\app` it finds the repo's. Setting the `REMOD_NOESIS` environment variable pre-fills the Noesis path.
+
+**From the CLI** (normal PowerShell, repo root):
+
+```powershell
+.\build\cli\remod.exe run --graph C:\work\my_mod.json --noesis "D:\path\to\Noesis64.exe"
+```
+
+## Single steps with the CLI
+
+The same steps are also available as individual commands:
+
+Run from the repo root in a normal PowerShell window. `$noesis` is just shorthand:
 
 ```powershell
 $noesis = "D:\path\to\Noesis64.exe"

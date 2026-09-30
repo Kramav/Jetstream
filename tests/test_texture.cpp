@@ -1,14 +1,15 @@
 #include "texture_converter.hpp"
 
+#include "helpers.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstdlib>
-#include <fstream>
-#include <random>
 
 using Catch::Matchers::ContainsSubstring;
 using remod::ConvertError;
+using test::TempDir;
 namespace fs = std::filesystem;
 
 namespace {
@@ -17,12 +18,6 @@ const remod::Profile& re4r() {
     static const remod::Profile p = remod::load_profile(REMOD_PROFILES_DIR "/re4r.toml");
     return p;
 }
-
-struct TempDir {
-    fs::path path = fs::temp_directory_path() / ("remod_test_" + std::to_string(std::random_device{}()));
-    TempDir() { fs::create_directories(path); }
-    ~TempDir() { fs::remove_all(path); }
-};
 
 std::string env(const char* name) {
     char* v = nullptr;
@@ -33,33 +28,16 @@ std::string env(const char* name) {
     return s;
 }
 
-void put_le(std::string& b, size_t at, std::uint32_t v, int bytes) {
-    for (int i = 0; i < bytes; ++i) b[at + i] = char((v >> (8 * i)) & 0xff);
-}
-
-// Synthetic .tex header in the layout the converter reads (not game data).
 fs::path fake_tex(const fs::path& dir, std::uint32_t version, std::uint16_t w, std::uint16_t h, std::uint8_t images,
                   std::uint8_t mips, std::uint32_t dxgi) {
-    std::string b(64, '\0');
-    put_le(b, 0, 0x00584554, 4);
-    put_le(b, 4, version, 4);
-    put_le(b, 8, w, 2);
-    put_le(b, 10, h, 2);
-    b[14] = char(images);
-    b[15] = char(mips * 16);
-    put_le(b, 16, dxgi, 4);
-    const fs::path p = dir / ("t" + std::to_string(std::random_device{}()) + ".tex." + std::to_string(version));
-    std::ofstream(p, std::ios::binary) << b;
+    const fs::path p = test::unique(dir, ".tex." + std::to_string(version));
+    test::write_fake_tex(p, version, w, h, images, mips, dxgi);
     return p;
 }
 
 fs::path fake_png(const fs::path& dir, std::uint32_t w, std::uint32_t h) {
-    std::string b = "\x89PNG\r\n\x1a\n";
-    b += std::string("\0\0\0\x0dIHDR", 8);
-    for (std::uint32_t v : {w, h})
-        for (int i = 3; i >= 0; --i) b += char((v >> (8 * i)) & 0xff);
-    const fs::path p = dir / ("p" + std::to_string(std::random_device{}()) + ".png");
-    std::ofstream(p, std::ios::binary) << b;
+    const fs::path p = test::unique(dir, ".png");
+    test::write_fake_png(p, w, h);
     return p;
 }
 

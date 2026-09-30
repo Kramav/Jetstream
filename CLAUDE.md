@@ -35,8 +35,9 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
   - **Adopted:** toml++ 3.4.0 (MIT, profiles), Catch2 3.16.0 (BSL-1.0, tests),
     Dear ImGui 1.92.9 docking (MIT), imgui-node-editor 0.9.3#4 (MIT; upstream lightly maintained,
     last tag Oct 2023, vcpkg patches it for ImGui 1.92). Issue #230's fix (#205, commit 3fdb8e3) is in v0.9.3.
-  - **Verified, deferred until needed:** nlohmann/json 3.12.0 (MIT; add when the manifest is serialized),
-    nativefiledialog-extended 1.4.0 (Zlib; add with the first file dialog). GoogleTest not used.
+  - **Adopted for the graph file:** nlohmann/json 3.12.0#2 (MIT), core-private.
+  - **Verified, deferred until needed:** nativefiledialog-extended 1.4.0 (Zlib; add with the first file dialog).
+    GoogleTest not used.
 - Build (Developer PowerShell for VS 2026, which sets `VCPKG_ROOT`):
   `cmake --preset default` → `cmake --build build` → `ctest --test-dir build --output-on-failure`
 - Long-term polished UI: undecided. Keep the core-to-UI boundary clean so it can be swapped.
@@ -77,6 +78,14 @@ A streamlined pipeline, no AI:
 Implementation note: Noesis converts `.tex` ↔ PNG file-to-file, so LoadTex writes the PNG directly and
 ExportImage/ImportImage reduce to handing that PNG to the user and checking the edited one (same size).
 Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png2tex` and `package`.
+
+Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
+- Node types: LoadTex, ExportImage, ImportImage, SaveTex, PackageMod. Links carry files.
+- ExportImage **pauses the run** when it writes a new PNG. On the next run it keeps the existing (edited) PNG.
+  So a mod is two runs: export, edit, run again.
+- LoadTex infers the game path when the `.tex` sits inside a `natives/STM/...` tree; otherwise set `game_path`.
+- Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
+- Runs from `remod run --graph <file> --noesis <exe>` and from the app's Run button.
 
 Done when:
 - The graph runs from both the app and the CLI.

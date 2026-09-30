@@ -8,12 +8,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <fstream>
-#include <random>
+#include "helpers.hpp"
+
 #include <sstream>
 
 using Catch::Matchers::ContainsSubstring;
 using remod::PackageError;
+using test::read_file;
+using test::TempDir;
+using test::write_file;
 namespace fs = std::filesystem;
 
 namespace {
@@ -26,21 +29,6 @@ const remod::Profile kProfile{.id = "re4r",
                               .pak_script = "Create-PAK-2023.bat",
                               .noesis_export = "TBD",
                               .file_list = "TBD"};
-
-struct TempDir {
-    fs::path path = fs::temp_directory_path() / ("remod_test_" + std::to_string(std::random_device{}()));
-    TempDir() { fs::create_directories(path); }
-    ~TempDir() { fs::remove_all(path); }
-};
-
-void write_file(const fs::path& p, const std::string& bytes) {
-    std::ofstream(p, std::ios::binary) << bytes;
-}
-
-std::string read_file(const fs::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    return std::string(std::istreambuf_iterator<char>(in), {});
-}
 
 }  // namespace
 

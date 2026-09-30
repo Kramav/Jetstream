@@ -1,4 +1,5 @@
-// remod CLI. M1: the pipeline steps as separate commands (the graph runner comes later).
+// remod CLI: runs a saved graph headlessly (`run`), plus the pipeline steps as single commands.
+#include "graph.hpp"
 #include "package.hpp"
 #include "profile.hpp"
 #include "texture_converter.hpp"
@@ -14,6 +15,7 @@ namespace {
 
 constexpr const char* kUsage =
     "usage:\n"
+    "  remod run --graph <file.json> --noesis <Noesis64.exe> [--profiles <dir>]\n"
     "  remod tex2png --profile <toml> --noesis <Noesis64.exe> --tex <file.tex.N> --out <file.png>\n"
     "  remod png2tex --profile <toml> --noesis <Noesis64.exe> --png <edited.png> --original <file.tex.N>\n"
     "                --out <new.tex.N>\n"
@@ -26,6 +28,7 @@ struct Command {
 };
 
 const std::map<std::string, Command> kCommands{
+    {"run", {{"graph", "noesis"}, {"profiles"}}},
     {"tex2png", {{"profile", "noesis", "tex", "out"}, {}}},
     {"png2tex", {{"profile", "noesis", "png", "original", "out"}, {}}},
     {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot"}}},
@@ -64,6 +67,22 @@ int run(int argc, char** argv) {
             std::cerr << "error: unknown option --" << key << " for " << cmd->first << "\n" << kUsage;
             return 2;
         }
+    }
+
+    if (cmd->first == "run") {
+        const std::filesystem::path graph_file = args["graph"];
+        const remod::Graph graph = remod::load_graph(graph_file);
+        const std::filesystem::path profiles = args.contains("profiles") ? args["profiles"] : remod::find_profiles_dir();
+        if (profiles.empty()) throw std::runtime_error("no profiles folder found; pass --profiles <dir>");
+        const remod::Profile profile = remod::load_profile_by_id(profiles, graph.profile);
+        remod::NoesisConverter noesis(args["noesis"]);
+        const auto result = remod::run_graph(
+            graph, {.profile = profile,
+                    .converter = noesis,
+                    .base_dir = std::filesystem::absolute(graph_file).parent_path(),
+                    .log = [](const std::string& line) { std::cout << line << "\n"; }});
+        std::cout << result.message << "\n";
+        return 0;
     }
 
     const remod::Profile profile = remod::load_profile(args["profile"]);

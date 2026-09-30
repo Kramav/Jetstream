@@ -4,6 +4,7 @@
   "builtin-baseline": "4cb050be2cfa7a947cdd2dd1a70e24b17774c979",
   "dependencies": [
     "tomlplusplus",
+    "nlohmann-json",
     "catch2",
     {
       "name": "imgui",

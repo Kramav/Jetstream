@@ -4,8 +4,13 @@
 
 #include <toml++/toml.hpp>
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
 #include <algorithm>
 #include <array>
+#include <cctype>
 
 namespace remod {
 
@@ -86,6 +91,29 @@ Profile load_profile(const std::filesystem::path& file) {
     } catch (const toml::parse_error& e) {
         throw ProfileError(file.string() + ": " + std::string(e.description()));
     }
+}
+
+Profile load_profile_by_id(const std::filesystem::path& profiles_dir, const std::string& id) {
+    const bool plain = !id.empty() && std::ranges::all_of(id, [](unsigned char c) {
+        return std::isalnum(c) || c == '_' || c == '-';
+    });
+    if (!plain) throw ProfileError("invalid profile id '" + id + "'");
+    Profile p = load_profile(profiles_dir / (id + ".toml"));
+    if (p.id != id) throw ProfileError(id + ".toml declares id '" + p.id + "'");
+    return p;
+}
+
+std::filesystem::path find_profiles_dir() {
+    namespace fs = std::filesystem;
+    if (fs::is_directory("profiles")) return fs::absolute("profiles");
+    wchar_t exe[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    for (fs::path dir = fs::path(exe).parent_path(); !dir.empty(); dir = dir.parent_path()) {
+        if (fs::is_directory(dir / "profiles")) return dir / "profiles";
+        if (dir == dir.parent_path()) break;
+    }
+    return {};
 }
 
 }  // namespace remod

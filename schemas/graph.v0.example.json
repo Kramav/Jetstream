@@ -1,0 +1,46 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadTex",
+      "params": {
+        "tex": "C:/work/natives/STM/_chainsaw/ui/ui3200/tex/my_texture.tex.143221013",
+        "game_path": ""
+      },
+      "pos": [0, 0]
+    },
+    {
+      "id": 2,
+      "type": "ExportImage",
+      "params": { "png": "my_texture.png" },
+      "pos": [320, 0]
+    },
+    {
+      "id": 3,
+      "type": "SaveTex",
+      "params": {},
+      "pos": [640, 0]
+    },
+    {
+      "id": 4,
+      "type": "PackageMod",
+      "params": {
+        "name": "MyMod",
+        "out": "E:/mods",
+        "version": "1.0",
+        "author": "",
+        "description": "",
+        "screenshot": ""
+      },
+      "pos": [960, 0]
+    }
+  ],
+  "links": [
+    { "from": [1, "tex"], "to": [2, "tex"] },
+    { "from": [2, "image"], "to": [3, "image"] },
+    { "from": [1, "tex"], "to": [3, "original"] },
+    { "from": [3, "tex"], "to": [4, "tex"] }
+  ]
+}

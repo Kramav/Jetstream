@@ -29,4 +29,11 @@ struct Profile {
 Profile load_profile(const std::filesystem::path& file);
 Profile parse_profile(std::string_view toml_text);
 
+// <profiles_dir>/<id>.toml. The id must be a plain name (letters, digits, '_', '-').
+Profile load_profile_by_id(const std::filesystem::path& profiles_dir, const std::string& id);
+
+// First "profiles" folder found in the current directory, then the executable's folder and its parents.
+// Empty if none.
+std::filesystem::path find_profiles_dir();
+
 }  // namespace remod
