@@ -292,6 +292,128 @@ const Node* Graph::find(int id) const {
 
 Node* Graph::find(int id) { return const_cast<Node*>(std::as_const(*this).find(id)); }
 
+namespace {
+
+// The input of `spec` that best takes an output of type `out`: exact type first, then (for text) an editable
+// field or a multiple Text input. nullptr if none.
+const InputSpec* best_input(const NodeSpec& spec, PortType out) {
+    for (const auto& in : spec.inputs)
+        if (in.type == out) return &in;
+    for (const auto& in : spec.inputs)
+        if (accepts(in, out) && (in.multiple || out == PortType::Text)) return &in;
+    return nullptr;
+}
+
+// The output of `spec` that `in` best takes: exact type first. nullptr if none.
+const PortSpec* best_output(const NodeSpec& spec, const InputSpec& in) {
+    for (const auto& out : spec.outputs)
+        if (out.type == in.type) return &out;
+    for (const auto& out : spec.outputs)
+        if (accepts(in, out.type)) return &out;
+    return nullptr;
+}
+
+const InputSpec* input_of(const Graph& g, int node, const std::string& port) {
+    const Node* n = g.find(node);
+    const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+    return spec ? find_input(*spec, port) : nullptr;
+}
+
+const PortSpec* output_of(const Graph& g, int node, const std::string& port) {
+    const Node* n = g.find(node);
+    const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+    return spec ? find_output(*spec, port) : nullptr;
+}
+
+}  // namespace
+
+std::vector<Graph::Choice> Graph::choices_for_pin(int node, const std::string& port, bool output) const {
+    std::vector<Choice> out;
+    if (output) {
+        const PortSpec* p = output_of(*this, node, port);
+        if (!p) return out;
+        for (const auto& spec : node_specs())
+            if (const InputSpec* in = best_input(spec, p->type)) out.push_back({&spec, in->name});
+    } else {
+        const InputSpec* in = input_of(*this, node, port);
+        if (!in) return out;
+        for (const auto& spec : node_specs())
+            if (const PortSpec* p = best_output(spec, *in)) out.push_back({&spec, p->name});
+    }
+    return out;
+}
+
+int Graph::add_connected(const Choice& choice, int node, const std::string& port, bool output) {
+    const int id = add_node(choice.spec->type).id;
+    if (!output) {  // the new node feeds this input: a single input's old link makes way
+        const InputSpec* in = input_of(*this, node, port);
+        if (in && !in->multiple) {
+            const auto old = links_into(node, port);
+            for (auto it = old.rbegin(); it != old.rend(); ++it) disconnect(*it);
+        }
+    }
+    const Link link = output ? Link{node, port, id, choice.port} : Link{id, choice.port, node, port};
+    if (auto err = connect(link); !err.empty()) {
+        remove_node(id);
+        throw GraphError(err);
+    }
+    return id;
+}
+
+std::vector<const NodeSpec*> Graph::choices_for_link(size_t link) const {
+    std::vector<const NodeSpec*> out;
+    if (link >= links.size()) return out;
+    const PortSpec* src = output_of(*this, links[link].from_node, links[link].from_port);
+    const InputSpec* dst = input_of(*this, links[link].to_node, links[link].to_port);
+    if (!src || !dst) return out;
+    for (const auto& spec : node_specs())
+        if (best_input(spec, src->type) && best_output(spec, *dst)) out.push_back(&spec);
+    return out;
+}
+
+int Graph::insert_node(size_t link, const std::string& type) {
+    if (link >= links.size()) throw GraphError("no such link");
+    const NodeSpec* spec = find_spec(type);
+    if (!spec) throw GraphError("unknown node type '" + type + "'");
+    const Link old = links[link];
+    const PortSpec* src = output_of(*this, old.from_node, old.from_port);
+    const InputSpec* dst = input_of(*this, old.to_node, old.to_port);
+    const InputSpec* in = src ? best_input(*spec, src->type) : nullptr;
+    const PortSpec* out = dst ? best_output(*spec, *dst) : nullptr;
+    if (!in || !out) throw GraphError(std::string(spec->title) + " can't go on that link");
+
+    const Graph before = *this;
+    disconnect(link);
+    const int id = add_node(type).id;
+    const std::string err1 = connect({old.from_node, old.from_port, id, in->name});
+    const std::string err2 = err1.empty() ? connect({id, out->name, old.to_node, old.to_port}) : "";
+    if (!err1.empty() || !err2.empty()) {
+        *this = before;
+        throw GraphError(err1.empty() ? err2 : err1);
+    }
+    return id;
+}
+
+int Graph::duplicate_node(int id) {
+    const Node* n = find(id);
+    if (!n) throw GraphError("no such node");
+    const NodeSpec* spec = find_spec(n->type);
+    Node copy = *n;
+    if (spec)
+        for (const char* state : spec->state) copy.params.erase(state);
+    int new_id = 1;
+    for (const auto& other : nodes) new_id = std::max(new_id, other.id + 1);
+    copy.id = new_id;
+    copy.x += 40;
+    copy.y += 40;
+    nodes.push_back(std::move(copy));
+    return new_id;
+}
+
+void Graph::disconnect_node(int id) {
+    std::erase_if(links, [id](const Link& l) { return l.from_node == id || l.to_node == id; });
+}
+
 std::vector<std::string> Graph::validate() const {
     std::vector<std::string> errors;
     if (profile.empty()) errors.push_back("graph has no profile");

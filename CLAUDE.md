@@ -87,6 +87,9 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - **Manual editing is its own step (EditImage, `NodeSpec::manual`).** A run waits there until the user marks it
   done (`done` state param; the CLI's `--edited true`). A freshly re-exported PNG voids an earlier "done"
   (`RunResult::reset_edits`, applied by `apply_run`).
+- **App modes:** Build layout (structure editing: add/insert/duplicate/delete/link, via core helpers
+  `choices_for_pin`, `add_connected`, `choices_for_link`, `insert_node`, `duplicate_node`, `disconnect_node`)
+  and Use layout (structure locked; fill in, run, edit). The mode is UI state, remembered in settings.
 - **Every run reports each node's state** (`RunResult::nodes`, or `RunError::nodes` on failure): done, waiting
   for the user, failed with its reason, or not reached. The app shows these as coloured node borders and badges.
 - **Every input has a pin** (`InputSpec`). Editable inputs can be typed or linked; a link wins.

@@ -66,6 +66,20 @@ ctest --test-dir build --output-on-failure
 | `build\cli\remod.exe` | Command-line tool: `run` (a saved graph), `tex2png`, `png2tex`, `package`. |
 | `build\tests\remod_tests.exe` | Test runner (usually run through `ctest`). |
 
+## Two modes
+
+The top of the Pipeline panel switches between:
+
+- **Use layout:** run a finished layout. Fill in the fields, Run, edit PNGs, click Done editing. Blocks and
+  links are locked.
+- **Build layout:** make or change a layout.
+  - **Add a block:** right-click empty canvas.
+  - **Add a block already linked:** drag from a pin and let go on empty canvas.
+  - **Put a block between two others:** right-click a link → Insert node here.
+  - **Change a block:** right-click it → Duplicate, Disconnect all or Delete.
+
+The mode is remembered. New starts in Build layout.
+
 ## Graph features
 
 - **Every field has a pin.** Link a node's output into a field instead of typing it. A linked field shows

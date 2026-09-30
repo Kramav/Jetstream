@@ -223,6 +223,12 @@ struct State {
     }();
     std::string game_files = saved.game_files_dir;  // REtool folder; empty = ask the RE plugin (see game_files_dir)
     bool show_help = saved.show_help;
+    bool build_mode = saved.build_mode;  // Build layout (edit structure) vs Use layout (fill in and run)
+    // Where a menu was opened, and on what: right-click / let-go position, pin, link index, node.
+    ImVec2 menu_pos;
+    ed::PinId menu_pin;
+    size_t menu_link = 0;
+    int menu_node = 0;
     std::string checked_noesis = "\x01";  // path the cached check below is for
     remod::NoesisCheck noesis_check;
     std::vector<std::string> profile_errors;
@@ -269,7 +275,8 @@ void remember_paths(State& s) {
     const remod::Settings now{.graph_path = s.graph_path,
                               .noesis_path = s.noesis_path,
                               .show_help = s.show_help,
-                              .game_files_dir = s.game_files};
+                              .game_files_dir = s.game_files,
+                              .build_mode = s.build_mode};
     if (now == s.saved || s.settings_file.empty()) return;
     try {
         remod::save_settings(now, s.settings_file);
@@ -339,19 +346,38 @@ void open_in_editor(const std::filesystem::path& file) {
 
 void draw_side_panel(State& s) {
     ImGui::Begin("Pipeline");
+    // Two modes: Use a finished layout (fill in, run, edit PNGs) or Build one (add, link, arrange blocks).
+    int mode = s.build_mode ? 1 : 0;
+    bool mode_changed = ImGui::RadioButton("Use layout", &mode, 0);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fill in the fields, Run, edit the PNGs. The blocks and links stay as they are.");
+    ImGui::SameLine();
+    mode_changed |= ImGui::RadioButton("Build layout", &mode, 1);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add, remove, link and arrange blocks to make or change a layout.");
+    if (mode_changed) {
+        s.build_mode = mode == 1;
+        remember_paths(s);
+    }
+    ImGui::SameLine();
     if (ImGui::Checkbox("Show help", &s.show_help)) remember_paths(s);
-    if (s.show_help) {
+
+    if (s.show_help && !s.build_mode) {
         ImGui::TextWrapped("1. Original texture: pick the game's .tex file (the picker opens in your REtool folder).");
         ImGui::TextWrapped("2. Run: Export PNG writes the PNG, and the run stops at Edit PNG - your step.");
         ImGui::TextWrapped("3. On Edit PNG: Open in editor, change and save the PNG (same size), click Done editing.");
         ImGui::TextWrapped("4. Run again: Convert PNG to texture and Package for Fluffy build the mod .zip.");
         ImGui::TextWrapped("After each run every block shows how far it got: done (green), waiting for you "
                            "(amber), failed (red, with the reason), not reached (grey).");
-        ImGui::TextWrapped("More textures: repeat 1-3 per texture and connect each new texture to Package; a new "
-                           "line appears for each. Connect edited PNGs to its preview to show them in Fluffy.");
-        ImGui::TextDisabled("Every field has a pin: link a Text node into it to reuse a value.");
-        ImGui::TextDisabled("Right-click the canvas to add nodes. Drag from a pin to a pin to link.");
-        ImGui::TextDisabled("Delete removes the selection. Mouse wheel zooms. Hover a field for help.");
+        ImGui::TextDisabled("To change which blocks there are or how they connect, switch to Build layout.");
+        ImGui::Separator();
+    } else if (s.show_help) {
+        ImGui::TextWrapped("Right-click empty canvas: add a block there.");
+        ImGui::TextWrapped("Drag from a pin to a pin: link them. Drag from a pin to empty canvas: add a block there, "
+                           "already linked.");
+        ImGui::TextWrapped("Right-click a link: insert a block on it, or delete it. Right-click a block: duplicate, "
+                           "disconnect or delete it. Delete key removes the selection.");
+        ImGui::TextWrapped("Every field has a pin: link a Text block into it to reuse a value. Package takes any "
+                           "number of textures and previews: a new line appears as you connect each one.");
+        ImGui::TextDisabled("Save the layout, then switch to Use layout to run it.");
         ImGui::Separator();
     }
     ImGui::InputText("##graph", &s.graph_path);
@@ -362,7 +388,9 @@ void draw_side_panel(State& s) {
     if (ImGui::Button("New")) {
         s.graph = {};
         s.statuses.clear();
-        s.status = "New graph. Right-click the canvas to add nodes.";
+        s.build_mode = true;  // an empty layout can only be built
+        remember_paths(s);
+        s.status = "New layout. Right-click the canvas to add blocks.";
     }
     ImGui::SameLine();
     if (ImGui::Button("Load")) load_graph_file(s);
@@ -416,15 +444,19 @@ void draw_side_panel(State& s) {
     if (current == s.profiles.end())
         ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "No profile '%s' in the profiles folder.", s.graph.profile.c_str());
     for (const auto& e : s.profile_errors) ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", e.c_str());
-    const bool running = s.run.valid();
-    ImGui::BeginDisabled(running);
-    if (ImGui::Button(running ? "Running..." : "Run")) {
-        s.graph_path = unquote(s.graph_path);
-        s.noesis_path = unquote(s.noesis_path);
-        remember_paths(s);
-        start_run(s);
+    if (s.build_mode) {
+        ImGui::TextDisabled("Building the layout. Switch to Use layout to run it.");
+    } else {
+        const bool running = s.run.valid();
+        ImGui::BeginDisabled(running);
+        if (ImGui::Button(running ? "Running..." : "Run")) {
+            s.graph_path = unquote(s.graph_path);
+            s.noesis_path = unquote(s.noesis_path);
+            remember_paths(s);
+            start_run(s);
+        }
+        ImGui::EndDisabled();
     }
-    ImGui::EndDisabled();
 
     ImGui::Separator();
     ImGui::TextWrapped("%s", s.status.c_str());
@@ -581,13 +613,15 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 const std::vector<size_t> linked = s.graph.links_into(n.id, in.name);
                 ImGui::PushID(in.name);
 
-                if (in.multiple) {  // one row per link, plus an empty row to connect the next one
+                if (in.multiple) {  // one row per link, plus (when building) an empty row to connect the next one
                     const bool numbered = std::string(in.name) == "parts";  // Text node: rows are {1}, {2}, ...
-                    for (size_t row = 0; row <= linked.size() && row < kRows; ++row) {
+                    const size_t rows = linked.size() + (s.build_mode || linked.empty() ? 1 : 0);
+                    for (size_t row = 0; row < rows && row < kRows; ++row) {
                         const std::string n_str = std::to_string(row + 1);
                         std::string label = numbered ? "{" + n_str + "}" : std::string(in.label) + " " + n_str;
                         if (row == linked.size())
-                            label = "+ " + (numbered ? "{" + n_str + "}" : std::string(in.label));
+                            label = s.build_mode ? "+ " + (numbered ? "{" + n_str + "}" : std::string(in.label))
+                                                 : std::string(in.label) + ": none connected";
                         else
                             label += "  <- " + source_of(s.graph, s.graph.links[linked[row]]);
                         draw_pin(pin_id(n.id, false, slot, row), label, in.type, false, row < linked.size(), x0,
@@ -702,12 +736,16 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                  ImGui::ColorConvertU32ToFloat4(port_color(fs->outputs[out_slot].type)), 2.0f);
     }
 
-    // Dragging a new link: core decides whether it's allowed.
+    // Dragging a new link: core decides whether it's allowed. Letting go on empty canvas offers nodes to add
+    // there, already connected ("add node here").
+    bool open_pin_menu = false;
     if (ed::BeginCreate()) {
         ed::PinId a, b;
         if (ed::QueryNewLink(&a, &b) && a && b) {
             const auto link = make_link(s.graph, a, b);
-            const std::string err = link ? s.graph.can_connect(*link) : "connect an output to an input";
+            const std::string err = !s.build_mode ? "Switch to Build layout to change links."
+                                    : link        ? s.graph.can_connect(*link)
+                                                  : "connect an output to an input";
             if (!err.empty()) {
                 ed::RejectNewItem(ImVec4(1, 0.3f, 0.3f, 1), 2.0f);
                 ed::Suspend();
@@ -715,6 +753,18 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 ed::Resume();
             } else if (ed::AcceptNewItem()) {
                 s.graph.connect(*link);
+            }
+        }
+        ed::PinId pin;
+        if (ed::QueryNewNode(&pin) && pin) {
+            ed::Suspend();
+            ImGui::SetTooltip(s.build_mode ? "+ Add a block here" : "Switch to Build layout to add blocks.");
+            ed::Resume();
+            if (!s.build_mode) {
+                ed::RejectNewItem(ImVec4(1, 0.3f, 0.3f, 1), 2.0f);
+            } else if (ed::AcceptNewItem()) {
+                s.menu_pin = pin;
+                open_pin_menu = true;
             }
         }
     }
@@ -725,32 +775,109 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     std::vector<int> dead_nodes;
     if (ed::BeginDelete()) {
         ed::LinkId link;
-        while (ed::QueryDeletedLink(&link))
-            if (ed::AcceptDeletedItem()) dead_links.push_back(size_t(link.Get() - kLinkBase));
+        while (ed::QueryDeletedLink(&link)) {
+            if (!s.build_mode)
+                ed::RejectDeletedItem();  // Use layout: the structure is fixed
+            else if (ed::AcceptDeletedItem())
+                dead_links.push_back(size_t(link.Get() - kLinkBase));
+        }
         ed::NodeId node;
-        while (ed::QueryDeletedNode(&node))
-            if (ed::AcceptDeletedItem()) dead_nodes.push_back(int(node.Get()));
+        while (ed::QueryDeletedNode(&node)) {
+            if (!s.build_mode)
+                ed::RejectDeletedItem();
+            else if (ed::AcceptDeletedItem())
+                dead_nodes.push_back(int(node.Get()));
+        }
     }
     ed::EndDelete();
     std::ranges::sort(dead_links, std::greater<>());
     for (size_t i : dead_links) s.graph.disconnect(i);
     for (int id : dead_nodes) s.graph.remove_node(id);
 
-    // Right-click on empty canvas: add a node there.
+    // Menus: right-click a node, a link or empty canvas; or let go of a dragged link on empty canvas.
     ed::Suspend();
-    static ImVec2 new_node_pos;
-    if (ed::ShowBackgroundContextMenu()) {
-        new_node_pos = ImGui::GetMousePos();
+    ed::NodeId clicked_node;
+    ed::LinkId clicked_link;
+    if (!s.build_mode) {
+        // Use layout: no structural menus. A right-click on empty canvas says where to go instead.
+        if (ed::ShowBackgroundContextMenu() || ed::ShowNodeContextMenu(&clicked_node) ||
+            ed::ShowLinkContextMenu(&clicked_link))
+            s.status = "Switch to Build layout (top of the Pipeline panel) to add, remove or relink blocks.";
+    } else if (open_pin_menu) {
+        s.menu_pos = ImGui::GetMousePos();
+        ImGui::OpenPopup("add_connected");
+    } else if (ed::ShowNodeContextMenu(&clicked_node)) {
+        s.menu_node = int(clicked_node.Get());
+        s.menu_pos = ImGui::GetMousePos();
+        ImGui::OpenPopup("node_menu");
+    } else if (ed::ShowLinkContextMenu(&clicked_link)) {
+        s.menu_link = size_t(clicked_link.Get() - kLinkBase);
+        s.menu_pos = ImGui::GetMousePos();
+        ImGui::OpenPopup("link_menu");
+    } else if (ed::ShowBackgroundContextMenu()) {
+        s.menu_pos = ImGui::GetMousePos();
         ImGui::OpenPopup("add_node");
     }
-    if (ImGui::BeginPopup("add_node")) {
-        for (const auto& spec : remod::node_specs()) {
-            if (ImGui::MenuItem(spec.type)) {
-                const remod::Node& n = s.graph.add_node(spec.type);
-                ed::SetNodePosition(n.id, ed::ScreenToCanvas(new_node_pos));
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", spec.summary);
+
+    // A menu entry for a node type: its readable name, the description on hover.
+    auto node_item = [](const remod::NodeSpec& spec) {
+        const std::string label = std::string(spec.manual ? "Your step: " : "") + spec.title;
+        const bool picked = ImGui::MenuItem(label.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", spec.summary);
+        return picked;
+    };
+    auto place = [&](int id) { ed::SetNodePosition(id, ed::ScreenToCanvas(s.menu_pos)); };
+    auto attempt = [&](auto&& edit) {  // editing refusals go to the status line
+        try {
+            edit();
+        } catch (const std::exception& e) {
+            s.status = e.what();
         }
+    };
+
+    if (ImGui::BeginPopup("add_node")) {
+        ImGui::TextDisabled("Add a node");
+        ImGui::Separator();
+        for (const auto& spec : remod::node_specs())
+            if (node_item(spec)) place(s.graph.add_node(spec.type).id);
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("add_connected")) {
+        ImGui::TextDisabled("Add a node connected here");
+        ImGui::Separator();
+        const PinRef ref = decode(s.menu_pin);
+        const remod::Node* n = s.graph.find(ref.node);
+        const remod::NodeSpec* spec = n ? remod::find_spec(n->type) : nullptr;
+        const auto& ports_size = spec ? (ref.output ? spec->outputs.size() : spec->inputs.size()) : 0;
+        if (spec && ref.slot < ports_size) {
+            const std::string port = ref.output ? spec->outputs[ref.slot].name : spec->inputs[ref.slot].name;
+            const auto choices = s.graph.choices_for_pin(ref.node, port, ref.output);
+            if (choices.empty()) ImGui::TextDisabled("Nothing fits this pin.");
+            for (const auto& c : choices)
+                if (node_item(*c.spec)) attempt([&] { place(s.graph.add_connected(c, ref.node, port, ref.output)); });
+        }
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("link_menu")) {
+        if (ImGui::BeginMenu("Insert node here")) {
+            const auto fits = s.graph.choices_for_link(s.menu_link);
+            if (fits.empty()) ImGui::TextDisabled("Nothing fits on this link.");
+            for (const auto* spec : fits)
+                if (node_item(*spec)) attempt([&] { place(s.graph.insert_node(s.menu_link, spec->type)); });
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Delete link")) s.graph.disconnect(s.menu_link);
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("node_menu")) {
+        if (ImGui::MenuItem("Duplicate"))
+            attempt([&] {
+                const int copy = s.graph.duplicate_node(s.menu_node);
+                ed::SetNodePosition(copy, ed::GetNodePosition(s.menu_node) + ImVec2(40, 40));
+            });
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same type and values, no connections.");
+        if (ImGui::MenuItem("Disconnect all")) s.graph.disconnect_node(s.menu_node);
+        if (ImGui::MenuItem("Delete")) s.graph.remove_node(s.menu_node);
         ImGui::EndPopup();
     }
     ed::Resume();

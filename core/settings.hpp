@@ -10,6 +10,7 @@ struct Settings {
     std::string noesis_path;
     bool show_help = true;
     std::string game_files_dir;  // extracted game files (REtool); empty = ask the RE plugin's NativesPath.txt
+    bool build_mode = false;     // app: Build layout (edit blocks and links) vs Use layout (fill in and run)
     bool operator==(const Settings&) const = default;
 };
 

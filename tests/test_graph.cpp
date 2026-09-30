@@ -444,6 +444,86 @@ TEST_CASE("run: LoadTex notes a streaming copy of the texture") {
     CHECK(std::ranges::any_of(log, [](const std::string& s) { return s.find("streaming/env/a.tex") != std::string::npos; }));
 }
 
+TEST_CASE("editing: nodes that fit a pin, added already connected") {
+    Graph g = pipeline("a.tex.143221013", "a.png", "out");
+    auto types = [](const std::vector<Graph::Choice>& cs) {
+        std::vector<std::string> t;
+        for (const auto& c : cs) t.emplace_back(c.spec->type);
+        return t;
+    };
+    auto contains = [](const std::vector<std::string>& v, const char* s) { return std::ranges::count(v, s) == 1; };
+
+    // Dragging out of Original texture's "texture" output: things that take a texture (or text, as a path).
+    const auto from_tex = g.choices_for_pin(1, "tex", true);
+    CHECK(contains(types(from_tex), "ExportImage"));
+    CHECK(contains(types(from_tex), "SaveTex"));
+    CHECK(contains(types(from_tex), "PackageMod"));
+    CHECK(contains(types(from_tex), "Text"));  // into its multiple parts input
+    CHECK_FALSE(contains(types(from_tex), "EditImage"));  // takes an image, not a texture
+    const auto save = std::ranges::find(from_tex, std::string("SaveTex"), [](const auto& c) { return std::string(c.spec->type); });
+    CHECK(save->port == "original");
+
+    // Dragging out of Convert's "edited PNG" input: things that output an image.
+    const auto into_image = types(g.choices_for_pin(4, "image", false));
+    CHECK(contains(into_image, "ExportImage"));
+    CHECK(contains(into_image, "EditImage"));
+    CHECK(contains(into_image, "ImportImage"));
+    CHECK_FALSE(contains(into_image, "LoadTex"));
+
+    // Package's Mod name takes text: a Text node fits.
+    CHECK(contains(types(g.choices_for_pin(5, "name", false)), "Text"));
+
+    // Add from an input that's already linked: the new node replaces the old source.
+    const auto into = g.choices_for_pin(4, "image", false);
+    const auto import = std::ranges::find(into, std::string("ImportImage"), [](const auto& c) { return std::string(c.spec->type); });
+    const int id = g.add_connected(*import, 4, "image", false);
+    REQUIRE(g.links_into(4, "image").size() == 1);
+    CHECK(g.links[g.links_into(4, "image")[0]].from_node == id);
+    CHECK_FALSE(g.is_connected(3, "image", true));  // the Edit PNG step's old link made way
+
+    // From an output into a multiple input: added, nothing replaced.
+    const auto pkg = std::ranges::find(from_tex, std::string("PackageMod"), [](const auto& c) { return std::string(c.spec->type); });
+    const int pkg2 = g.add_connected(*pkg, 1, "tex", true);
+    CHECK(g.links_into(pkg2, "tex").size() == 1);
+}
+
+TEST_CASE("editing: insert a node on a link, duplicate, disconnect") {
+    Graph g;
+    g.add_node("LoadTex").params["tex"] = "a.tex.143221013";  // 1
+    g.add_node("ExportImage").params["png"] = "a.png";        // 2
+    g.add_node("SaveTex");                                     // 3
+    REQUIRE(g.connect({1, "tex", 2, "tex"}).empty());
+    REQUIRE(g.connect({2, "png", 3, "image"}).empty());       // export straight into convert: no editing step
+    REQUIRE(g.connect({1, "tex", 3, "original"}).empty());
+
+    std::vector<std::string> fits;
+    for (const auto* s : g.choices_for_link(1)) fits.emplace_back(s->type);
+    CHECK(std::ranges::count(fits, "EditImage") == 1);  // image in, image out
+    CHECK(std::ranges::count(fits, "LoadTex") == 0);
+
+    const int edit = g.insert_node(1, "EditImage");
+    CHECK(g.find(edit)->type == "EditImage");
+    CHECK(g.links[g.links_into(edit, "png")[0]].from_node == 2);
+    CHECK(g.links[g.links_into(3, "image")[0]].from_node == edit);
+    CHECK(g.links.size() == 4);
+    CHECK_THROWS_AS(g.insert_node(0, "PackageMod"), GraphError);  // no texture output to feed Export
+    CHECK(g.links.size() == 4);  // unchanged after the refusal
+
+    remod::set_edit_done(g, edit, true);
+    const int copy = g.duplicate_node(edit);
+    CHECK(g.find(copy)->type == "EditImage");
+    CHECK_FALSE(g.find(copy)->params.contains("done"));  // run state isn't copied
+    CHECK(g.find(copy)->x == g.find(edit)->x + 40);
+    const int load2 = g.duplicate_node(1);
+    CHECK(g.find(load2)->params.at("tex") == "a.tex.143221013");
+    CHECK_FALSE(g.is_connected(load2, "tex", true));  // links aren't copied
+
+    g.disconnect_node(3);
+    CHECK_FALSE(g.is_connected(3, "image", false));
+    CHECK_FALSE(g.is_connected(3, "original", false));
+    CHECK(g.links.size() == 2);
+}
+
 TEST_CASE("profiles load by id") {
     CHECK(remod::load_profile_by_id(REMOD_PROFILES_DIR, "re4r").name == "Resident Evil 4 (2023)");
     CHECK_THROWS_AS(remod::load_profile_by_id(REMOD_PROFILES_DIR, "../x"), remod::ProfileError);

@@ -105,6 +105,25 @@ struct Graph {
     const Node* find(int id) const;
     Node* find(int id);
     std::vector<std::string> validate() const;  // every problem that would stop a run; empty = runnable
+
+    // ---- Editing helpers for front ends (the rules live here, not in the UI) ----
+    struct Choice {
+        const NodeSpec* spec;  // a node type that fits
+        std::string port;      // which of its inputs/outputs would be connected
+    };
+    // Node types that could be attached to an existing pin: for an output pin, types with an input that takes it;
+    // for an input pin, types with an output it takes. Prefers exact type matches; plain Text fits editable fields.
+    std::vector<Choice> choices_for_pin(int node, const std::string& port, bool output) const;
+    // Adds a node of `choice` and links it to that pin. A single (non-multiple) input's old link is replaced.
+    // Returns the new node's id.
+    int add_connected(const Choice& choice, int node, const std::string& port, bool output);
+    // Node types that can sit on a link: an input that takes the link's source and an output its target takes.
+    std::vector<const NodeSpec*> choices_for_link(size_t link) const;
+    // Replaces the link with source -> new node -> target. Returns the new node's id.
+    int insert_node(size_t link, const std::string& type);
+    // Same type and typed values (not run state such as "done"), no links, placed a little offset.
+    int duplicate_node(int id);
+    void disconnect_node(int id);  // removes every link to or from it
 };
 
 // JSON graph file, schema_version 0. Example: schemas/graph.v0.example.json
