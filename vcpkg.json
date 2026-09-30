@@ -1,0 +1,18 @@
+{
+  "name": "remod",
+  "version": "0.0.0",
+  "builtin-baseline": "4cb050be2cfa7a947cdd2dd1a70e24b17774c979",
+  "dependencies": [
+    "tomlplusplus",
+    "catch2",
+    {
+      "name": "imgui",
+      "features": ["docking-experimental", "win32-binding", "dx11-binding"]
+    },
+    "imgui-node-editor"
+  ],
+  "overrides": [
+    { "name": "imgui", "version": "1.92.9" },
+    { "name": "imgui-node-editor", "version": "0.9.3", "port-version": 4 }
+  ]
+}

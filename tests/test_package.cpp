@@ -1,0 +1,136 @@
+#include "package.hpp"
+#include "texture_converter.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <fstream>
+#include <random>
+#include <sstream>
+
+using Catch::Matchers::ContainsSubstring;
+using remod::PackageError;
+namespace fs = std::filesystem;
+
+namespace {
+
+const remod::Profile kProfile{.id = "re4r",
+                              .name = "Resident Evil 4 (2023)",
+                              .tex_suffix = "143221013",
+                              .natives_root = "natives/STM",
+                              .packaging = {"loose_archive"},
+                              .pak_script = "Create-PAK-2023.bat",
+                              .noesis_export = "TBD",
+                              .file_list = "TBD"};
+
+struct TempDir {
+    fs::path path = fs::temp_directory_path() / ("remod_test_" + std::to_string(std::random_device{}()));
+    TempDir() { fs::create_directories(path); }
+    ~TempDir() { fs::remove_all(path); }
+};
+
+void write_file(const fs::path& p, const std::string& bytes) {
+    std::ofstream(p, std::ios::binary) << bytes;
+}
+
+std::string read_file(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), {});
+}
+
+}  // namespace
+
+TEST_CASE("game path maps to <mod>/<natives_root>/<game path>") {
+    CHECK(remod::package_path(kProfile, "MyMod", "_chainsaw/ui/load.tex.143221013") ==
+          fs::path("MyMod/natives/STM/_chainsaw/ui/load.tex.143221013").lexically_normal());
+    // Non-texture assets are not suffix-checked.
+    CHECK(remod::package_path(kProfile, "MyMod", "a/b.bin") == fs::path("MyMod/natives/STM/a/b.bin").lexically_normal());
+}
+
+TEST_CASE("path mapping rejects unsafe paths, bad mod names and wrong tex suffix") {
+    CHECK_THROWS_AS(remod::package_path(kProfile, "M", "C:/x.tex.143221013"), PackageError);
+    CHECK_THROWS_AS(remod::package_path(kProfile, "M", "/x.tex.143221013"), PackageError);
+    CHECK_THROWS_AS(remod::package_path(kProfile, "M", "../x.tex.143221013"), PackageError);
+    CHECK_THROWS_AS(remod::package_path(kProfile, "M", "a/../../x.tex.143221013"), PackageError);
+    CHECK_THROWS_AS(remod::package_path(kProfile, "M", ""), PackageError);
+    for (const char* bad : {"", ".", "..", "a/b", "a\\b", "a:b", "a?", "a*", "a<", "a|", "a\"", "trailing.", "trailing "})
+        CHECK_THROWS_AS(remod::package_path(kProfile, bad, "x.tex.143221013"), PackageError);
+    CHECK_THROWS_WITH(remod::package_path(kProfile, "M", "ui/x.tex"), ContainsSubstring(".tex.143221013"));
+    CHECK_THROWS_WITH(remod::package_path(kProfile, "M", "ui/x.tex.999"), ContainsSubstring(".tex.143221013"));
+}
+
+TEST_CASE("modinfo.ini contents") {
+    CHECK(remod::write_modinfo({.name = "My Mod",
+                                .version = "1.0",
+                                .description = "Line one\nLine two\r\nLine three",
+                                .author = "me",
+                                .screenshot = "shot.png"}) ==
+          "name=My Mod\r\nversion=1.0\r\ndescription=Line one\\nLine two\\nLine three\r\nauthor=me\r\nscreenshot=shot.png\r\n");
+    CHECK(remod::write_modinfo({.name = "Only"}) == "name=Only\r\n");
+    CHECK(remod::write_modinfo({}).empty());
+    CHECK_THROWS_WITH(remod::write_modinfo({.name = "a\nb"}), ContainsSubstring("'name'"));
+    CHECK_THROWS_AS(remod::write_modinfo({.author = "a\rb"}), PackageError);
+}
+
+TEST_CASE("build_package writes the Fluffy folder layout") {
+    TempDir tmp;
+    const fs::path tex = tmp.path / "in.tex.143221013";
+    const fs::path shot = tmp.path / "Shot.PNG";
+    write_file(tex, std::string("TEX\0\x01\xff", 6));
+    write_file(shot, "png-bytes");
+
+    remod::PackageSpec spec{.mod_name = "MyMod",
+                            .out_dir = tmp.path / "out",
+                            .info = {.name = "My Mod", .version = "1"},
+                            .files = {{tex, "_chainsaw/ui/load.tex.143221013"}},
+                            .screenshot = shot};
+    const fs::path root = remod::build_package(kProfile, spec);
+
+    CHECK(root == fs::absolute(tmp.path / "out" / "MyMod"));
+    CHECK(read_file(root / "natives/STM/_chainsaw/ui/load.tex.143221013") == std::string("TEX\0\x01\xff", 6));
+    CHECK(read_file(root / "Shot.PNG") == "png-bytes");
+    CHECK(read_file(root / "modinfo.ini") == "name=My Mod\r\nversion=1\r\nscreenshot=Shot.PNG\r\n");
+
+    size_t entries = 0;
+    for ([[maybe_unused]] const auto& e : fs::recursive_directory_iterator(root)) ++entries;
+    CHECK(entries == 7);  // natives, STM, _chainsaw, ui, tex, screenshot, modinfo.ini
+
+    SECTION("refuses to overwrite an existing package") {
+        CHECK_THROWS_WITH(remod::build_package(kProfile, spec), ContainsSubstring("already exists"));
+        CHECK(read_file(root / "modinfo.ini") == "name=My Mod\r\nversion=1\r\nscreenshot=Shot.PNG\r\n");
+    }
+}
+
+TEST_CASE("build_package validates before writing anything") {
+    TempDir tmp;
+    const fs::path tex = tmp.path / "in.tex.143221013";
+    write_file(tex, "x");
+    const fs::path out = tmp.path / "out";
+
+    auto spec = [&](remod::PackageSpec s) {
+        s.mod_name = "M";
+        s.out_dir = out;
+        return s;
+    };
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({})), ContainsSubstring("no files"));
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tmp.path / "missing", "a.tex.143221013"}}})),
+                      ContainsSubstring("not found"));
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, "a.tex.143221013"}, {tex, "a.tex.143221013"}}})),
+                      ContainsSubstring("twice"));
+    write_file(tmp.path / "shot.gif", "g");
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, "a.tex.143221013"}}, .screenshot = tmp.path / "shot.gif"})),
+                      ContainsSubstring("jpg, png, tga or bmp"));
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, "a.tex.143221013"}},
+                                                           .screenshot = tmp.path / "nope.png"})),
+                      ContainsSubstring("screenshot not found"));
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, std::string(300, 'a') + ".tex.143221013"}}})),
+                      ContainsSubstring("exceeds"));
+    CHECK_FALSE(fs::exists(out));
+}
+
+TEST_CASE("stub texture converter reports not implemented") {
+    remod::StubTextureConverter conv;
+    CHECK_THROWS_WITH(conv.load_tex("x.tex.143221013", kProfile), ContainsSubstring("not implemented") &&
+                                                                     ContainsSubstring("LoadTex"));
+    CHECK_THROWS_AS(conv.save_tex({}, {}, "x.tex.143221013"), remod::NotImplementedError);
+}

@@ -1,0 +1,9 @@
+[game]
+id              = "re4r"
+name            = "Resident Evil 4 (2023)"
+tex_suffix      = "143221013"                 # [guide] RE4R texture version suffix
+natives_root    = "natives/STM"               # [guide]
+packaging       = ["loose_archive", "pak"]    # [TBD-spike] which Fluffy accepts for RE4R
+pak_script      = "Create-PAK-2023.bat"       # [guide] REtool script for 2023-or-older games
+noesis_export   = "TBD"                       # [TBD-spike] ?cmode option selecting RE4R tex output
+file_list       = "TBD"                       # [TBD-spike] PAK file list source/version

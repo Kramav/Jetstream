@@ -1,0 +1,13 @@
+# Game files — never commit (CLAUDE.md §1)
+natives/
+*.tex.*
+*.pak
+*.mesh.*
+
+# Extraction caches
+cache/
+
+# Build output
+build/
+out/
+vcpkg_installed/
