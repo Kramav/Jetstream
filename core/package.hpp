@@ -44,10 +44,13 @@ struct PackageSpec {
     std::vector<PackageFile> files;
     fs::path screenshot;  // optional; jpg/png/tga/bmp
     bool zip = true;      // also write <out_dir>/<mod_name>.zip, mod folder at the archive root
+    bool replace = false;  // overwrite a previous build of the same mod (see build_package)
 };
 
 // Builds <out_dir>/<mod_name>/ (and <mod_name>.zip if spec.zip) and returns the folder.
-// Refuses to touch an existing folder or zip.
+// An existing folder or zip is an error, unless spec.replace is set and it was built for this mod: a folder
+// whose modinfo.ini says name=<info.name>, a zip holding only <mod_name>/... including its modinfo.ini.
+// Anything else is never deleted.
 fs::path build_package(const Profile& profile, const PackageSpec& spec);
 
 }  // namespace remod

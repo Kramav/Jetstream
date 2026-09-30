@@ -20,6 +20,7 @@ struct Profile {
     std::string pak_script;
     std::string noesis_export;
     std::string file_list;
+    std::string noesis_game;  // the RE Engine plugin's name for the game, e.g. "RE4" (its <game>NativesPath.txt)
 
     // Names of fields still set to "TBD" (awaiting the §9 spike).
     std::vector<std::string> unresolved() const;

@@ -4,6 +4,7 @@
 #include "graph.hpp"
 #include "profile.hpp"
 #include "settings.hpp"
+#include "setup.hpp"
 #include "texture_converter.hpp"
 
 #include <nfd.h>
@@ -20,11 +21,13 @@
 #include <imgui-node-editor/imgui_node_editor_internal.h>
 
 #include <d3d11.h>
+#include <shellapi.h>
 
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <future>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -107,11 +110,13 @@ LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 // ---- Graph editor UI ---------------------------------------------------------------------------
 
-// Editor ids. Pin id = node id * 64 + slot, inputs in slots 0..31, outputs in 32..63. Link id = base + index.
-constexpr std::uintptr_t kPinsPerNode = 64, kOutputSlot = 32, kLinkBase = std::uintptr_t(1) << 24;
+// Editor ids. Pin id = node * 4096 + (output ? 2048 : 0) + slot * 64 + row, where slot is the input/output's
+// index in the node spec and row numbers the lines of a multiple input (one per link, plus an empty one).
+// Link id = base + index into graph.links.
+constexpr std::uintptr_t kPerNode = 4096, kOutputBit = 2048, kRows = 64, kLinkBase = std::uintptr_t(1) << 24;
 
-ed::PinId pin_id(int node, bool output, size_t slot) {
-    return ed::PinId(std::uintptr_t(node) * kPinsPerNode + (output ? kOutputSlot : 0) + slot);
+ed::PinId pin_id(int node, bool output, size_t slot, size_t row = 0) {
+    return ed::PinId(std::uintptr_t(node) * kPerNode + (output ? kOutputBit : 0) + slot * kRows + row);
 }
 
 struct PinRef {
@@ -121,17 +126,19 @@ struct PinRef {
 };
 
 PinRef decode(ed::PinId id) {
-    const std::uintptr_t v = id.Get(), slot = v % kPinsPerNode;
-    return {int(v / kPinsPerNode), slot >= kOutputSlot, size_t(slot % kOutputSlot)};
+    const std::uintptr_t v = id.Get(), local = v % kPerNode;
+    return {int(v / kPerNode), local >= kOutputBit, size_t((local % kOutputBit) / kRows)};
 }
 
-size_t slot_of(const std::vector<remod::PortSpec>& ports, const std::string& name) {
+template <class Ports>
+size_t slot_of(const Ports& ports, const std::string& name) {
     for (size_t i = 0; i < ports.size(); ++i)
         if (name == ports[i].name) return i;
     return 0;
 }
 
 // Two dragged pins -> an output->input link, or nothing if they aren't one output and one input.
+// Any row of a multiple input means "add another link".
 std::optional<remod::Link> make_link(const remod::Graph& g, ed::PinId a, ed::PinId b) {
     PinRef from = decode(a), to = decode(b);
     if (from.output == to.output) return std::nullopt;
@@ -142,6 +149,15 @@ std::optional<remod::Link> make_link(const remod::Graph& g, ed::PinId a, ed::Pin
     const remod::NodeSpec* ts = tn ? remod::find_spec(tn->type) : nullptr;
     if (!fs || !ts || from.slot >= fs->outputs.size() || to.slot >= ts->inputs.size()) return std::nullopt;
     return remod::Link{from.node, fs->outputs[from.slot].name, to.node, ts->inputs[to.slot].name};
+}
+
+// "Original texture: texture": where a linked input's value comes from.
+std::string source_of(const remod::Graph& g, const remod::Link& l) {
+    const remod::Node* from = g.find(l.from_node);
+    const remod::NodeSpec* spec = from ? remod::find_spec(from->type) : nullptr;
+    if (!spec) return "?";
+    const auto out = std::ranges::find(spec->outputs, l.from_port, [](const auto& p) { return std::string(p.name); });
+    return std::string(spec->title) + ": " + (out != spec->outputs.end() ? out->label : l.from_port.c_str());
 }
 
 // Explorer's "Copy as path" wraps paths in quotes.
@@ -162,14 +178,16 @@ std::string env(const char* name) {
 
 // Windows file/folder picker. Returns true and updates `value` if the user picked something.
 // ponytail: paths are treated as ASCII/ANSI like the rest of the app; non-ASCII paths need UTF-8 handling end to end.
-bool browse(remod::PathKind kind, const char* filter, std::string& value) {
+// `start_dir`: where the picker opens when `value` doesn't point anywhere yet.
+bool browse(remod::PathKind kind, const char* filter, std::string& value, const std::string& start_dir = {}) {
     std::string dir;
+    std::error_code ec;
     if (!value.empty()) {
-        std::error_code ec;
         const std::filesystem::path p(value);
         dir = (std::filesystem::is_directory(p, ec) ? p : p.parent_path()).string();
         if (!std::filesystem::is_directory(dir, ec)) dir.clear();
     }
+    if (dir.empty() && std::filesystem::is_directory(start_dir, ec)) dir = start_dir;
     const char* start = dir.empty() ? nullptr : dir.c_str();
     const nfdu8filteritem_t item{kind == remod::PathKind::OpenTexture ? "RE Engine textures" : "Files", filter};
     const nfdu8filteritem_t* filters = filter ? &item : nullptr;
@@ -198,8 +216,15 @@ struct State {
     const std::filesystem::path settings_file = remod::default_settings_path();
     remod::Settings saved = remod::load_settings(settings_file);
     std::string graph_path = saved.graph_path.empty() ? "graph.json" : saved.graph_path;
-    std::string noesis_path = saved.noesis_path.empty() ? env("REMOD_NOESIS") : saved.noesis_path;
+    // Remembered path, else found automatically (REMOD_NOESIS, PATH, winget).
+    std::string noesis_path = [this] {
+        const auto found = remod::find_noesis(saved.noesis_path);
+        return found.empty() ? saved.noesis_path : found.string();
+    }();
+    std::string game_files = saved.game_files_dir;  // REtool folder; empty = ask the RE plugin (see game_files_dir)
     bool show_help = saved.show_help;
+    std::string checked_noesis = "\x01";  // path the cached check below is for
+    remod::NoesisCheck noesis_check;
     std::vector<std::string> profile_errors;
     const std::vector<remod::Profile> profiles = remod::load_profiles(remod::find_profiles_dir(), &profile_errors);
     // Picker filter for textures of every known game: "tex,143221013,..." (plain .tex and each version suffix).
@@ -214,9 +239,17 @@ struct State {
     bool navigate = false;
     bool save_requested = false;  // handled inside the editor, where node positions can be read
     std::future<remod::RunResult> run;
+    std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
     std::mutex log_mutex;
     std::vector<std::string> log;  // written by the run thread
 };
+
+// The REtool folder: the one set in the panel, else the one the RE plugin remembers for the graph's game.
+std::string game_files_dir(const State& s) {
+    if (!s.game_files.empty()) return s.game_files;
+    const auto p = std::ranges::find(s.profiles, s.graph.profile, &remod::Profile::id);
+    return p == s.profiles.end() ? std::string() : remod::game_files_dir(s.noesis_path, *p).string();
+}
 
 // After a texture is picked: switch the graph to that texture's game, or say why not.
 void detect_game(State& s, const std::string& texture) {
@@ -233,7 +266,10 @@ void detect_game(State& s, const std::string& texture) {
 
 // Writes the settings file only when something changed.
 void remember_paths(State& s) {
-    const remod::Settings now{.graph_path = s.graph_path, .noesis_path = s.noesis_path, .show_help = s.show_help};
+    const remod::Settings now{.graph_path = s.graph_path,
+                              .noesis_path = s.noesis_path,
+                              .show_help = s.show_help,
+                              .game_files_dir = s.game_files};
     if (now == s.saved || s.settings_file.empty()) return;
     try {
         remod::save_settings(now, s.settings_file);
@@ -247,6 +283,7 @@ void load_graph_file(State& s) {
     s.graph_path = unquote(s.graph_path);
     try {
         s.graph = remod::load_graph(s.graph_path);
+        s.statuses.clear();
         s.push_positions = true;
         s.status = "Loaded " + s.graph_path + ": " + std::to_string(s.graph.nodes.size()) + " nodes, " +
                    std::to_string(s.graph.links.size()) + " links";
@@ -281,20 +318,38 @@ void poll_run(State& s) {
     using namespace std::chrono_literals;
     if (!s.run.valid() || s.run.wait_for(0s) != std::future_status::ready) return;
     try {
-        s.status = s.run.get().message;
+        const remod::RunResult r = s.run.get();
+        remod::apply_run(s.graph, r);  // e.g. a re-exported PNG un-does an earlier "Done editing"
+        s.statuses = r.nodes;
+        s.status = r.message;
+    } catch (const remod::RunError& e) {
+        s.statuses = e.nodes;
+        s.status = std::string("Error: ") + e.what();
     } catch (const std::exception& e) {
+        s.statuses.clear();
         s.status = std::string("Error: ") + e.what();
     }
+}
+
+// Opens a file in the user's image editor (the "edit" verb, e.g. Paint), else whatever opens it.
+void open_in_editor(const std::filesystem::path& file) {
+    if (reinterpret_cast<INT_PTR>(::ShellExecuteW(nullptr, L"edit", file.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+        ::ShellExecuteW(nullptr, L"open", file.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 void draw_side_panel(State& s) {
     ImGui::Begin("Pipeline");
     if (ImGui::Checkbox("Show help", &s.show_help)) remember_paths(s);
     if (s.show_help) {
-        ImGui::TextWrapped("1. Original texture: pick the game's .tex file.");
-        ImGui::TextWrapped("2. Export PNG for editing: the first Run writes the PNG and stops.");
-        ImGui::TextWrapped("3. Edit the PNG in any image editor. Keep the same size.");
+        ImGui::TextWrapped("1. Original texture: pick the game's .tex file (the picker opens in your REtool folder).");
+        ImGui::TextWrapped("2. Run: Export PNG writes the PNG, and the run stops at Edit PNG - your step.");
+        ImGui::TextWrapped("3. On Edit PNG: Open in editor, change and save the PNG (same size), click Done editing.");
         ImGui::TextWrapped("4. Run again: Convert PNG to texture and Package for Fluffy build the mod .zip.");
+        ImGui::TextWrapped("After each run every block shows how far it got: done (green), waiting for you "
+                           "(amber), failed (red, with the reason), not reached (grey).");
+        ImGui::TextWrapped("More textures: repeat 1-3 per texture and connect each new texture to Package; a new "
+                           "line appears for each. Connect edited PNGs to its preview to show them in Fluffy.");
+        ImGui::TextDisabled("Every field has a pin: link a Text node into it to reuse a value.");
         ImGui::TextDisabled("Right-click the canvas to add nodes. Drag from a pin to a pin to link.");
         ImGui::TextDisabled("Delete removes the selection. Mouse wheel zooms. Hover a field for help.");
         ImGui::Separator();
@@ -306,6 +361,7 @@ void draw_side_panel(State& s) {
     ImGui::TextUnformatted("Graph file");
     if (ImGui::Button("New")) {
         s.graph = {};
+        s.statuses.clear();
         s.status = "New graph. Right-click the canvas to add nodes.";
     }
     ImGui::SameLine();
@@ -323,9 +379,32 @@ void draw_side_panel(State& s) {
 
     ImGui::InputText("##noesis", &s.noesis_path);
     ImGui::SameLine();
-    if (ImGui::Button("...##noesis")) browse(remod::PathKind::OpenFile, "exe", s.noesis_path);
+    if (ImGui::Button("...##noesis") && browse(remod::PathKind::OpenFile, "exe", s.noesis_path)) remember_paths(s);
     ImGui::SameLine();
     ImGui::TextUnformatted("Noesis64.exe");
+    if (s.checked_noesis != s.noesis_path) {  // re-check only when the path changes
+        s.checked_noesis = s.noesis_path;
+        s.noesis_check = remod::check_noesis(unquote(s.noesis_path));
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(s.noesis_check.ok ? ImVec4(0.4f, 0.85f, 0.4f, 1) : ImVec4(1, 0.45f, 0.35f, 1), "%s",
+                       s.noesis_check.message.c_str());
+    ImGui::PopTextWrapPos();
+
+    // Where the texture picker opens: the REtool folder of extracted game files.
+    std::string shown = game_files_dir(s);
+    if (ImGui::InputTextWithHint("##gamefiles", "extracted game files (REtool) folder", &shown)) s.game_files = shown;
+    ImGui::SameLine();
+    if (ImGui::Button("...##gamefiles") && browse(remod::PathKind::Folder, nullptr, shown)) {
+        s.game_files = shown;
+        remember_paths(s);
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Game files");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Your REtool folder, e.g. ...\\REtool\\RE4\\re_chunk_000\\natives\\stm.\n"
+                          "The texture picker opens here. Filled in from the RE plugin's settings if you've set "
+                          "it there.");
 
     // Which game (profile) the graph targets. Picking a texture sets this automatically.
     const auto current = std::ranges::find(s.profiles, s.graph.profile, &remod::Profile::id);
@@ -364,27 +443,57 @@ void draw_side_panel(State& s) {
     ImGui::End();
 }
 
-// Pin colour by data type, so it's visible what can plug into what.
-ImU32 port_color(remod::PortType type) {
-    return type == remod::PortType::Tex ? IM_COL32(235, 150, 60, 255) : IM_COL32(90, 200, 110, 255);
+const ImVec4 kAmber(1.0f, 0.7f, 0.2f, 1.0f);
+
+// Node border / badge colour for where a node got to in the last run.
+ImVec4 state_color(remod::NodeState state) {
+    switch (state) {
+    case remod::NodeState::Done: return ImVec4(0.35f, 0.85f, 0.45f, 1);
+    case remod::NodeState::Waiting: return kAmber;
+    case remod::NodeState::Failed: return ImVec4(1.0f, 0.35f, 0.3f, 1);
+    case remod::NodeState::NotReached: return ImVec4(0.5f, 0.5f, 0.5f, 1);
+    }
+    return ImVec4(1, 1, 1, 1);
 }
 
-// One pin row: a small circle on the node border (links attach to its centre, drags start from it) and the
-// label inside the node, left-aligned for inputs and right-aligned for outputs. Filled once connected.
-void draw_pin(ed::PinId id, const remod::PortSpec& port, bool output, bool connected, float x0, float node_width,
-              float edge_x) {
+std::string status_text(const remod::NodeStatus& st) {
+    switch (st.state) {
+    case remod::NodeState::Done: return "Done: " + st.message;
+    case remod::NodeState::Waiting: return "Waiting for you: " + st.message;
+    case remod::NodeState::Failed: return "Failed: " + st.message;
+    case remod::NodeState::NotReached: return "Not reached yet";
+    }
+    return "";
+}
+
+// Pin colour by data type, so it's visible what can plug into what.
+ImU32 port_color(remod::PortType type) {
+    switch (type) {
+    case remod::PortType::Tex: return IM_COL32(235, 150, 60, 255);
+    case remod::PortType::Image: return IM_COL32(90, 200, 110, 255);
+    case remod::PortType::Text: return IM_COL32(120, 180, 255, 255);
+    }
+    return IM_COL32_WHITE;
+}
+
+// One pin: a small circle on the node border (links attach to its centre, drags start from it) around the row's
+// label, which is drawn inside the node - left-aligned for inputs, right-aligned for outputs. Filled once
+// connected. Rows are frame-height tall so labels line up with the text boxes next to them.
+void draw_pin(ed::PinId id, const std::string& label, remod::PortType type, bool output, bool connected, float x0,
+              float node_width, float edge_x) {
     ed::BeginPin(id, output ? ed::PinKind::Output : ed::PinKind::Input);
-    if (output) ImGui::SetCursorPosX(x0 + node_width - ImGui::CalcTextSize(port.label).x);
-    const float y = ImGui::GetCursorScreenPos().y + ImGui::GetTextLineHeight() * 0.5f;
-    ImGui::TextUnformatted(port.label);
+    if (output) ImGui::SetCursorPosX(x0 + node_width - ImGui::CalcTextSize(label.c_str()).x);
+    const float y = ImGui::GetCursorScreenPos().y + ImGui::GetFrameHeight() * 0.5f;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label.c_str());
 
     const ImVec2 center(edge_x, y);
     const float r = ImGui::GetFontSize() * 0.3f;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     if (connected)
-        draw->AddCircleFilled(center, r, port_color(port.type));
+        draw->AddCircleFilled(center, r, port_color(type));
     else
-        draw->AddCircle(center, r, port_color(port.type), 0, 2.0f);
+        draw->AddCircle(center, r, port_color(type), 0, 2.0f);
     ed::PinPivotRect(center, center);
     ed::PinRect(center - ImVec2(r * 2, r * 2), center + ImVec2(r * 2, r * 2));
     ed::EndPin();
@@ -437,6 +546,16 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     const char* hovered_hint = nullptr;  // tooltip drawn after the nodes, outside the canvas transform
     for (auto& n : s.graph.nodes) {
         const remod::NodeSpec* spec = remod::find_spec(n.type);
+        const auto status_it = s.statuses.find(n.id);
+        const remod::NodeStatus* status = status_it != s.statuses.end() ? &status_it->second : nullptr;
+        const bool manual = spec && spec->manual;
+        const bool edit_done = manual && n.params.contains("done");
+        // Border = where the node got to in the last run; a manual step is always marked, amber until done.
+        const ImVec4 border = status ? state_color(status->state)
+                              : manual ? (edit_done ? state_color(remod::NodeState::Done) : kAmber)
+                                       : ed::GetStyle().Colors[ed::StyleColor_NodeBorder];
+        ed::PushStyleColor(ed::StyleColor_NodeBorder, border);
+        ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, status || manual ? 3.0f : 1.0f);
         ed::BeginNode(n.id);
         ImGui::PushID(n.id);
         const float x0 = ImGui::GetCursorPosX();
@@ -445,44 +564,121 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         if (!spec) {
             ImGui::Text("%s (unknown node type)", n.type.c_str());
         } else {
+            if (manual) {
+                ImGui::TextColored(kAmber, "YOUR STEP");
+                ImGui::SameLine();
+            }
             ImGui::TextColored(ImVec4(0.55f, 0.8f, 1, 1), "%s", spec->title);
             ImGui::SameLine();
             ImGui::TextDisabled("%s", n.type.c_str());
             ImGui::PushTextWrapPos(x0 + node_width);
             ImGui::TextDisabled("%s", spec->summary);
+            if (status) ImGui::TextColored(state_color(status->state), "%s", status_text(*status).c_str());
             ImGui::PopTextWrapPos();
 
-            for (const auto& p : spec->params) {
-                ImGui::PushID(p.name);
-                ImGui::TextUnformatted(p.required ? (std::string(p.label) + " *").c_str() : p.label);
-                if (ImGui::IsItemHovered()) hovered_hint = p.hint;
+            for (size_t slot = 0; slot < spec->inputs.size(); ++slot) {
+                const remod::InputSpec& in = spec->inputs[slot];
+                const std::vector<size_t> linked = s.graph.links_into(n.id, in.name);
+                ImGui::PushID(in.name);
+
+                if (in.multiple) {  // one row per link, plus an empty row to connect the next one
+                    const bool numbered = std::string(in.name) == "parts";  // Text node: rows are {1}, {2}, ...
+                    for (size_t row = 0; row <= linked.size() && row < kRows; ++row) {
+                        const std::string n_str = std::to_string(row + 1);
+                        std::string label = numbered ? "{" + n_str + "}" : std::string(in.label) + " " + n_str;
+                        if (row == linked.size())
+                            label = "+ " + (numbered ? "{" + n_str + "}" : std::string(in.label));
+                        else
+                            label += "  <- " + source_of(s.graph, s.graph.links[linked[row]]);
+                        draw_pin(pin_id(n.id, false, slot, row), label, in.type, false, row < linked.size(), x0,
+                                 node_width, left_edge);
+                        if (ImGui::IsItemHovered()) hovered_hint = in.hint;
+                    }
+                    ImGui::PopID();
+                    continue;
+                }
+
+                const std::string label = in.required ? std::string(in.label) + " *" : std::string(in.label);
+                draw_pin(pin_id(n.id, false, slot), label, in.type, false, !linked.empty(), x0, node_width, left_edge);
+                if (ImGui::IsItemHovered()) hovered_hint = in.hint;
+                if (!in.editable()) {
+                    ImGui::PopID();
+                    continue;
+                }
                 // Not SameLine(x): inside a node (an ImGui group) that offset is group-relative, so x0 would be
                 // counted twice and nodes would widen with their canvas position.
                 ImGui::SameLine();
                 ImGui::SetCursorPosX(x0 + label_width);
-                ImGui::SetNextItemWidth(field_width);
-                ImGui::InputText("##v", &n.params[p.name]);
-                if (ImGui::IsItemHovered()) hovered_hint = p.hint;
-                if (p.path != remod::PathKind::None) {
-                    ImGui::SameLine();
-                    const bool texture = p.path == remod::PathKind::OpenTexture;
-                    if (ImGui::SmallButton("...") &&
-                        browse(p.path, texture ? s.texture_filter.c_str() : p.filter, n.params[p.name]) && texture)
-                        detect_game(s, n.params[p.name]);
-                    if (ImGui::IsItemHovered()) hovered_hint = "Browse...";
+                std::string& value = n.params[in.name];
+                if (!linked.empty()) {  // a link overrides the typed value
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("<- %s", source_of(s.graph, s.graph.links[linked[0]]).c_str());
+                } else if (in.widget == remod::Widget::Checkbox) {
+                    bool on = value == "true";
+                    if (ImGui::Checkbox("##v", &on)) value = on ? "true" : "";
+                } else {
+                    ImGui::SetNextItemWidth(field_width);
+                    ImGui::InputText("##v", &value);
+                    if (ImGui::IsItemHovered()) hovered_hint = in.hint;
+                    if (in.widget == remod::Widget::Path) {
+                        ImGui::SameLine();
+                        const bool texture = in.path == remod::PathKind::OpenTexture;
+                        if (ImGui::SmallButton("...") &&
+                            browse(in.path, texture ? s.texture_filter.c_str() : in.filter, value,
+                                   texture ? game_files_dir(s) : std::string()) &&
+                            texture)
+                            detect_game(s, value);
+                        if (ImGui::IsItemHovered()) hovered_hint = "Browse...";
+                    }
                 }
                 ImGui::PopID();
             }
-            for (size_t i = 0; i < spec->inputs.size(); ++i)
-                draw_pin(pin_id(n.id, false, i), spec->inputs[i], false,
-                         s.graph.is_connected(n.id, spec->inputs[i].name, false), x0, node_width, left_edge);
-            for (size_t i = 0; i < spec->outputs.size(); ++i)
-                draw_pin(pin_id(n.id, true, i), spec->outputs[i], true,
-                         s.graph.is_connected(n.id, spec->outputs[i].name, true), x0, node_width, right_edge);
+            if (manual) {  // Edit PNG: the user's own step
+                const std::filesystem::path file = status ? status->file : std::filesystem::path();
+                if (file.empty()) {
+                    ImGui::TextDisabled("Run first: Export PNG creates the file to edit.");
+                } else {
+                    if (ImGui::Button("Open in editor")) open_in_editor(file);
+                    if (ImGui::IsItemHovered()) hovered_hint = "Opens the PNG in your image editor (e.g. Paint).";
+                    ImGui::SameLine();
+                }
+                if (!edit_done) {
+                    if (ImGui::Button("Done editing")) remod::set_edit_done(s.graph, n.id, true);
+                    if (ImGui::IsItemHovered())
+                        hovered_hint = "Click once you've saved your changes. The next Run continues from here.";
+                } else {
+                    ImGui::TextColored(state_color(remod::NodeState::Done), "Done");
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Edit again")) remod::set_edit_done(s.graph, n.id, false);
+                }
+            }
+
+            for (size_t i = 0; i < spec->outputs.size(); ++i) {
+                const remod::PortSpec& out = spec->outputs[i];
+                ImGui::PushID(out.name);
+                if (out.field) {  // where the node writes this output: on the output side, before its pin
+                    std::string& value = n.params[out.field];
+                    ImGui::SetCursorPosX(x0 + node_width -
+                                         (field_width + style.ItemSpacing.x * 2 + button_width +
+                                          ImGui::CalcTextSize(out.label).x));
+                    ImGui::SetNextItemWidth(field_width);
+                    ImGui::InputTextWithHint("##v", out.field_label, &value);
+                    if (ImGui::IsItemHovered()) hovered_hint = out.hint;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("...")) browse(out.path, out.filter, value);
+                    if (ImGui::IsItemHovered()) hovered_hint = "Browse...";
+                    ImGui::SameLine();
+                }
+                draw_pin(pin_id(n.id, true, i), out.label, out.type, true, s.graph.is_connected(n.id, out.name, true),
+                         x0, node_width, right_edge);
+                ImGui::PopID();
+            }
         }
         ImGui::Dummy(ImVec2(node_width, 0));  // fixes the node width so the right border (and its pins) line up
         ImGui::PopID();
         ed::EndNode();
+        ed::PopStyleVar();
+        ed::PopStyleColor();
     }
     ImGui::SetFontRasterizerDensity(old_density);  // tooltips and menus below are drawn unzoomed
     if (hovered_hint) {
@@ -499,7 +695,10 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         const remod::NodeSpec* ts = to ? remod::find_spec(to->type) : nullptr;
         if (!fs || !ts) continue;
         const size_t out_slot = slot_of(fs->outputs, l.from_port);
-        ed::Link(kLinkBase + i, pin_id(l.from_node, true, out_slot), pin_id(l.to_node, false, slot_of(ts->inputs, l.to_port)),
+        // A multiple input's links go to rows 0, 1, ... in link order.
+        const auto into = s.graph.links_into(l.to_node, l.to_port);
+        const size_t row = size_t(std::ranges::find(into, i) - into.begin());
+        ed::Link(kLinkBase + i, pin_id(l.from_node, true, out_slot), pin_id(l.to_node, false, slot_of(ts->inputs, l.to_port), row),
                  ImGui::ColorConvertU32ToFloat4(port_color(fs->outputs[out_slot].type)), 2.0f);
     }
 

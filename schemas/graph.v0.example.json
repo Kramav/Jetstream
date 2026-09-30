@@ -19,12 +19,18 @@
     },
     {
       "id": 3,
+      "type": "EditImage",
+      "params": {},
+      "pos": [450, 300]
+    },
+    {
+      "id": 4,
       "type": "SaveTex",
       "params": {},
       "pos": [900, 0]
     },
     {
-      "id": 4,
+      "id": 5,
       "type": "PackageMod",
       "params": {
         "name": "MyMod",
@@ -32,15 +38,17 @@
         "version": "1.0",
         "author": "",
         "description": "",
-        "screenshot": ""
+        "replace": ""
       },
       "pos": [1350, 0]
     }
   ],
   "links": [
     { "from": [1, "tex"], "to": [2, "tex"] },
-    { "from": [2, "image"], "to": [3, "image"] },
-    { "from": [1, "tex"], "to": [3, "original"] },
-    { "from": [3, "tex"], "to": [4, "tex"] }
+    { "from": [2, "png"], "to": [3, "png"] },
+    { "from": [3, "image"], "to": [4, "image"] },
+    { "from": [1, "tex"], "to": [4, "original"] },
+    { "from": [4, "tex"], "to": [5, "tex"] },
+    { "from": [3, "image"], "to": [5, "preview"] }
   ]
 }

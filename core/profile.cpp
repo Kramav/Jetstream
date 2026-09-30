@@ -17,7 +17,7 @@ namespace remod {
 namespace {
 
 constexpr std::array kStringKeys{"id",         "name",          "tex_suffix", "natives_root",
-                                 "pak_script", "noesis_export", "file_list"};
+                                 "pak_script", "noesis_export", "file_list",  "noesis_game"};
 constexpr std::array kPackagingValues{"loose_archive", "pak"};
 
 Profile from_table(const toml::table& root) {
@@ -28,7 +28,7 @@ Profile from_table(const toml::table& root) {
     if (!game) throw ProfileError("profile: missing [game] table");
 
     std::string* fields[] = {&p.id,         &p.name,          &p.tex_suffix, &p.natives_root,
-                             &p.pak_script, &p.noesis_export, &p.file_list};
+                             &p.pak_script, &p.noesis_export, &p.file_list,  &p.noesis_game};
     for (size_t i = 0; i < kStringKeys.size(); ++i) {
         auto v = (*game)[kStringKeys[i]].value<std::string>();
         if (!v || v->empty())
@@ -71,7 +71,7 @@ Profile from_table(const toml::table& root) {
 std::vector<std::string> Profile::unresolved() const {
     std::vector<std::string> out;
     const std::string* fields[] = {&id,         &name,          &tex_suffix, &natives_root,
-                                   &pak_script, &noesis_export, &file_list};
+                                   &pak_script, &noesis_export, &file_list,  &noesis_game};
     for (size_t i = 0; i < kStringKeys.size(); ++i)
         if (*fields[i] == "TBD") out.emplace_back(kStringKeys[i]);
     return out;

@@ -28,6 +28,7 @@ Settings load_settings(const fs::path& file) {
         s.graph_path = j.value("graph_path", "");
         s.noesis_path = j.value("noesis_path", "");
         s.show_help = j.value("show_help", true);
+        s.game_files_dir = j.value("game_files_dir", "");
     } catch (const nlohmann::json::exception&) {
         return {};
     }
@@ -37,7 +38,8 @@ Settings load_settings(const fs::path& file) {
 void save_settings(const Settings& s, const fs::path& file) {
     fs::create_directories(file.parent_path());
     std::ofstream out(file);
-    out << nlohmann::json{{"graph_path", s.graph_path}, {"noesis_path", s.noesis_path}, {"show_help", s.show_help}}
+    out << nlohmann::json{{"graph_path", s.graph_path}, {"noesis_path", s.noesis_path}, {"show_help", s.show_help},
+                          {"game_files_dir", s.game_files_dir}}
                .dump(2)
         << "\n";
     if (!out.flush()) throw std::runtime_error("failed to write " + file.string());

@@ -9,6 +9,7 @@ struct Settings {
     std::string graph_path;
     std::string noesis_path;
     bool show_help = true;
+    std::string game_files_dir;  // extracted game files (REtool); empty = ask the RE plugin's NativesPath.txt
     bool operator==(const Settings&) const = default;
 };
 

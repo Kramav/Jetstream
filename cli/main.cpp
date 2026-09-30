@@ -15,12 +15,14 @@ namespace {
 
 constexpr const char* kUsage =
     "usage:\n"
-    "  remod run --graph <file.json> --noesis <Noesis64.exe> [--profiles <dir>]\n"
+    "  remod run --graph <file.json> --noesis <Noesis64.exe> [--profiles <dir>] [--edited true]\n"
+    "            --edited true: treat Edit PNG steps as done (you've edited the PNGs)\n"
     "  remod tex2png --profile <toml> --noesis <Noesis64.exe> --tex <file.tex.N> --out <file.png>\n"
     "  remod png2tex --profile <toml> --noesis <Noesis64.exe> --png <edited.png> --original <file.tex.N>\n"
     "                --out <new.tex.N>\n"
     "  remod package --profile <toml> --tex <file> --game-path <natives-relative path> --name <ModName>\n"
-    "                --out <dir> [--version v] [--author a] [--description d] [--screenshot file]\n";
+    "                --out <dir> [--version v] [--author a] [--description d] [--screenshot file]\n"
+    "                [--replace true]\n";
 
 struct Command {
     std::vector<std::string> required;
@@ -28,10 +30,10 @@ struct Command {
 };
 
 const std::map<std::string, Command> kCommands{
-    {"run", {{"graph", "noesis"}, {"profiles"}}},
+    {"run", {{"graph", "noesis"}, {"profiles", "edited"}}},
     {"tex2png", {{"profile", "noesis", "tex", "out"}, {}}},
     {"png2tex", {{"profile", "noesis", "png", "original", "out"}, {}}},
-    {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot"}}},
+    {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot", "replace"}}},
 };
 
 void print_meta(const remod::TexMeta& m) {
@@ -80,7 +82,8 @@ int run(int argc, char** argv) {
             graph, {.profile = profile,
                     .converter = noesis,
                     .base_dir = std::filesystem::absolute(graph_file).parent_path(),
-                    .log = [](const std::string& line) { std::cout << line << "\n"; }});
+                    .log = [](const std::string& line) { std::cout << line << "\n"; },
+                    .edits_done = args["edited"] == "true"});
         std::cout << result.message << "\n";
         return 0;
     }
@@ -109,6 +112,7 @@ int run(int argc, char** argv) {
                  .author = args["author"]};
     spec.files.push_back({args["tex"], args["game-path"]});
     spec.screenshot = args["screenshot"];
+    spec.replace = args["replace"] == "true";
 
     const auto root = remod::build_package(profile, spec);
     std::cout << "packaged: " << root.string() << ".zip\n";

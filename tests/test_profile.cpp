@@ -18,6 +18,7 @@ packaging     = ["pak"]
 pak_script    = "s.bat"
 noesis_export = "TBD"
 file_list     = "TBD"
+noesis_game   = "X"
 )";
 
 std::string replace(std::string text, const std::string& from, const std::string& to) {
@@ -37,6 +38,7 @@ TEST_CASE("re4r profile loads with the CLAUDE.md section 5 values") {
     CHECK(p.pak_script == "Create-PAK-2023.bat");
     CHECK(p.noesis_export == "-b");
     CHECK(p.file_list == "TBD");
+    CHECK(p.noesis_game == "RE4");
     CHECK(p.unresolved() == std::vector<std::string>{"file_list"});
 }
 

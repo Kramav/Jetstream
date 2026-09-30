@@ -11,6 +11,7 @@
 #include <cctype>
 #include <fstream>
 #include <set>
+#include <sstream>
 
 namespace remod {
 
@@ -52,6 +53,32 @@ void zip_folder(const fs::path& folder, const fs::path& zip) {
                                std::chrono::minutes(10));
     if (r.exit_code != 0 || !fs::is_regular_file(zip) || fs::file_size(zip) == 0)
         throw PackageError("zip failed (tar exit " + std::to_string(r.exit_code) + "): " + r.output);
+}
+
+// A previous build of this mod: its modinfo.ini has name=<display_name>.
+bool is_our_folder(const fs::path& folder, const std::string& display_name) {
+    std::ifstream ini(folder / "modinfo.ini");
+    for (std::string line; std::getline(ini, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == "name=" + display_name) return true;
+    }
+    return false;
+}
+
+// A previous zip of this mod: every entry is under <mod_name>/ and <mod_name>/modinfo.ini is one of them.
+bool is_our_zip(const fs::path& zip, const std::string& mod_name) {
+    const auto r = run_process(system_tar(), {L"-tf", zip.wstring()}, std::chrono::minutes(1));
+    if (r.exit_code != 0) return false;
+    std::istringstream lines(r.output);
+    bool has_ini = false, any = false;
+    for (std::string line; std::getline(lines, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        any = true;
+        if (!line.starts_with(mod_name + "/")) return false;
+        has_ini |= line == mod_name + "/modinfo.ini";
+    }
+    return any && has_ini;
 }
 
 }  // namespace
@@ -110,9 +137,17 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec) {
     check_mod_name(spec.mod_name);
 
     const fs::path root = fs::absolute(spec.out_dir / spec.mod_name);
-    if (fs::exists(root)) throw PackageError("output folder already exists, refusing to overwrite: " + root.string());
     const fs::path zip = fs::path(root) += ".zip";
-    if (spec.zip && fs::exists(zip)) throw PackageError("output zip already exists, refusing to overwrite: " + zip.string());
+    const bool old_root = fs::exists(root), old_zip = spec.zip && fs::exists(zip);
+    if (old_root && !spec.replace)
+        throw PackageError("output folder already exists: " + root.string() + " (turn on 'Replace existing' to overwrite)");
+    if (old_zip && !spec.replace)
+        throw PackageError("output zip already exists: " + zip.string() + " (turn on 'Replace existing' to overwrite)");
+    if (old_root && !is_our_folder(root, spec.info.name))
+        throw PackageError(root.string() + " exists but isn't a build of mod '" + spec.info.name +
+                           "' (its modinfo.ini doesn't match); not replacing it");
+    if (old_zip && !is_our_zip(zip, spec.mod_name))
+        throw PackageError(zip.string() + " exists but isn't a build of mod '" + spec.mod_name + "'; not replacing it");
 
     // Validate everything before writing anything.
     std::vector<std::pair<fs::path, fs::path>> copies;  // source -> destination
@@ -142,6 +177,8 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec) {
             throw PackageError("output path exceeds " + std::to_string(kMaxPath) +
                                " characters; use a shorter output folder: " + dest.string());
 
+    if (old_root) fs::remove_all(root);  // checked above: a previous build of this mod
+    if (old_zip) fs::remove(zip);
     try {
         for (const auto& [src, dest] : copies) {
             fs::create_directories(dest.parent_path());
@@ -154,7 +191,7 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec) {
         if (spec.zip) zip_folder(root, zip);
     } catch (...) {
         std::error_code ec;
-        fs::remove_all(root, ec);  // neither existed before; don't leave a half-built package
+        fs::remove_all(root, ec);  // ours (new, or a replaced build); don't leave a half-built package
         fs::remove(zip, ec);
         throw;
     }

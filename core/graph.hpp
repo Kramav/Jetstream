@@ -18,53 +18,76 @@ struct GraphError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
-// Everything flowing along a link is a file on disk.
-enum class PortType { Tex, Image };
+// What flows along a link: a texture file, an image file, or plain text.
+enum class PortType { Tex, Image, Text };
 
-// `name`s are the stable ids stored in graph files; `title`, `label` and `hint` are what users read.
-struct PortSpec {
-    const char* name;
-    PortType type;
-    const char* label;
-};
-
-// Which picker a front end should offer for a parameter. OpenTexture: an RE Engine texture of any known game
+// Which picker a front end should offer for a path field. OpenTexture: an RE Engine texture of any known game
 // (front ends build the filter from the profiles' tex suffixes).
 enum class PathKind { None, OpenFile, OpenTexture, SaveFile, Folder };
 
-struct ParamSpec {
+// How an input can be typed in. None = link-only.
+enum class Widget { None, Text, Path, Checkbox };
+
+// `name`s are the stable ids stored in graph files; `title`, `label` and `hint` are what users read.
+// An output may carry a typed field for where the node writes it (e.g. Export's "PNG file"): front ends show it
+// on the output side, and it's stored in Node::params under `field`. Such a field is always required.
+struct PortSpec {  // an output
     const char* name;
-    bool required;
+    PortType type;
     const char* label;
-    const char* hint;
+    const char* field = nullptr;
+    const char* field_label = "";
+    const char* hint = "";
     PathKind path = PathKind::None;
-    const char* filter = nullptr;  // extensions for file pickers, e.g. "png,jpg"; nullptr = all files
+    const char* filter = nullptr;
 };
+
+// An input. Every input has a pin. Editable inputs (widget != None) can instead be typed; a link wins over the
+// typed value. `multiple` inputs are link-only and take any number of links, in link order.
+struct InputSpec {
+    const char* name;
+    const char* label;
+    PortType type;
+    Widget widget = Widget::None;
+    bool required = false;  // editable: typed or linked; link-only: at least one link
+    bool multiple = false;
+    const char* hint = "";
+    PathKind path = PathKind::None;
+    const char* filter = nullptr;  // extensions for typed file paths, e.g. "png,jpg"; nullptr = any
+    bool editable() const { return widget != Widget::None; }
+};
+
 struct NodeSpec {
     const char* type;
     const char* title;
     const char* summary;
-    std::vector<PortSpec> inputs;  // all inputs must be connected
+    std::vector<InputSpec> inputs;
     std::vector<PortSpec> outputs;
-    std::vector<ParamSpec> params;
+    std::vector<const char*> state = {};  // other params the node keeps (e.g. EditImage's "done"); no field shown
+    bool manual = false;                  // a step the user does by hand (front ends mark it clearly)
 };
 
-// The M1 node types: LoadTex, ExportImage, ImportImage, SaveTex, PackageMod.
+// LoadTex, ExportImage, EditImage, ImportImage, SaveTex, PackageMod, Text.
 const std::vector<NodeSpec>& node_specs();
 const NodeSpec* find_spec(std::string_view type);
+const InputSpec* find_input(const NodeSpec& spec, std::string_view name);
+
+// Can an output of type `out` feed `in`? Same type; any output into a Text input (as its text/path); or Text
+// into an editable input (a typed value, e.g. a path).
+bool accepts(const InputSpec& in, PortType out);
 
 struct Node {
     int id = 0;
     std::string type;
-    std::map<std::string, std::string> params;
-    float x = 0, y = 0;  // canvas position; only the editor uses it
+    std::map<std::string, std::string> params;  // typed values of editable inputs
+    float x = 0, y = 0;                          // canvas position; only the editor uses it
 };
 
 struct Link {
     int from_node = 0;
     std::string from_port;
     int to_node = 0;
-    std::string to_port;
+    std::string to_port;  // an input name
 };
 
 struct Graph {
@@ -72,38 +95,67 @@ struct Graph {
     std::vector<Node> nodes;
     std::vector<Link> links;
 
-    Node& add_node(const std::string& type);  // new unique id, all params present (empty)
+    Node& add_node(const std::string& type);  // new unique id, every editable input present (empty)
     void remove_node(int id);                 // and its links
     std::string can_connect(const Link& link) const;  // why the link isn't allowed, or "" if it is
     std::string connect(const Link& link);            // can_connect, then add; returns the error or ""
     void disconnect(size_t link_index);
     bool is_connected(int node, const std::string& port, bool output) const;  // any link on that pin?
+    std::vector<size_t> links_into(int node, const std::string& input) const;  // link indices, in order
     const Node* find(int id) const;
     Node* find(int id);
     std::vector<std::string> validate() const;  // every problem that would stop a run; empty = runnable
 };
 
 // JSON graph file, schema_version 0. Example: schemas/graph.v0.example.json
+// Older files are migrated on load (PackageMod's former `screenshot` field becomes an ImportImage -> preview).
 Graph load_graph(const std::filesystem::path& file);
 void save_graph(const Graph& graph, const std::filesystem::path& file);
 
 struct RunOptions {
     const Profile& profile;
     ITextureConverter& converter;
-    std::filesystem::path base_dir;  // relative paths in params resolve against this (the graph file's folder)
+    std::filesystem::path base_dir;  // relative paths resolve against this (the graph file's folder)
     std::function<void(const std::string&)> log = {};
+    bool edits_done = false;  // treat every Edit PNG step as done (the CLI's --edited, where there's no button)
+};
+
+// Where each node got to in a run, for front ends to show.
+enum class NodeState { NotReached, Done, Waiting, Failed };
+struct NodeStatus {
+    NodeState state = NodeState::NotReached;
+    std::string message;          // short, for the node: "exported x.png", the error, ...
+    std::filesystem::path file;   // the file concerned, e.g. the PNG an Edit PNG step waits on
 };
 
 struct RunResult {
-    bool paused = false;  // an ExportImage wrote a new PNG: the user edits it, then runs again
+    bool paused = false;  // an Edit PNG step is waiting for the user
     std::string message;
+    std::map<int, NodeStatus> nodes;
+    std::vector<int> reset_edits;  // Edit PNG steps whose PNG was just re-exported: their "done" no longer holds
 };
 
-// Runs nodes in dependency order. Throws GraphError naming the node that failed.
+// A node failed: the message names it, `nodes` says where every node got to.
+struct RunError : GraphError {
+    std::map<int, NodeStatus> nodes;
+    RunError(const std::string& message, std::map<int, NodeStatus> statuses)
+        : GraphError(message), nodes(std::move(statuses)) {}
+};
+
+// Runs nodes in dependency order. Throws GraphError if the graph isn't runnable, RunError if a node fails.
 RunResult run_graph(const Graph& graph, const RunOptions& options);
+
+// Applies what a run found to the graph: clears "done" on Edit PNG steps whose PNG was re-exported.
+void apply_run(Graph& graph, const RunResult& result);
+
+// Marks an Edit PNG step done (the user finished editing) or not.
+void set_edit_done(Graph& graph, int node, bool done);
 
 // "<natives root>/<rest>" in `file` (case-insensitive) -> "<rest>", else "". Lets LoadTex infer the game path
 // when the .tex sits inside an extracted natives tree.
 std::string game_path_from(const std::filesystem::path& file, const std::string& natives_root);
+
+// Fills "{1}", "{2}", ... in `text` with `parts` (1-based). Throws GraphError if text uses a part that isn't given.
+std::string fill_template(const std::string& text, const std::vector<std::string>& parts);
 
 }  // namespace remod

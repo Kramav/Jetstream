@@ -38,6 +38,7 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
   - **Adopted for the graph file:** nlohmann/json 3.12.0#2 (MIT), core-private.
   - **Adopted for the app's file pickers:** nativefiledialog-extended 1.4.0 (Zlib), app-only (never in core).
   - GoogleTest verified but not used.
+- Images (combining preview PNGs): **WIC**, built into Windows, used from core. No image library dependency.
 - Build (Developer PowerShell for VS 2026, which sets `VCPKG_ROOT`):
   `cmake --preset default` → `cmake --build build` → `ctest --test-dir build --output-on-failure`
 - Long-term polished UI: undecided. Keep the core-to-UI boundary clean so it can be swapped.
@@ -80,9 +81,24 @@ ExportImage/ImportImage reduce to handing that PNG to the user and checking the 
 Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png2tex` and `package`.
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
-- Node types: LoadTex, ExportImage, ImportImage, SaveTex, PackageMod. Links carry files.
-- ExportImage **pauses the run** when it writes a new PNG. On the next run it keeps the existing (edited) PNG.
-  So a mod is two runs: export, edit, run again.
+- Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, PackageMod, Text.
+- **Outputs are on the right.** A field for where a node writes its output (Export's PNG file) is part of that
+  output (`PortSpec::field`), shown on the output side and not linkable.
+- **Manual editing is its own step (EditImage, `NodeSpec::manual`).** A run waits there until the user marks it
+  done (`done` state param; the CLI's `--edited true`). A freshly re-exported PNG voids an earlier "done"
+  (`RunResult::reset_edits`, applied by `apply_run`).
+- **Every run reports each node's state** (`RunResult::nodes`, or `RunError::nodes` on failure): done, waiting
+  for the user, failed with its reason, or not reached. The app shows these as coloured node borders and badges.
+- **Every input has a pin** (`InputSpec`). Editable inputs can be typed or linked; a link wins.
+  `multiple` inputs take any number of links, e.g. PackageMod's textures and previews.
+- Link types are Tex, Image and Text. Any output can go into a Text input; a Text output can go into any
+  editable input.
+- The Text node fills `{1}`, `{2}`… from its linked parts.
+- ExportImage never overwrites an existing PNG (the user's edit). One run exports every PNG that needs editing
+  and skips only what depends on a waiting EditImage. So a mod is: Run, edit, Done editing, Run.
+- PackageMod packages every linked texture. Several previews are tiled into one `preview.png`.
+  "Replace existing" overwrites only a previous build of the same mod.
+- Old graph files are migrated on load: PackageMod's typed `screenshot` becomes ImportImage → preview.
 - LoadTex infers the game path when the `.tex` sits inside a `natives/STM/...` tree; otherwise set `game_path`.
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> --noesis <exe>` and from the app's Run button.
@@ -236,7 +252,20 @@ Fill these in from the manual spike before implementing the affected code:
 - [ ] Text encoding Fluffy expects in `modinfo.ini` for non-ASCII text (ASCII vs UTF-8).
       **Confirmed (spike 2026-09-30):** a `modinfo.ini` written by `remod package` (flat lowercase `key=value`,
       CRLF line endings, ASCII-only values) shows name/version/description/author/screenshot correctly in Fluffy.
-- [ ] Screenshot size/aspect requirements for Fluffy, if any (formats: jpg/png/tga/bmp [guide]).
+- [ ] **Mip count mismatch (blocks most UI textures).** The plugin's writer always generates mips down to 8x8
+      [plugin source]. Found 2026-09-30 in the REtool extraction: 477 of 493 RE4R UI textures have 1 mip, and
+      others stop above 8x8 (e.g. 256x256 with 5 mips). SaveTex refuses any mip mismatch, so only textures whose
+      chain ends at 8x8 convert today. Open: does the game accept a texture with *more* mips than the original?
+      If not, the extra mips must be dropped after export (header + mip table rewrite per the plugin's layout),
+      which needs an in-game check before relying on it.
+- [ ] **Padded width on export.** `cs_ui3200_stamp_im` (468x440) exports as a **512x440** PNG: the plugin decodes
+      the stored (pitch-padded) rows. Converting back would write a 512-wide texture. Open: crop to 468 on export
+      and pad on import, or does the game need the padded layout? Needs a spike.
+- [ ] **Streaming textures.** 17,728 of 38,331 RE4R textures have a high-resolution copy under
+      `natives/STM/streaming/<same path>`. Does replacing a texture require replacing its streaming copy too?
+      LoadTex logs a note when one exists.
+- [ ] Screenshot size/aspect requirements for Fluffy, if any (formats: jpg/png/tga/bmp [guide]). The tool
+      combines several previews into one 512-px-per-tile grid PNG.
 - [ ] Should a tier-1 package include `manifest.json`, or only tier 2/3?
 
 ## 10. Later milestones (do not start)
@@ -246,6 +275,9 @@ Fill these in from the manual spike before implementing the affected code:
 - M3: REFramework Lua runtime reading manifests (triggers → actions).
 - M4: C++ REFramework plugin for video playback (in-game "cutscene" videos).
 - Replace ImGui front end with a polished native UI.
+- **Texture browser (user priority, long term):** Noesis-style browsing of the REtool extraction (38k textures
+  for RE4R): folder tree, search, thumbnails and preview, then pick into a graph. For now the texture picker just
+  opens in the REtool folder.
 
 ## 11. References
 

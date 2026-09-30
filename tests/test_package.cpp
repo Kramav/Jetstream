@@ -115,6 +115,47 @@ TEST_CASE("build_package writes the Fluffy folder layout") {
     }
 }
 
+TEST_CASE("replace overwrites only a previous build of the same mod") {
+    TempDir tmp;
+    write_file(tmp.path / "in.tex.143221013", "v1");
+    remod::PackageSpec spec{.mod_name = "M",
+                            .out_dir = tmp.path / "out",
+                            .info = {.name = "M"},
+                            .files = {{tmp.path / "in.tex.143221013", "a.tex.143221013"}}};
+    remod::build_package(kProfile, spec);
+
+    write_file(tmp.path / "in.tex.143221013", "v2");
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec), ContainsSubstring("turn on 'Replace existing'"));
+    spec.replace = true;
+    remod::build_package(kProfile, spec);
+    CHECK(read_file(tmp.path / "out/M/natives/STM/a.tex.143221013") == "v2");
+
+    SECTION("a folder that isn't this mod's build is left alone") {
+        fs::remove_all(tmp.path / "out");
+        write_file(tmp.path / "out/M/precious.txt", "keep me");
+        CHECK_THROWS_WITH(remod::build_package(kProfile, spec), ContainsSubstring("isn't a build of mod 'M'"));
+        CHECK(read_file(tmp.path / "out/M/precious.txt") == "keep me");
+        write_file(tmp.path / "out/M/modinfo.ini", "name=Some Other Mod\r\n");  // another mod's folder
+        CHECK_THROWS_WITH(remod::build_package(kProfile, spec), ContainsSubstring("isn't a build of mod 'M'"));
+        CHECK(fs::exists(tmp.path / "out/M/precious.txt"));
+    }
+    SECTION("a zip with other contents is left alone") {
+        fs::remove_all(tmp.path / "out/M");
+        write_file(tmp.path / "other/Other/file.txt", "x");
+        fs::remove(tmp.path / "out/M.zip");
+        wchar_t sys[MAX_PATH];
+        GetSystemDirectoryW(sys, MAX_PATH);
+        REQUIRE(remod::run_process(fs::path(sys) / L"tar.exe",
+                                   {L"-a", L"-c", L"-f", (tmp.path / "out/M.zip").wstring(), L"-C",
+                                    (tmp.path / "other").wstring(), L"Other"},
+                                   std::chrono::seconds(30))
+                    .exit_code == 0);
+        const auto before = fs::file_size(tmp.path / "out/M.zip");
+        CHECK_THROWS_WITH(remod::build_package(kProfile, spec), ContainsSubstring("isn't a build of mod 'M'"));
+        CHECK(fs::file_size(tmp.path / "out/M.zip") == before);
+    }
+}
+
 TEST_CASE("build_package without zip writes only the folder") {
     TempDir tmp;
     write_file(tmp.path / "in.tex.143221013", "x");

@@ -66,17 +66,42 @@ ctest --test-dir build --output-on-failure
 | `build\cli\remod.exe` | Command-line tool: `run` (a saved graph), `tex2png`, `png2tex`, `package`. |
 | `build\tests\remod_tests.exe` | Test runner (usually run through `ctest`). |
 
+## Graph features
+
+- **Every field has a pin.** Link a node's output into a field instead of typing it. A linked field shows
+  `<- source`.
+- **Text node:** type a value once and link it into several fields. `{1}`, `{2}`… in its text are filled from
+  whatever is connected to its numbered inputs, e.g. `{1} v2`.
+- **Several textures per mod:** give each texture its own Original texture → Export → Convert chain and connect
+  every new texture to Package for Fluffy. A new input line appears each time. One run exports all the PNGs.
+- **Preview for Fluffy:** connect edited PNGs, or any image via Use existing PNG, to Package's `preview`.
+  Several are combined into one picture.
+- **Replace existing** on Package rebuilds over the previous build of the same mod, so no manual deleting.
+  It never deletes anything else.
+- **Setup check:** the Pipeline panel finds Noesis automatically (remembered path, `REMOD_NOESIS`, PATH, winget)
+  and says whether the RE Engine plugin is installed.
+- **Game files (REtool):** set your REtool folder, e.g. `...\REtool\RE4\re_chunk_000\natives\stm`, and the
+  texture picker opens there. It's pre-filled from the RE plugin's own setting if you've set it in Noesis.
+
+**Current limit:** a texture converts back only if its mip chain ends at 8×8, because that's what the Noesis
+plugin writes. Most RE4R UI textures have a single mip, so the tool refuses them rather than produce a
+mismatched file. See CLAUDE.md §9.
+
 ## Making a texture mod with a graph
 
-A graph chains the steps: **LoadTex → ExportImage → SaveTex → PackageMod** (plus a link from LoadTex to
-SaveTex's `original` input). `schemas\graph.v0.example.json` is a ready-made one; copy it and change the paths.
-Relative paths in a graph are relative to the graph file's folder.
+A graph chains the steps: **Original texture → Export PNG → Edit PNG → Convert PNG to texture → Package for
+Fluffy**, plus a link from Original texture to Convert's `original texture` input.
+`schemas\graph.v0.example.json` is a ready-made one; copy it and change the paths. Relative paths in a graph are
+relative to the graph file's folder.
 
-It takes **two runs**:
-1. **First run:** exports the texture to the PNG named in ExportImage, then stops and tells you to edit it.
-2. Edit the PNG. Keep the same width and height.
-3. **Second run:** ExportImage keeps your edited PNG, SaveTex encodes it like the original, and PackageMod
-   writes the mod folder and zip.
+**Edit PNG** is your step, marked "YOUR STEP" with an amber border:
+1. **Run:** Export PNG writes the PNG, and the run stops at Edit PNG.
+2. On Edit PNG, click **Open in editor**, make your change, save it (same width and height), and click
+   **Done editing**.
+3. **Run again:** your PNG is converted like the original and packaged.
+
+After each run every block shows how far it got: green = done, amber = waiting for you, red = failed (with the
+reason), grey = not reached. From the CLI, the second run is `remod run ... --edited true`.
 
 If the `.tex` sits inside an extracted `natives\STM\...` folder, LoadTex works out the in-game path by itself.
 Otherwise fill in LoadTex's `game_path`.
