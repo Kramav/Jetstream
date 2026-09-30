@@ -43,9 +43,11 @@ struct PackageSpec {
     ModInfo info;  // info.screenshot is set from `screenshot`
     std::vector<PackageFile> files;
     fs::path screenshot;  // optional; jpg/png/tga/bmp
+    bool zip = true;      // also write <out_dir>/<mod_name>.zip, mod folder at the archive root
 };
 
-// Builds <out_dir>/<mod_name>/ and returns that folder. Refuses to touch an existing folder.
+// Builds <out_dir>/<mod_name>/ (and <mod_name>.zip if spec.zip) and returns the folder.
+// Refuses to touch an existing folder or zip.
 fs::path build_package(const Profile& profile, const PackageSpec& spec);
 
 }  // namespace remod

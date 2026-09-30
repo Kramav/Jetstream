@@ -1,5 +1,11 @@
 #include "package.hpp"
 
+#include "process.hpp"
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -26,6 +32,27 @@ std::string lower(std::string s) {
 
 // Windows MAX_PATH; RE mods are known to hit it (CLAUDE.md §1).
 constexpr size_t kMaxPath = 259;
+
+fs::path system_tar() {
+    wchar_t dir[MAX_PATH];
+    const UINT n = GetSystemDirectoryW(dir, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) throw PackageError("could not locate the Windows system directory");
+    return fs::path(dir) / L"tar.exe";
+}
+
+// Zips `folder` so the archive root holds the folder itself (published-mod layout, CLAUDE.md §9).
+// Uses the bsdtar that ships with Windows 10 1803+; no bundled zip library.
+// ponytail: bsdtar's handling of non-ASCII file names is untested here; switch to a zip library if they break.
+void zip_folder(const fs::path& folder, const fs::path& zip) {
+    const fs::path tar = system_tar();
+    if (!fs::is_regular_file(tar)) throw PackageError("Windows tar.exe not found (requires Windows 10 1803 or later)");
+    const auto r = run_process(tar,
+                               {L"-a", L"-c", L"-f", zip.wstring(), L"-C", folder.parent_path().wstring(),
+                                folder.filename().wstring()},
+                               std::chrono::minutes(10));
+    if (r.exit_code != 0 || !fs::is_regular_file(zip) || fs::file_size(zip) == 0)
+        throw PackageError("zip failed (tar exit " + std::to_string(r.exit_code) + "): " + r.output);
+}
 
 }  // namespace
 
@@ -81,6 +108,8 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec) {
 
     const fs::path root = fs::absolute(spec.out_dir / spec.mod_name);
     if (fs::exists(root)) throw PackageError("output folder already exists, refusing to overwrite: " + root.string());
+    const fs::path zip = fs::path(root) += ".zip";
+    if (spec.zip && fs::exists(zip)) throw PackageError("output zip already exists, refusing to overwrite: " + zip.string());
 
     // Validate everything before writing anything.
     std::vector<std::pair<fs::path, fs::path>> copies;  // source -> destination
@@ -118,9 +147,12 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec) {
         std::ofstream ini(root / "modinfo.ini", std::ios::binary);
         ini << modinfo;
         if (!ini.flush()) throw PackageError("failed to write modinfo.ini");
+        ini.close();
+        if (spec.zip) zip_folder(root, zip);
     } catch (...) {
         std::error_code ec;
-        fs::remove_all(root, ec);  // root did not exist before; don't leave a half-built package
+        fs::remove_all(root, ec);  // neither existed before; don't leave a half-built package
+        fs::remove(zip, ec);
         throw;
     }
     return root;

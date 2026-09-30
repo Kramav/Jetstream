@@ -132,6 +132,7 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 | REtool | PAK extraction / optional PAK creation | No license found | Don't bundle. Detect path; guide manual install |
 | Fluffy Mod Manager | Install/test mods | No license found | Don't bundle. User selects path |
 | texconv (DirectXTex) | Fallback DDS encoding | MIT [official] | May bundle, include license notice |
+| tar.exe (bsdtar) | Mod `.zip` creation | Ships with Windows 10 1803+ | Not bundled; run from System32 via `run_process` |
 | REFramework | Tiers 2/3 only | Not checked | Not needed in M1. Detect via `dinput8.dll` in game dir [guide] |
 
 Plugin note [official, plugin README]: it stores the extracted `re_chunk_000.pak` base directory per game
@@ -159,14 +160,21 @@ Fill these in from the manual spike before implementing the affected code:
 - [ ] Does fmt_RE_MESH's RE4R tex export work under Noesis `?cmode`? Exact options?
 - [ ] Does Noesis encode BC7 itself (making texconv unnecessary)?
 - [ ] Target texture path used for the first mod: `natives/STM/...`
+      Packaging test (2026-09-30) used `_chainsaw/ui/ui3200/tex/cs_ui3210_questfile_main_002_02_iam.tex.143221013`
+      (a `.tex` taken from an existing mod, not converted by us). Not a good in-game test target;
+      the first real target is still to be chosen.
 - [ ] Does Fluffy accept a loose-file archive for RE4R, or is a REtool-built PAK needed?
+      **Partial (spike 2026-09-30):** Fluffy *installs* a loose-file archive built by `remod package`.
+      Loading **in game is not yet confirmed**.
 - [ ] PAK file list source for the current game version.
-- [ ] RE4R game version the spike was done on.
+- [x] RE4R game version the spike was done on: Steam App ID 2050650, **Build ID 22377325** (spike 2026-09-30).
 - [ ] Does the RE4R `tex_suffix` (143221013) change across game updates?
-- [ ] Archive format Fluffy expects for the packaged mod (zip/7z/rar), and folder depth inside it.
-- [ ] Text encoding and line endings Fluffy expects in `modinfo.ini` (ASCII vs UTF-8; CRLF written for now).
-      Format itself confirmed [guide]: flat lowercase `key=value`, fields name/version/description/author/
-      screenshot (+ optional category/homepage), literal `\n` for line breaks in description.
+- [x] Archive format and layout (spike 2026-09-30): Fluffy accepts `.zip` and `.7z`. Published mods put the
+      mod folder at the archive root (`ModName/modinfo.ini`, `ModName/natives/...`), and the tool does the same.
+      (The spike's archive had the contents at the root instead and Fluffy still installed it.)
+- [ ] Text encoding Fluffy expects in `modinfo.ini` for non-ASCII text (ASCII vs UTF-8).
+      **Confirmed (spike 2026-09-30):** a `modinfo.ini` written by `remod package` (flat lowercase `key=value`,
+      CRLF line endings, ASCII-only values) shows name/version/description/author/screenshot correctly in Fluffy.
 - [ ] Screenshot size/aspect requirements for Fluffy, if any (formats: jpg/png/tga/bmp [guide]).
 - [ ] Should a tier-1 package include `manifest.json`, or only tier 2/3?
 

@@ -57,7 +57,7 @@ int run(int argc, char** argv) {
     spec.screenshot = args["screenshot"];
 
     const auto root = remod::build_package(profile, spec);
-    std::cout << "packaged: " << root.string() << "\n";
+    std::cout << "packaged: " << root.string() << ".zip\n";
     return 0;
 }
 

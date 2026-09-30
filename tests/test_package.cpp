@@ -1,5 +1,10 @@
 #include "package.hpp"
+#include "process.hpp"
 #include "texture_converter.hpp"
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -95,10 +100,39 @@ TEST_CASE("build_package writes the Fluffy folder layout") {
     for ([[maybe_unused]] const auto& e : fs::recursive_directory_iterator(root)) ++entries;
     CHECK(entries == 7);  // natives, STM, _chainsaw, ui, tex, screenshot, modinfo.ini
 
+    // Zip holds the mod folder at its root (CLAUDE.md §9). List it with the same system tar.
+    const fs::path zip = tmp.path / "out" / "MyMod.zip";
+    REQUIRE(fs::is_regular_file(zip));
+    wchar_t sys[MAX_PATH];
+    GetSystemDirectoryW(sys, MAX_PATH);
+    const auto listing = remod::run_process(fs::path(sys) / L"tar.exe", {L"-tf", zip.wstring()}, std::chrono::seconds(30));
+    REQUIRE(listing.exit_code == 0);
+    CHECK_THAT(listing.output, ContainsSubstring("MyMod/modinfo.ini") && ContainsSubstring("MyMod/Shot.PNG") &&
+                                   ContainsSubstring("MyMod/natives/STM/_chainsaw/ui/load.tex.143221013"));
+    std::istringstream lines(listing.output);
+    for (std::string line; std::getline(lines, line);)
+        if (!line.empty()) CHECK(line.starts_with("MyMod/"));
+
     SECTION("refuses to overwrite an existing package") {
         CHECK_THROWS_WITH(remod::build_package(kProfile, spec), ContainsSubstring("already exists"));
         CHECK(read_file(root / "modinfo.ini") == "name=My Mod\r\nversion=1\r\nscreenshot=Shot.PNG\r\n");
     }
+    SECTION("refuses when only the zip exists, and writes nothing") {
+        fs::remove_all(root);
+        CHECK_THROWS_WITH(remod::build_package(kProfile, spec), ContainsSubstring("zip already exists"));
+        CHECK_FALSE(fs::exists(root));
+    }
+}
+
+TEST_CASE("build_package without zip writes only the folder") {
+    TempDir tmp;
+    write_file(tmp.path / "in.tex.143221013", "x");
+    remod::build_package(kProfile, {.mod_name = "M",
+                                    .out_dir = tmp.path,
+                                    .files = {{tmp.path / "in.tex.143221013", "a.tex.143221013"}},
+                                    .zip = false});
+    CHECK(fs::is_regular_file(tmp.path / "M" / "natives/STM/a.tex.143221013"));
+    CHECK_FALSE(fs::exists(tmp.path / "M.zip"));
 }
 
 TEST_CASE("build_package validates before writing anything") {
