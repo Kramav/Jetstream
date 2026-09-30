@@ -5,5 +5,5 @@ tex_suffix      = "143221013"                 # [guide] RE4R texture version suf
 natives_root    = "natives/STM"               # [guide]
 packaging       = ["loose_archive", "pak"]    # [TBD-spike] which Fluffy accepts for RE4R
 pak_script      = "Create-PAK-2023.bat"       # [guide] REtool script for 2023-or-older games
-noesis_export   = "TBD"                       # [TBD-spike] ?cmode option selecting RE4R tex output
+noesis_export   = "-b"                        # spike 2026-09-30: ?cmode export options (-b = no dialog, see CLAUDE.md §9)
 file_list       = "TBD"                       # [TBD-spike] PAK file list source/version

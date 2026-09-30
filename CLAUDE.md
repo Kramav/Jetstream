@@ -74,6 +74,10 @@ A streamlined pipeline, no AI:
    texconv fallback only if Noesis can't encode).
 4. **PackageMod** — write `ModName/natives/STM/...` + `modinfo.ini` + screenshot → archive.
 
+Implementation note: Noesis converts `.tex` ↔ PNG file-to-file, so LoadTex writes the PNG directly and
+ExportImage/ImportImage reduce to handing that PNG to the user and checking the edited one (same size).
+Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png2tex` and `package`.
+
 Done when:
 - The graph runs from both the app and the CLI.
 - One RE4R loading-screen/UI texture mod built by the tool loads correctly in game via Fluffy.
@@ -157,15 +161,46 @@ in a txt file next to the plugin — the tool must set/verify this.
 
 Fill these in from the manual spike before implementing the affected code:
 
-- [ ] Does fmt_RE_MESH's RE4R tex export work under Noesis `?cmode`? Exact options?
-- [ ] Does Noesis encode BC7 itself (making texconv unnecessary)?
+- [x] Does fmt_RE_MESH's RE4R tex export work under Noesis `?cmode`? Exact options? **Yes, `-b`**
+      (now `noesis_export = "-b"` in `profiles/re4r.toml`). Implemented as `NoesisConverter` in
+      `core/texture_converter.cpp`; the round-trip test passes against the spike textures.
+      Noesis behavior the wrapper relies on (observed 2026-09-30):
+      - Its console text is **not** written to stdout/stderr (0 bytes when redirected), so it can't be captured.
+      - It **exits 0 even when a conversion fails** (a junk input gave exit 0 and no output; a missing input gave exit 1).
+      - Success is therefore judged from the output file only: it must exist and its PNG size or `.tex` header
+        must match the original.
+      **Import confirmed (spike 2026-09-30, Noesis v4474 `Noesis64.exe`, fmt_RE_MESH already installed):**
+      `Noesis64.exe ?cmode <in>.tex.143221013 <out>.png` works headless (no dialog), prints
+      `Detected file type: RE Engine Texture [PC]` and `BC7_UNORM_SRGB 8` (= format name + bits per pixel,
+      per the plugin's `print(formatName, bpp)`), and writes a 1024x1024 RGBA PNG.
+      **Export confirmed headless (spike 2026-09-30):**
+      `Noesis64.exe ?cmode C:\spike\edit.png C:\spike\srcout.tex.143221013 -b`
+      - Prints `-b parameter accepted.` No dialog.
+      - Uses `src.tex.143221013` (same folder) as its template.
+      - The plugin *injects* into that template: it copies its header and takes the target format from it.
+        So SaveTex needs the original `.tex` present.
+      - With `-b`, the template is found from the output name: strip `out.` and the extensions, then add
+        `.tex.<version>`. So name the output `<X>out.tex.143221013` next to `<X>.tex.143221013`.
+      - Without `-b` it opens a "Choose a tex file to inject" dialog, which hangs a headless run.
+      - Multi-image (array) textures open a dialog even with `-b` [plugin source]: not supported headless.
+      - A PNG input is always re-encoded. Mips are regenerated down to 8x8 (the loop stops once both sides
+        are ≤4), not copied from the template.
+      - Result for this texture: output header matches the template exactly (1024x1024, type 99 = BC7_UNORM_SRGB,
+        8 mips, 1 image, 1,398,248 bytes). Header fields were read using the plugin reader's layout:
+        magic@0, version@4, width@8, height@10, images@14, mipHeaderSize@15 (/16 = mips), format@16
+        [plugin source]. A template with a different mip count would not be matched; SaveTex must verify this.
+      - Template `.tex` came from another mod, not the extracted game files.
+      Also: this Noesis folder already has `plugins/python/RE4NativesPath.txt` (the §6 base-dir file).
+- [x] Does Noesis encode BC7 itself? **Yes** (spike 2026-09-30): the export above encoded BC7 with no texconv.
+      texconv is not needed for BC7.
 - [ ] Target texture path used for the first mod: `natives/STM/...`
       Packaging test (2026-09-30) used `_chainsaw/ui/ui3200/tex/cs_ui3210_questfile_main_002_02_iam.tex.143221013`
       (a `.tex` taken from an existing mod, not converted by us). Not a good in-game test target;
       the first real target is still to be chosen.
 - [ ] Does Fluffy accept a loose-file archive for RE4R, or is a REtool-built PAK needed?
       **Partial (spike 2026-09-30):** Fluffy *installs* a loose-file archive built by `remod package`.
-      Loading **in game is not yet confirmed**.
+      The user states from modding experience that this loads in game. It hasn't yet been tested with a
+      tool-built texture; §4's done-criterion still needs that one in-game check.
 - [ ] PAK file list source for the current game version.
 - [x] RE4R game version the spike was done on: Steam App ID 2050650, **Build ID 22377325** (spike 2026-09-30).
 - [ ] Does the RE4R `tex_suffix` (143221013) change across game updates?

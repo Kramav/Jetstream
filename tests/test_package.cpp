@@ -1,6 +1,5 @@
 #include "package.hpp"
 #include "process.hpp"
-#include "texture_converter.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -160,11 +159,4 @@ TEST_CASE("build_package validates before writing anything") {
     CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, std::string(300, 'a') + ".tex.143221013"}}})),
                       ContainsSubstring("exceeds"));
     CHECK_FALSE(fs::exists(out));
-}
-
-TEST_CASE("stub texture converter reports not implemented") {
-    remod::StubTextureConverter conv;
-    CHECK_THROWS_WITH(conv.load_tex("x.tex.143221013", kProfile), ContainsSubstring("not implemented") &&
-                                                                     ContainsSubstring("LoadTex"));
-    CHECK_THROWS_AS(conv.save_tex({}, {}, "x.tex.143221013"), remod::NotImplementedError);
 }

@@ -2,8 +2,8 @@
 
 Node-based modding tool for Capcom RE Engine games. First target: Resident Evil 4 (2023).
 
-**Status:** Milestone 1 in progress. Packaging to a Fluffy-ready zip works; texture conversion
-(`.tex` ↔ image) is not implemented yet.
+**Status:** Milestone 1 in progress. The CLI can convert a texture to PNG, convert the edited PNG back,
+and package it as a Fluffy-ready zip. The node graph isn't built yet.
 
 ## Requirements
 
@@ -16,6 +16,9 @@ Node-based modding tool for Capcom RE Engine games. First target: Resident Evil 
 
 You do not install any libraries by hand. `vcpkg.json` lists them and pins their versions:
 toml++, Catch2, Dear ImGui (docking), imgui-node-editor.
+
+To convert textures you also need **Noesis** with the **fmt_RE_MESH** plugin in `Noesis\plugins\python`.
+Neither is bundled (licensing); you point the tool at your `Noesis64.exe`.
 
 ## Build
 
@@ -40,29 +43,53 @@ Ignore the `'vswhere.exe' is not recognized` line the developer shell may print;
 ctest --test-dir build --output-on-failure
 ```
 
-Tests need no game files.
+Tests need no game files. One test, the texture round trip, runs only if you point it at local textures
+and Noesis. Otherwise it's reported as skipped:
+
+```powershell
+$env:REMOD_FIXTURES = "C:\spike"   # folder of original *.tex.143221013 files (never commit these)
+$env:REMOD_NOESIS   = "D:\path\to\Noesis64.exe"
+ctest --test-dir build --output-on-failure
+```
 
 ## Outputs
 
 | File | What it is |
 |---|---|
 | `build\app\remod-app.exe` | Desktop app. Currently an empty node-editor canvas. |
-| `build\cli\remod.exe` | Command-line tool. Currently packages an already-prepared `.tex` file. |
+| `build\cli\remod.exe` | Command-line tool: `tex2png`, `png2tex`, `package`. |
 | `build\tests\remod_tests.exe` | Test runner (usually run through `ctest`). |
 
-### CLI example
+## Making a texture mod with the CLI
 
-Run from the repo root:
+Run from the repo root. A normal PowerShell window is fine for this part. `$noesis` is just shorthand:
 
 ```powershell
+$noesis = "D:\path\to\Noesis64.exe"
+
+# 1. Original texture -> PNG (also prints size, format and mip count)
+.\build\cli\remod.exe tex2png --profile profiles\re4r.toml --noesis $noesis `
+  --tex "C:\work\my_texture.tex.143221013" --out "C:\work\my_texture.png"
+
+# 2. Edit the PNG in any image editor. Keep the same width and height.
+
+# 3. Edited PNG -> new texture, using the original as the template (same format and mips)
+.\build\cli\remod.exe png2tex --profile profiles\re4r.toml --noesis $noesis `
+  --png "C:\work\my_texture.png" --original "C:\work\my_texture.tex.143221013" `
+  --out "C:\work\new.tex.143221013"
+
+# 4. Package for Fluffy
 .\build\cli\remod.exe package --profile profiles\re4r.toml `
-  --tex "C:\work\my_texture.tex.143221013" `
+  --tex "C:\work\new.tex.143221013" `
   --game-path _chainsaw/ui/ui3200/tex/my_texture.tex.143221013 `
   --name MyMod --out E:\mods `
   --author "Me" --version 1.0 --description "What it does" --screenshot "C:\work\preview.png"
 ```
 
-This creates `E:\mods\MyMod\` containing `modinfo.ini`, the screenshot and `natives\STM\<game path>`,
+`png2tex` checks the result against the original (size, format, mip count) and fails rather than
+producing a mismatched texture. Multi-image (array) textures aren't supported yet.
+
+Step 4 creates `E:\mods\MyMod\` containing `modinfo.ini`, the screenshot and `natives\STM\<game path>`,
 plus **`E:\mods\MyMod.zip`** with the `MyMod` folder at its root. Add that zip to Fluffy Mod Manager.
 Zipping uses the `tar.exe` built into Windows 10 (1803+) and 11, so nothing extra needs installing.
 
@@ -70,7 +97,7 @@ Zipping uses the `tar.exe` built into Windows 10 (1803+) and 11, so nothing extr
 - **Quote any path that contains spaces.**
 - **`--game-path`** is the file's path inside the game, relative to `natives/STM`, with no leading slash.
 - **Put `--out` outside the repo**, or the output shows up as untracked files in git.
-- The tool refuses to overwrite an existing `MyMod` folder or `MyMod.zip`. Delete them to rebuild.
+- The tool never overwrites: it refuses if an output file, the `MyMod` folder or `MyMod.zip` already exists.
 
 ## Troubleshooting
 

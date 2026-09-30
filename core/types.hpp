@@ -17,13 +17,6 @@ struct TexMeta {
     std::uint32_t array_count = 0;
 };
 
-// ponytail: RGBA8 only; enough for 2D UI textures, add a float format when HDR/BC6H textures come up.
-struct Image {
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
-    std::vector<std::uint8_t> rgba;  // width * height * 4
-};
-
 struct ManifestV0 {
     int schema_version = 0;
     std::optional<std::string> runtime_version;  // null for tier 1

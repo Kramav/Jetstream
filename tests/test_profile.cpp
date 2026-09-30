@@ -35,9 +35,9 @@ TEST_CASE("re4r profile loads with the CLAUDE.md section 5 values") {
     CHECK(p.natives_root == "natives/STM");
     CHECK(p.packaging == std::vector<std::string>{"loose_archive", "pak"});
     CHECK(p.pak_script == "Create-PAK-2023.bat");
-    CHECK(p.noesis_export == "TBD");
+    CHECK(p.noesis_export == "-b");
     CHECK(p.file_list == "TBD");
-    CHECK(p.unresolved() == std::vector<std::string>{"noesis_export", "file_list"});
+    CHECK(p.unresolved() == std::vector<std::string>{"file_list"});
 }
 
 TEST_CASE("valid minimal profile parses") {
