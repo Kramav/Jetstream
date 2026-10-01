@@ -118,19 +118,23 @@ TEST_CASE("validate lists every problem") {
 
     Graph export_only;
     export_only.add_node("ExportImage");
-    CHECK(has(export_only.validate(), "PNG file is required"));  // an output field
+    CHECK(has(export_only.validate(), "Image file is required"));  // an output field
 }
 
 TEST_CASE("validate checks file extensions where a node lists them") {
     Graph g = pipeline("a.tex.143221013", "edit", "out");  // png without extension: Noesis would write edit.png
     const auto errors = g.validate();
     REQUIRE(errors.size() == 1);
-    CHECK_THAT(errors[0], ContainsSubstring("PNG file must end in .png"));
+    CHECK_THAT(errors[0], ContainsSubstring("Image file must end in .png, .tga, .jpg, .jpeg"));
+    for (const char* ok : {"EDIT.TGA", "edit.jpg"}) {
+        g.find(2)->params["png"] = ok;
+        CHECK(g.validate().empty());
+    }
     g.find(2)->params["png"] = "EDIT.PNG";
     g.add_node("ImportImage").params["png"] = "shot.gif";  // node 6
     REQUIRE(g.connect({6, "image", 5, "preview"}).empty());
     REQUIRE(g.validate().size() == 1);
-    CHECK_THAT(g.validate()[0], ContainsSubstring("PNG file must end in .png"));
+    CHECK_THAT(g.validate()[0], ContainsSubstring("Image file must end in .png"));
     g.find(6)->params["png"] = "";  // linked-in values aren't typed values: a Text link satisfies it
     g.add_node("Text").params["text"] = "shot.png";  // node 7
     REQUIRE(g.connect({7, "text", 6, "png"}).empty());
@@ -177,7 +181,7 @@ TEST_CASE("game path is inferred from a natives tree") {
     CHECK(remod::game_path_from("D:/x/natives/STM", "natives/STM") == "");
 }
 
-TEST_CASE("run: the Edit PNG step waits until marked done, and reports where every node got to") {
+TEST_CASE("run: the Edit image step waits until marked done, and reports where every node got to") {
     TempDir tmp;
     const fs::path tex = tmp.path / "natives/STM/_chainsaw/ui/a.tex.143221013";
     test::write_fake_tex(tex, 143221013, 64, 32, 1, 5, 99);
@@ -377,7 +381,7 @@ TEST_CASE("run: two textures, linked text, combined preview, replace on rebuild"
     const fs::path mod = tmp.path / "out/Two Textures";
     CHECK(fs::is_regular_file(mod / "natives/STM/ui/a.tex.143221013"));
     CHECK(fs::is_regular_file(mod / "natives/STM/ui/b.tex.143221013"));
-    CHECK(remod::png_size(mod / "preview.png") == std::pair<std::uint32_t, std::uint32_t>{1024, 512});
+    CHECK(remod::image_size(mod / "preview.png") == std::pair<std::uint32_t, std::uint32_t>{1024, 512});
     CHECK_THAT(test::read_file(mod / "modinfo.ini"), ContainsSubstring("name=Two Textures\r\nscreenshot=preview.png"));
     CHECK_THAT(log.back(), ContainsSubstring("packaged 2 texture(s)"));
 
@@ -387,7 +391,7 @@ TEST_CASE("run: two textures, linked text, combined preview, replace on rebuild"
     CHECK(fs::is_regular_file(tmp.path / "out/Two Textures.zip"));
 }
 
-TEST_CASE("run: one run exports every PNG that needs editing") {
+TEST_CASE("run: one run exports every image that needs editing") {
     TempDir tmp;
     FakeConverter conv;
     remod::RunOptions opt{.profile = re4r(), .converter = conv, .base_dir = tmp.path};
@@ -413,7 +417,7 @@ TEST_CASE("run: one run exports every PNG that needs editing") {
 
     const auto first = remod::run_graph(g, opt);
     CHECK(first.paused);
-    CHECK_THAT(first.message, ContainsSubstring("edit 2 PNGs") && ContainsSubstring("Done editing on the Edit PNG steps"));
+    CHECK_THAT(first.message, ContainsSubstring("edit 2 images") && ContainsSubstring("Done editing on the Edit image steps"));
     CHECK(conv.loads == 2);
     CHECK(conv.saves == 0);
     CHECK(fs::exists(tmp.path / "a.png"));

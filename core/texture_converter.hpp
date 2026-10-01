@@ -1,5 +1,5 @@
 #pragma once
-// LoadTex / SaveTex (CLAUDE.md §4). File-based: Noesis converts .tex <-> PNG directly, so pixels never
+// LoadTex / SaveTex (CLAUDE.md §4). File-based: Noesis converts .tex <-> PNG/TGA/JPG directly, so pixels never
 // pass through this process. ponytail: add in-memory decoding (WIC) when the app needs a texture preview.
 #include "process.hpp"
 #include "profile.hpp"
@@ -30,16 +30,25 @@ const Profile* profile_for_texture(const std::filesystem::path& tex, const std::
 // Layout from fmt_RE_MESH's reader [plugin source], checked against one RE4R texture (CLAUDE.md §9).
 TexMeta read_tex_meta(const std::filesystem::path& tex, const Profile& profile);
 
-// Width and height from a PNG's IHDR chunk (PNG spec).
-std::pair<std::uint32_t, std::uint32_t> png_size(const std::filesystem::path& png);
+// Image formats for the edit step, by extension: Noesis picks the format from it, both ways. BMP is left out
+// because Noesis writes it without alpha (spike 2026-09-30). JPG works but loses quality and transparency.
+inline constexpr const char* kEditImageFormats = "png,tga,jpg,jpeg";
+
+// True if `file` ends in one of kEditImageFormats, ignoring case.
+bool is_edit_image(const std::filesystem::path& file);
+
+// Width and height from an image's header: PNG (IHDR chunk), JPG (SOF marker) or, by extension, TGA.
+std::pair<std::uint32_t, std::uint32_t> image_size(const std::filesystem::path& file);
 
 class ITextureConverter {
 public:
     virtual ~ITextureConverter() = default;
-    // LoadTex: game .tex -> PNG at png_out (must not exist). Returns the .tex's metadata.
+    // LoadTex: game .tex -> image at png_out (must not exist; PNG, TGA or JPG by its extension).
+    // Returns the .tex's metadata.
     virtual TexMeta load_tex(const std::filesystem::path& tex, const std::filesystem::path& png_out,
                              const Profile& profile) = 0;
-    // SaveTex: edited PNG -> .tex at tex_out (must not exist) with original_tex's size, format and mips.
+    // SaveTex: edited image (PNG, TGA or JPG) -> .tex at tex_out (must not exist) with original_tex's size,
+    // format and mips.
     // Throws ConvertError if the result doesn't match.
     virtual TexMeta save_tex(const std::filesystem::path& png, const std::filesystem::path& original_tex,
                              const std::filesystem::path& tex_out, const Profile& profile) = 0;

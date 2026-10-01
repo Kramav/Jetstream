@@ -29,7 +29,7 @@ enum class PathKind { None, OpenFile, OpenTexture, SaveFile, Folder };
 enum class Widget { None, Text, Path, Checkbox };
 
 // `name`s are the stable ids stored in graph files; `title`, `label` and `hint` are what users read.
-// An output may carry a typed field for where the node writes it (e.g. Export's "PNG file"): front ends show it
+// An output may carry a typed field for where the node writes it (e.g. Export's "Image file"): front ends show it
 // on the output side, and it's stored in Node::params under `field`. Such a field is always required.
 struct PortSpec {  // an output
     const char* name;
@@ -136,7 +136,7 @@ struct RunOptions {
     ITextureConverter& converter;
     std::filesystem::path base_dir;  // relative paths resolve against this (the graph file's folder)
     std::function<void(const std::string&)> log = {};
-    bool edits_done = false;  // treat every Edit PNG step as done (the CLI's --edited, where there's no button)
+    bool edits_done = false;  // treat every Edit image step as done (the CLI's --edited, where there's no button)
 };
 
 // Where each node got to in a run, for front ends to show.
@@ -144,14 +144,14 @@ enum class NodeState { NotReached, Done, Waiting, Failed };
 struct NodeStatus {
     NodeState state = NodeState::NotReached;
     std::string message;          // short, for the node: "exported x.png", the error, ...
-    std::filesystem::path file;   // the file concerned, e.g. the PNG an Edit PNG step waits on
+    std::filesystem::path file;   // the file concerned, e.g. the image an Edit image step waits on
 };
 
 struct RunResult {
-    bool paused = false;  // an Edit PNG step is waiting for the user
+    bool paused = false;  // an Edit image step is waiting for the user
     std::string message;
     std::map<int, NodeStatus> nodes;
-    std::vector<int> reset_edits;  // Edit PNG steps whose PNG was just re-exported: their "done" no longer holds
+    std::vector<int> reset_edits;  // Edit image steps whose image was just re-exported: their "done" no longer holds
 };
 
 // A node failed: the message names it, `nodes` says where every node got to.
@@ -164,10 +164,10 @@ struct RunError : GraphError {
 // Runs nodes in dependency order. Throws GraphError if the graph isn't runnable, RunError if a node fails.
 RunResult run_graph(const Graph& graph, const RunOptions& options);
 
-// Applies what a run found to the graph: clears "done" on Edit PNG steps whose PNG was re-exported.
+// Applies what a run found to the graph: clears "done" on Edit image steps whose image was re-exported.
 void apply_run(Graph& graph, const RunResult& result);
 
-// Marks an Edit PNG step done (the user finished editing) or not.
+// Marks an Edit image step done (the user finished editing) or not.
 void set_edit_done(Graph& graph, int node, bool done);
 
 // "<natives root>/<rest>" in `file` (case-insensitive) -> "<rest>", else "". Lets LoadTex infer the game path

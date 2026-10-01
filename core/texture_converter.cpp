@@ -35,6 +35,15 @@ std::uint32_t be32(const std::string& b, size_t at) {
     for (size_t i = 0; i < 4; ++i) v = (v << 8) | std::uint8_t(b[at + i]);
     return v;
 }
+std::uint32_t be16(const std::string& b, size_t at) { return (std::uint8_t(b[at]) << 8) | std::uint8_t(b[at + 1]); }
+
+std::string lower_extension(const fs::path& file) {
+    std::string ext = file.extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext;
+}
+
+const char* kEditFormatsText = ".png, .tga, .jpg or .jpeg";
 
 // DXGI_FORMAT values (official D3D enum) for the formats the plugin's writer handles.
 std::string format_name(std::uint32_t dxgi) {
@@ -109,11 +118,39 @@ TexMeta read_tex_meta(const fs::path& tex, const Profile& profile) {
     return m;
 }
 
-std::pair<std::uint32_t, std::uint32_t> png_size(const fs::path& png) {
-    const std::string b = read_prefix(png, 24);
-    if (b.size() < 24 || b.compare(0, 8, "\x89PNG\r\n\x1a\n") != 0 || b.compare(12, 4, "IHDR") != 0)
-        throw ConvertError(png.string() + " is not a PNG file");
-    return {be32(b, 16), be32(b, 20)};
+bool is_edit_image(const fs::path& file) {
+    const std::string ext = lower_extension(file);
+    std::istringstream list(kEditImageFormats);
+    for (std::string item; std::getline(list, item, ',');)
+        if (ext == "." + item) return true;
+    return false;
+}
+
+std::pair<std::uint32_t, std::uint32_t> image_size(const fs::path& file) {
+    std::string b = read_prefix(file, 24);
+    if (b.size() >= 24 && b.compare(0, 8, "\x89PNG\r\n\x1a\n") == 0 && b.compare(12, 4, "IHDR") == 0)
+        return {be32(b, 16), be32(b, 20)};  // PNG spec: IHDR is the first chunk
+    if (b.size() >= 2 && std::uint8_t(b[0]) == 0xFF && std::uint8_t(b[1]) == 0xD8) {
+        // JPEG: walk the marker segments to the first start-of-frame (SOF0..SOF15 minus DHT/JPG/DAC), whose
+        // payload is precision(1) height(2) width(2).
+        b = read_prefix(file, size_t(fs::file_size(file)));
+        for (size_t i = 2; i + 9 <= b.size() && std::uint8_t(b[i]) == 0xFF;) {
+            const unsigned marker = std::uint8_t(b[i + 1]);
+            if (marker == 0xFF) {  // fill byte
+                ++i;
+                continue;
+            }
+            if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC)
+                return {be16(b, i + 7), be16(b, i + 5)};
+            i += 2 + be16(b, i + 2);
+        }
+        throw ConvertError(file.string() + " is a JPG file without a readable size");
+    }
+    // TGA has no signature: trust the extension, then check the header. Types 2/3 = true-colour/grey, 10/11 = RLE.
+    const int type = b.size() >= 18 ? b[2] : 0;
+    if (lower_extension(file) == ".tga" && (type == 2 || type == 3 || type == 10 || type == 11))
+        return {le16(b, 12), le16(b, 14)};
+    throw ConvertError(file.string() + " is not a PNG, TGA or JPG file");
 }
 
 NoesisConverter::NoesisConverter(fs::path noesis_exe, std::chrono::milliseconds timeout)
@@ -151,10 +188,9 @@ ProcessResult NoesisConverter::run(std::vector<std::wstring> args, const fs::pat
 
 TexMeta NoesisConverter::load_tex(const fs::path& tex, const fs::path& png_out, const Profile& profile) {
     const TexMeta meta = read_tex_meta(tex, profile);
-    // Noesis picks the output format from the extension; without ".png" it silently writes "<name>.png".
-    std::string ext = png_out.extension().string();
-    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (ext != ".png") throw ConvertError("PNG output path must end in .png: " + png_out.string());
+    // Noesis picks the output format from the extension; without a known one it silently writes "<name>.png".
+    if (!is_edit_image(png_out))
+        throw ConvertError(std::string("image output path must end in ") + kEditFormatsText + ": " + png_out.string());
     require_absent(png_out);
     TempDir tmp;
     const fs::path log = tmp.path / "noesis.log";
@@ -166,9 +202,9 @@ TexMeta NoesisConverter::load_tex(const fs::path& tex, const fs::path& png_out, 
     if (r.exit_code != 0 || !fs::is_regular_file(png_out))
         throw ConvertError("Noesis couldn't convert " + tex.string() + " to " + png_out.string() + " (exit " +
                            std::to_string(r.exit_code) + ")." + noesis_said(log));
-    if (png_size(png_out) != std::pair{meta.width, meta.height}) {
+    if (image_size(png_out) != std::pair{meta.width, meta.height}) {
         fs::remove(png_out);
-        throw ConvertError("Noesis wrote a PNG whose size differs from the .tex (" + describe(meta) + ")");
+        throw ConvertError("Noesis wrote an image whose size differs from the .tex (" + describe(meta) + ")");
     }
     return meta;
 }
@@ -182,16 +218,20 @@ TexMeta NoesisConverter::save_tex(const fs::path& png, const fs::path& original_
     if (original.array_count != 1)
         throw ConvertError("multi-image textures are not supported: the plugin asks which image to replace "
                            "in a dialog (CLAUDE.md §9)");
-    if (png_size(png) != std::pair{original.width, original.height})
+    if (!is_edit_image(png))
+        throw ConvertError(png.string() + " must be an image ending in " + kEditFormatsText);
+    if (image_size(png) != std::pair{original.width, original.height})
         throw ConvertError(png.string() + " must be " + std::to_string(original.width) + "x" +
                            std::to_string(original.height) + " to match " + original_tex.string());
     require_absent(tex_out);
 
     // With -b the plugin injects into "<X>.tex.<v>" when the output is named "<X>out.tex.<v>" (CLAUDE.md §9).
-    // Fixed names in a private folder keep that name matching predictable.
+    // Fixed names in a private folder keep that name matching predictable. The edit keeps its extension: Noesis
+    // reads it in the format that names.
     TempDir tmp;
     const std::string ext = ".tex." + profile.tex_suffix;
-    const fs::path src = tmp.path / ("src" + ext), edit = tmp.path / "edit.png", out = tmp.path / ("srcout" + ext);
+    const fs::path src = tmp.path / ("src" + ext), edit = tmp.path / ("edit" + lower_extension(png)),
+                   out = tmp.path / ("srcout" + ext);
     fs::copy_file(original_tex, src);
     fs::copy_file(png, edit);
 

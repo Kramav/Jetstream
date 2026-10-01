@@ -16,9 +16,9 @@ namespace {
 constexpr const char* kUsage =
     "usage:\n"
     "  remod run --graph <file.json> --noesis <Noesis64.exe> [--profiles <dir>] [--edited true]\n"
-    "            --edited true: treat Edit PNG steps as done (you've edited the PNGs)\n"
-    "  remod tex2png --profile <toml> --noesis <Noesis64.exe> --tex <file.tex.N> --out <file.png>\n"
-    "  remod png2tex --profile <toml> --noesis <Noesis64.exe> --png <edited.png> --original <file.tex.N>\n"
+    "            --edited true: treat Edit image steps as done (you've edited the images)\n"
+    "  remod tex2png --profile <toml> --noesis <Noesis64.exe> --tex <file.tex.N> --out <file.png|.tga|.jpg>\n"
+    "  remod png2tex --profile <toml> --noesis <Noesis64.exe> --png <edited.png|.tga|.jpg> --original <file.tex.N>\n"
     "                --out <new.tex.N>\n"
     "  remod package --profile <toml> --tex <file> --game-path <natives-relative path> --name <ModName>\n"
     "                --out <dir> [--version v] [--author a] [--description d] [--screenshot file]\n"

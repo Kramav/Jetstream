@@ -44,7 +44,7 @@ inline void write_fake_tex(const fs::path& p, std::uint32_t version, std::uint16
     write_file(p, b);
 }
 
-// PNG signature + IHDR width/height (enough for png_size).
+// PNG signature + IHDR width/height (enough for image_size).
 inline void write_fake_png(const fs::path& p, std::uint32_t w, std::uint32_t h) {
     std::string b = "\x89PNG\r\n\x1a\n";
     b += std::string("\0\0\0\x0dIHDR", 8);

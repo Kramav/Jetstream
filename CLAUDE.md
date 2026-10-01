@@ -82,6 +82,9 @@ Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, PackageMod, Text.
+- **Edit format = the file extension:** PNG, TGA or JPG (`kEditImageFormats`). Noesis reads and writes each, both ways
+  (spike 2026-09-30, header-identical `.tex` from TGA and JPG). BMP is left out: Noesis writes it 24-bit, without
+  alpha. Previews from TGA are read by the tool's own TGA reader (WIC has none); a single TGA preview is converted to PNG.
 - **Outputs are on the right.** A field for where a node writes its output (Export's PNG file) is part of that
   output (`PortSpec::field`), shown on the output side and not linkable.
 - **Manual editing is its own step (EditImage, `NodeSpec::manual`).** A run waits there until the user marks it
@@ -89,7 +92,12 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   (`RunResult::reset_edits`, applied by `apply_run`).
 - **App modes:** Build layout (structure editing: add/insert/duplicate/delete/link, via core helpers
   `choices_for_pin`, `add_connected`, `choices_for_link`, `insert_node`, `duplicate_node`, `disconnect_node`)
-  and Use layout (structure locked; fill in, run, edit). The mode is UI state, remembered in settings.
+  and Use layout (structure and block positions locked; fill in, run, edit). The switch sits centred above the
+  graph. The mode is UI state, remembered in settings.
+- **Links are routed by core** (`core/route.*`, `route_links`): right angles with rounded corners, around blocks,
+  leaving outputs rightwards and entering inputs from the left; links from one output share a trunk that branches
+  (junction dots), different outputs avoid sharing a line. The app draws them itself on the editor's top layer
+  (imgui-node-editor only draws beziers) and hit-tests them with `hit_link` for the right-click menu.
 - **Every run reports each node's state** (`RunResult::nodes`, or `RunError::nodes` on failure): done, waiting
   for the user, failed with its reason, or not reached. The app shows these as coloured node borders and badges.
 - **Every input has a pin** (`InputSpec`). Editable inputs can be typed or linked; a link wins.

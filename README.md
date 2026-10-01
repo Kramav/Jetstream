@@ -2,7 +2,7 @@
 
 Node-based modding tool for Capcom RE Engine games. First target: Resident Evil 4 (2023).
 
-**Status:** Milestone 1 in progress. A node graph (texture → PNG → edited texture → Fluffy-ready zip)
+**Status:** Milestone 1 complete. A node graph (texture → image → edited texture → Fluffy-ready zip)
 runs from the desktop app and from the CLI.
 
 ## Requirements
@@ -68,17 +68,21 @@ ctest --test-dir build --output-on-failure
 
 ## Two modes
 
-The top of the Pipeline panel switches between:
+The switch centred above the graph changes between:
 
-- **Use layout:** run a finished layout. Fill in the fields, Run, edit PNGs, click Done editing. Blocks and
-  links are locked.
+- **Use layout:** run a finished layout. Fill in the fields, Run, edit the images, click Done editing. Blocks and
+  links are locked, and blocks can't be moved.
 - **Build layout:** make or change a layout.
   - **Add a block:** right-click empty canvas.
   - **Add a block already linked:** drag from a pin and let go on empty canvas.
-  - **Put a block between two others:** right-click a link → Insert node here.
+  - **Put a block between two others:** right-click a line → Insert node here.
+  - **Remove a link:** right-click its line → Delete link.
   - **Change a block:** right-click it → Duplicate, Disconnect all or Delete.
 
 The mode is remembered. New starts in Build layout.
+
+Lines run at right angles around the blocks, never underneath them. One output feeding several inputs is drawn
+as one line that branches, with a dot where it splits.
 
 ## Graph features
 
@@ -86,10 +90,13 @@ The mode is remembered. New starts in Build layout.
   `<- source`.
 - **Text node:** type a value once and link it into several fields. `{1}`, `{2}`… in its text are filled from
   whatever is connected to its numbered inputs, e.g. `{1} v2`.
-- **Several textures per mod:** give each texture its own Original texture → Export → Convert chain and connect
-  every new texture to Package for Fluffy. A new input line appears each time. One run exports all the PNGs.
-- **Preview for Fluffy:** connect edited PNGs, or any image via Use existing PNG, to Package's `preview`.
+- **Several textures per mod:** give each texture its own Original texture → Export → Edit → Convert chain and connect
+  every new texture to Package for Fluffy. A new input line appears each time. One run exports all the images.
+- **Preview for Fluffy:** connect edited images, or any image via Use existing image, to Package's `preview`.
   Several are combined into one picture.
+- **Edit format:** Export image writes PNG, TGA or JPG, whichever its file name ends in. In the `...` picker,
+  pick the format under "Save as type". TGA suits GIMP. JPG loses some quality and all transparency.
+  BMP isn't offered: Noesis writes it without transparency.
 - **Replace existing** on Package rebuilds over the previous build of the same mod, so no manual deleting.
   It never deletes anything else.
 - **Setup check:** the Pipeline panel finds Noesis automatically (remembered path, `REMOD_NOESIS`, PATH, winget)
@@ -103,16 +110,16 @@ mismatched file. See CLAUDE.md §9.
 
 ## Making a texture mod with a graph
 
-A graph chains the steps: **Original texture → Export PNG → Edit PNG → Convert PNG to texture → Package for
+A graph chains the steps: **Original texture → Export image → Edit image → Convert image to texture → Package for
 Fluffy**, plus a link from Original texture to Convert's `original texture` input.
 `schemas\graph.v0.example.json` is a ready-made one; copy it and change the paths. Relative paths in a graph are
 relative to the graph file's folder.
 
-**Edit PNG** is your step, marked "YOUR STEP" with an amber border:
-1. **Run:** Export PNG writes the PNG, and the run stops at Edit PNG.
-2. On Edit PNG, click **Open in editor**, make your change, save it (same width and height), and click
+**Edit image** is your step, marked "YOUR STEP" with an amber border:
+1. **Run:** Export image writes the image file, and the run stops at Edit image.
+2. On Edit image, click **Open in editor**, make your change, save it (same width, height and format), and click
    **Done editing**.
-3. **Run again:** your PNG is converted like the original and packaged.
+3. **Run again:** your image is converted like the original and packaged.
 
 After each run every block shows how far it got: green = done, amber = waiting for you, red = failed (with the
 reason), grey = not reached. From the CLI, the second run is `remod run ... --edited true`.
@@ -154,13 +161,13 @@ Run from the repo root in a normal PowerShell window. `$noesis` is just shorthan
 ```powershell
 $noesis = "D:\path\to\Noesis64.exe"
 
-# 1. Original texture -> PNG (also prints size, format and mip count)
+# 1. Original texture -> PNG (or .tga / .jpg; also prints size, format and mip count)
 .\build\cli\remod.exe tex2png --profile profiles\re4r.toml --noesis $noesis `
   --tex "C:\work\my_texture.tex.143221013" --out "C:\work\my_texture.png"
 
-# 2. Edit the PNG in any image editor. Keep the same width and height.
+# 2. Edit the image in any image editor. Keep the same width and height.
 
-# 3. Edited PNG -> new texture, using the original as the template (same format and mips)
+# 3. Edited image -> new texture, using the original as the template (same format and mips)
 .\build\cli\remod.exe png2tex --profile profiles\re4r.toml --noesis $noesis `
   --png "C:\work\my_texture.png" --original "C:\work\my_texture.tex.143221013" `
   --out "C:\work\new.tex.143221013"

@@ -3,6 +3,7 @@
 // Win32 + DX11 setup follows imgui/examples/example_win32_directx11 (v1.92.9-docking).
 #include "graph.hpp"
 #include "profile.hpp"
+#include "route.hpp"
 #include "settings.hpp"
 #include "setup.hpp"
 #include "texture_converter.hpp"
@@ -23,13 +24,17 @@
 #include <d3d11.h>
 #include <shellapi.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <future>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -112,8 +117,8 @@ LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 // Editor ids. Pin id = node * 4096 + (output ? 2048 : 0) + slot * 64 + row, where slot is the input/output's
 // index in the node spec and row numbers the lines of a multiple input (one per link, plus an empty one).
-// Link id = base + index into graph.links.
-constexpr std::uintptr_t kPerNode = 4096, kOutputBit = 2048, kRows = 64, kLinkBase = std::uintptr_t(1) << 24;
+// Links aren't editor objects: the app routes and draws them itself (core/route), so they have no ids.
+constexpr std::uintptr_t kPerNode = 4096, kOutputBit = 2048, kRows = 64;
 
 ed::PinId pin_id(int node, bool output, size_t slot, size_t row = 0) {
     return ed::PinId(std::uintptr_t(node) * kPerNode + (output ? kOutputBit : 0) + slot * kRows + row);
@@ -189,9 +194,24 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value, const 
     }
     if (dir.empty() && std::filesystem::is_directory(start_dir, ec)) dir = start_dir;
     const char* start = dir.empty() ? nullptr : dir.c_str();
-    const nfdu8filteritem_t item{kind == remod::PathKind::OpenTexture ? "RE Engine textures" : "Files", filter};
-    const nfdu8filteritem_t* filters = filter ? &item : nullptr;
-    const nfdfiltersize_t count = filter ? 1 : 0;
+    // Several extensions (e.g. png,tga,jpg) get one "Save as type" entry each, so the save dialog's type list picks
+    // the format; open dialogs list them all together first. Texture suffixes stay one entry.
+    std::vector<std::pair<std::string, std::string>> types;  // name, extensions
+    if (filter) {
+        const bool split = kind != remod::PathKind::OpenTexture && std::strchr(filter, ',');
+        if (kind != remod::PathKind::SaveFile || !split)
+            types.emplace_back(kind == remod::PathKind::OpenTexture ? "RE Engine textures" : "Supported files", filter);
+        std::istringstream list(split ? filter : "");
+        for (std::string ext; std::getline(list, ext, ',');) {
+            std::string name = ext;
+            std::ranges::transform(name, name.begin(), [](unsigned char c) { return char(std::toupper(c)); });
+            types.emplace_back(name, ext);
+        }
+    }
+    std::vector<nfdu8filteritem_t> items;
+    for (const auto& [name, exts] : types) items.push_back({name.c_str(), exts.c_str()});
+    const nfdu8filteritem_t* filters = items.empty() ? nullptr : items.data();
+    const auto count = nfdfiltersize_t(items.size());
     const std::string name = value.empty() ? "" : std::filesystem::path(value).filename().string();
 
     nfdu8char_t* out = nullptr;
@@ -246,6 +266,13 @@ struct State {
     bool save_requested = false;  // handled inside the editor, where node positions can be read
     std::future<remod::RunResult> run;
     std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
+    // Link drawing: pin centres (canvas coordinates) recorded while drawing the nodes, and the routes, recomputed
+    // only when a block or pin moves. routed[i] = the graph link that routes.paths[i] belongs to.
+    std::map<std::uintptr_t, ImVec2> pin_pos;
+    std::vector<remod::Box> route_blocks;
+    std::vector<remod::LinkRoute> route_requests;
+    remod::Routes routes;
+    std::vector<size_t> routed;
     std::mutex log_mutex;
     std::vector<std::string> log;  // written by the run thread
 };
@@ -326,7 +353,7 @@ void poll_run(State& s) {
     if (!s.run.valid() || s.run.wait_for(0s) != std::future_status::ready) return;
     try {
         const remod::RunResult r = s.run.get();
-        remod::apply_run(s.graph, r);  // e.g. a re-exported PNG un-does an earlier "Done editing"
+        remod::apply_run(s.graph, r);  // e.g. a re-exported image un-does an earlier "Done editing"
         s.statuses = r.nodes;
         s.status = r.message;
     } catch (const remod::RunError& e) {
@@ -346,25 +373,13 @@ void open_in_editor(const std::filesystem::path& file) {
 
 void draw_side_panel(State& s) {
     ImGui::Begin("Pipeline");
-    // Two modes: Use a finished layout (fill in, run, edit PNGs) or Build one (add, link, arrange blocks).
-    int mode = s.build_mode ? 1 : 0;
-    bool mode_changed = ImGui::RadioButton("Use layout", &mode, 0);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fill in the fields, Run, edit the PNGs. The blocks and links stay as they are.");
-    ImGui::SameLine();
-    mode_changed |= ImGui::RadioButton("Build layout", &mode, 1);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add, remove, link and arrange blocks to make or change a layout.");
-    if (mode_changed) {
-        s.build_mode = mode == 1;
-        remember_paths(s);
-    }
-    ImGui::SameLine();
     if (ImGui::Checkbox("Show help", &s.show_help)) remember_paths(s);
 
     if (s.show_help && !s.build_mode) {
         ImGui::TextWrapped("1. Original texture: pick the game's .tex file (the picker opens in your REtool folder).");
-        ImGui::TextWrapped("2. Run: Export PNG writes the PNG, and the run stops at Edit PNG - your step.");
-        ImGui::TextWrapped("3. On Edit PNG: Open in editor, change and save the PNG (same size), click Done editing.");
-        ImGui::TextWrapped("4. Run again: Convert PNG to texture and Package for Fluffy build the mod .zip.");
+        ImGui::TextWrapped("2. Run: Export image writes the image, and the run stops at Edit image - your step.");
+        ImGui::TextWrapped("3. On Edit image: Open in editor, change and save the image (same size and format), click Done editing.");
+        ImGui::TextWrapped("4. Run again: Convert image to texture and Package for Fluffy build the mod .zip.");
         ImGui::TextWrapped("After each run every block shows how far it got: done (green), waiting for you "
                            "(amber), failed (red, with the reason), not reached (grey).");
         ImGui::TextDisabled("To change which blocks there are or how they connect, switch to Build layout.");
@@ -511,8 +526,8 @@ ImU32 port_color(remod::PortType type) {
 // One pin: a small circle on the node border (links attach to its centre, drags start from it) around the row's
 // label, which is drawn inside the node - left-aligned for inputs, right-aligned for outputs. Filled once
 // connected. Rows are frame-height tall so labels line up with the text boxes next to them.
-void draw_pin(ed::PinId id, const std::string& label, remod::PortType type, bool output, bool connected, float x0,
-              float node_width, float edge_x) {
+void draw_pin(State& s, ed::PinId id, const std::string& label, remod::PortType type, bool output, bool connected,
+              float x0, float node_width, float edge_x) {
     ed::BeginPin(id, output ? ed::PinKind::Output : ed::PinKind::Input);
     if (output) ImGui::SetCursorPosX(x0 + node_width - ImGui::CalcTextSize(label.c_str()).x);
     const float y = ImGui::GetCursorScreenPos().y + ImGui::GetFrameHeight() * 0.5f;
@@ -520,6 +535,7 @@ void draw_pin(ed::PinId id, const std::string& label, remod::PortType type, bool
     ImGui::TextUnformatted(label.c_str());
 
     const ImVec2 center(edge_x, y);
+    s.pin_pos[id.Get()] = center;
     const float r = ImGui::GetFontSize() * 0.3f;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     if (connected)
@@ -548,10 +564,55 @@ void fit_view(ed::EditorContext* editor, ImVec2 view) {
     ctx->NavigateTo(ImRect(min, min + size), true, 0.0f);
 }
 
+// A routed link: straight runs joined by rounded corners. `inset` keeps both ends off the pin circles' centres.
+void draw_route(ImDrawList* draw, const std::vector<remod::Pt>& path, float radius, float inset, ImU32 color,
+                float thickness) {
+    auto v = [](remod::Pt p) { return ImVec2(p.x, p.y); };
+    draw->PathLineTo(v(path.front()) + ImVec2(inset, 0));  // every path leaves rightwards ...
+    for (size_t i = 1; i + 1 < path.size(); ++i) {
+        const ImVec2 a = v(path[i - 1]), c = v(path[i]), b = v(path[i + 1]);
+        const float in = ImLength(c - a), out = ImLength(b - c);
+        if (in < 0.01f || out < 0.01f) continue;
+        const float r = ImMin(radius, ImMin(in, out) * 0.5f);
+        draw->PathLineTo(c - (c - a) * (r / in));
+        draw->PathBezierQuadraticCurveTo(c, c + (b - c) * (r / out));
+    }
+    draw->PathLineTo(v(path.back()) - ImVec2(inset, 0));  // ... and arrives from the left
+    draw->PathStroke(color, ImDrawFlags_None, thickness);
+}
+
+// Two modes, switched above the graph: Use a finished layout (fill in, run, edit images) or Build one
+// (add, link, arrange blocks). Two buttons centred, the active one highlighted.
+void draw_mode_switch(State& s) {
+    struct Mode { const char* label; bool build; const char* tip; };
+    static constexpr Mode modes[]{
+        {"Use layout", false, "Fill in the fields, Run, edit the images. The blocks and links stay as they are."},
+        {"Build layout", true, "Add, remove, link and arrange blocks to make or change a layout."}};
+    const ImGuiStyle& style = ImGui::GetStyle();
+    float width = style.ItemSpacing.x;
+    for (const auto& m : modes) width += ImGui::CalcTextSize(m.label).x + style.FramePadding.x * 2;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImMax(0.0f, (ImGui::GetContentRegionAvail().x - width) * 0.5f));
+    for (const auto& m : modes) {
+        const bool active = s.build_mode == m.build;
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_ButtonActive]);
+        if (ImGui::Button(m.label) && !active) {
+            s.build_mode = m.build;
+            remember_paths(s);
+        }
+        if (active) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.tip);
+        if (&m != &modes[1]) ImGui::SameLine();
+    }
+}
+
 void draw_canvas(State& s, ed::EditorContext* editor) {
     ImGui::Begin("Graph");
+    draw_mode_switch(s);
     const ImVec2 view_size = ImGui::GetContentRegionAvail();
     ed::SetCurrentEditor(editor);
+    // Use layout: blocks stay where they are. The editor has no per-node lock, so dragging moves to a mouse button
+    // that's rarely used. ponytail: the side (X2) button still drags there; patch AcceptDrag if that matters.
+    const_cast<ed::Config&>(ed::GetConfig(editor)).DragButtonIndex = s.build_mode ? 0 : 4;
     ed::Begin("canvas");
 
     // Rasterize node text at the on-screen zoom so it stays sharp when zoomed. Quantized to 1/8 steps so the
@@ -571,6 +632,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
 
     const float font = ImGui::GetFontSize();
     const ImGuiStyle& style = ImGui::GetStyle();
+    s.pin_pos.clear();
     const float label_width = font * 7, field_width = font * 14;
     const float button_width = ImGui::CalcTextSize("...").x + style.FramePadding.x * 2;
     const float node_width = label_width + field_width + style.ItemSpacing.x + button_width;  // content width
@@ -624,7 +686,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                                                  : std::string(in.label) + ": none connected";
                         else
                             label += "  <- " + source_of(s.graph, s.graph.links[linked[row]]);
-                        draw_pin(pin_id(n.id, false, slot, row), label, in.type, false, row < linked.size(), x0,
+                        draw_pin(s, pin_id(n.id, false, slot, row), label, in.type, false, row < linked.size(), x0,
                                  node_width, left_edge);
                         if (ImGui::IsItemHovered()) hovered_hint = in.hint;
                     }
@@ -633,7 +695,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 }
 
                 const std::string label = in.required ? std::string(in.label) + " *" : std::string(in.label);
-                draw_pin(pin_id(n.id, false, slot), label, in.type, false, !linked.empty(), x0, node_width, left_edge);
+                draw_pin(s, pin_id(n.id, false, slot), label, in.type, false, !linked.empty(), x0, node_width, left_edge);
                 if (ImGui::IsItemHovered()) hovered_hint = in.hint;
                 if (!in.editable()) {
                     ImGui::PopID();
@@ -667,13 +729,13 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 }
                 ImGui::PopID();
             }
-            if (manual) {  // Edit PNG: the user's own step
+            if (manual) {  // Edit image: the user's own step
                 const std::filesystem::path file = status ? status->file : std::filesystem::path();
                 if (file.empty()) {
-                    ImGui::TextDisabled("Run first: Export PNG creates the file to edit.");
+                    ImGui::TextDisabled("Run first: Export image creates the file to edit.");
                 } else {
                     if (ImGui::Button("Open in editor")) open_in_editor(file);
-                    if (ImGui::IsItemHovered()) hovered_hint = "Opens the PNG in your image editor (e.g. Paint).";
+                    if (ImGui::IsItemHovered()) hovered_hint = "Opens the image in your image editor (whatever opens that file type).";
                     ImGui::SameLine();
                 }
                 if (!edit_done) {
@@ -703,7 +765,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     if (ImGui::IsItemHovered()) hovered_hint = "Browse...";
                     ImGui::SameLine();
                 }
-                draw_pin(pin_id(n.id, true, i), out.label, out.type, true, s.graph.is_connected(n.id, out.name, true),
+                draw_pin(s, pin_id(n.id, true, i), out.label, out.type, true, s.graph.is_connected(n.id, out.name, true),
                          x0, node_width, right_edge);
                 ImGui::PopID();
             }
@@ -721,6 +783,17 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         ed::Resume();
     }
 
+    // Links: routed around the blocks with right angles (core/route), one trunk per output that branches to each
+    // input, drawn on the editor's top layer so no block ever hides one.
+    std::vector<remod::Box> blocks;
+    for (const auto& n : s.graph.nodes) {
+        const ImVec2 p = ed::GetNodePosition(n.id), size = ed::GetNodeSize(n.id);
+        if (size.x > 0 && size.y > 0) blocks.push_back({p.x, p.y, p.x + size.x, p.y + size.y});
+    }
+    std::vector<remod::LinkRoute> requests;
+    std::vector<size_t> routed;
+    std::vector<ImU32> colors;
+    std::map<std::pair<int, std::string>, int> nets;  // one net per output
     for (size_t i = 0; i < s.graph.links.size(); ++i) {
         const remod::Link& l = s.graph.links[i];
         const remod::Node* from = s.graph.find(l.from_node);
@@ -732,9 +805,40 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         // A multiple input's links go to rows 0, 1, ... in link order.
         const auto into = s.graph.links_into(l.to_node, l.to_port);
         const size_t row = size_t(std::ranges::find(into, i) - into.begin());
-        ed::Link(kLinkBase + i, pin_id(l.from_node, true, out_slot), pin_id(l.to_node, false, slot_of(ts->inputs, l.to_port), row),
-                 ImGui::ColorConvertU32ToFloat4(port_color(fs->outputs[out_slot].type)), 2.0f);
+        const auto a = s.pin_pos.find(pin_id(l.from_node, true, out_slot).Get());
+        const auto b = s.pin_pos.find(pin_id(l.to_node, false, slot_of(ts->inputs, l.to_port), row).Get());
+        if (a == s.pin_pos.end() || b == s.pin_pos.end()) continue;
+        const int net = nets.try_emplace({l.from_node, l.from_port}, int(nets.size())).first->second;
+        requests.push_back({net, {a->second.x, a->second.y}, {b->second.x, b->second.y}});
+        routed.push_back(i);
+        colors.push_back(port_color(fs->outputs[out_slot].type));
     }
+    if (blocks != s.route_blocks || requests != s.route_requests) {
+        // ponytail: reroutes every frame while a block moves (~20 ms for 10 blocks in Debug); cache per link or
+        // throttle if layouts get much bigger.
+        s.routes = remod::route_links(blocks, requests, font * 0.8f);
+        s.route_blocks = std::move(blocks);
+        s.route_requests = std::move(requests);
+    }
+    s.routed = std::move(routed);
+    const ImVec2 mouse = ImGui::GetMousePos();  // canvas coordinates here, inside the editor
+    const int hovered_link = s.build_mode && ed::GetHoveredNode().Get() == 0 && ImGui::IsWindowHovered()
+                                 ? remod::hit_link(s.routes.paths, {mouse.x, mouse.y}, font * 0.4f)
+                                 : -1;
+    reinterpret_cast<ed::Detail::EditorContext*>(editor)->SetUserContext();  // the top layer, above the blocks
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    // That layer expects its clip rectangle in screen coordinates (the editor converts it once more at the end),
+    // while the current one is in canvas coordinates. Without this the lines vanish at some zoom levels.
+    draw->PushClipRect(ed::CanvasToScreen(draw->GetClipRectMin()), ed::CanvasToScreen(draw->GetClipRectMax()), false);
+    const float pin_r = font * 0.3f;
+    for (size_t i = 0; i < s.routes.paths.size() && i < colors.size(); ++i)
+        draw_route(draw, s.routes.paths[i], font * 0.6f, pin_r, colors[i], int(i) == hovered_link ? 4.0f : 2.0f);
+    for (const remod::Pt& j : s.routes.junctions) {  // where a branch leaves its trunk
+        const int on = remod::hit_link(s.routes.paths, j, 0.5f);
+        draw->AddCircleFilled(ImVec2(j.x, j.y), pin_r * 0.8f,
+                              on >= 0 && size_t(on) < colors.size() ? colors[on] : IM_COL32_WHITE);
+    }
+    draw->PopClipRect();
 
     // Dragging a new link: core decides whether it's allowed. Letting go on empty canvas offers nodes to add
     // there, already connected ("add node here").
@@ -770,39 +874,27 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     }
     ed::EndCreate();
 
-    // Delete key / editor deletions: collect first, then apply links (highest index first), then nodes.
-    std::vector<size_t> dead_links;
+    // Delete key / editor deletions (blocks only: a link is removed from its right-click menu).
     std::vector<int> dead_nodes;
     if (ed::BeginDelete()) {
-        ed::LinkId link;
-        while (ed::QueryDeletedLink(&link)) {
-            if (!s.build_mode)
-                ed::RejectDeletedItem();  // Use layout: the structure is fixed
-            else if (ed::AcceptDeletedItem())
-                dead_links.push_back(size_t(link.Get() - kLinkBase));
-        }
         ed::NodeId node;
         while (ed::QueryDeletedNode(&node)) {
             if (!s.build_mode)
-                ed::RejectDeletedItem();
+                ed::RejectDeletedItem();  // Use layout: the structure is fixed
             else if (ed::AcceptDeletedItem())
                 dead_nodes.push_back(int(node.Get()));
         }
     }
     ed::EndDelete();
-    std::ranges::sort(dead_links, std::greater<>());
-    for (size_t i : dead_links) s.graph.disconnect(i);
     for (int id : dead_nodes) s.graph.remove_node(id);
 
     // Menus: right-click a node, a link or empty canvas; or let go of a dragged link on empty canvas.
     ed::Suspend();
     ed::NodeId clicked_node;
-    ed::LinkId clicked_link;
     if (!s.build_mode) {
-        // Use layout: no structural menus. A right-click on empty canvas says where to go instead.
-        if (ed::ShowBackgroundContextMenu() || ed::ShowNodeContextMenu(&clicked_node) ||
-            ed::ShowLinkContextMenu(&clicked_link))
-            s.status = "Switch to Build layout (top of the Pipeline panel) to add, remove or relink blocks.";
+        // Use layout: no structural menus. A right-click says where to go instead.
+        if (ed::ShowBackgroundContextMenu() || ed::ShowNodeContextMenu(&clicked_node))
+            s.status = "Switch to Build layout (above the graph) to add, remove or relink blocks.";
     } else if (open_pin_menu) {
         s.menu_pos = ImGui::GetMousePos();
         ImGui::OpenPopup("add_connected");
@@ -810,13 +902,14 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.menu_node = int(clicked_node.Get());
         s.menu_pos = ImGui::GetMousePos();
         ImGui::OpenPopup("node_menu");
-    } else if (ed::ShowLinkContextMenu(&clicked_link)) {
-        s.menu_link = size_t(clicked_link.Get() - kLinkBase);
+    } else if (ed::ShowBackgroundContextMenu()) {  // links aren't editor objects: a click on one lands here
         s.menu_pos = ImGui::GetMousePos();
-        ImGui::OpenPopup("link_menu");
-    } else if (ed::ShowBackgroundContextMenu()) {
-        s.menu_pos = ImGui::GetMousePos();
-        ImGui::OpenPopup("add_node");
+        if (hovered_link >= 0 && size_t(hovered_link) < s.routed.size()) {
+            s.menu_link = s.routed[hovered_link];
+            ImGui::OpenPopup("link_menu");
+        } else {
+            ImGui::OpenPopup("add_node");
+        }
     }
 
     // A menu entry for a node type: its readable name, the description on hover.
@@ -936,7 +1029,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.SettingsFile = nullptr;  // positions are saved in the graph file instead of NodeEditor.json
     ed::EditorContext* editor = ed::CreateEditor(&config);
     ed::SetCurrentEditor(editor);
-    ed::GetStyle().LinkStrength = 0.0f;  // straight links; ponytail: restore curves (default 100) later
+    ed::GetStyle().LinkStrength = 0.0f;  // the line shown while dragging a new link: straight (links are routed)
     ed::SetCurrentEditor(nullptr);
     const bool nfd_ok = NFD_Init() == NFD_OKAY;  // pickers just won't open if this fails
     State state;

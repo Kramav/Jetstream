@@ -37,31 +37,33 @@ const std::vector<NodeSpec>& node_specs() {
                    "you."}},
          {{"tex", Tex, "texture"}}},
         {"ExportImage",
-         "Export PNG",
-         "Converts the texture to a PNG. If the PNG is already there (your edited version), it's kept, never "
-         "overwritten.",
+         "Export image",
+         "Converts the texture to an image file to edit: PNG, TGA or JPG, whichever the file name ends in. If the "
+         "file is already there (your edited version), it's kept, never overwritten.",
          {{.name = "tex", .label = "texture", .type = Tex, .required = true}},
-         {{.name = "png", .type = Image, .label = "PNG", .field = "png", .field_label = "PNG file",
-           .hint = "Where to write the PNG (must end in .png).", .path = PathKind::SaveFile, .filter = "png"}}},
+         {{.name = "png", .type = Image, .label = "image", .field = "png", .field_label = "Image file",
+           .hint = "Where to write the image. Its ending picks the format: .png, .tga (e.g. for GIMP) or .jpg. "
+                   "JPG loses some quality and all transparency.",
+           .path = PathKind::SaveFile, .filter = kEditImageFormats}}},
         {"EditImage",
-         "Edit PNG",
-         "YOUR STEP: open the PNG in any image editor, change it, save it (same size), then click Done editing. "
-         "The run waits here until you do.",
-         {{.name = "png", .label = "PNG to edit", .type = Image, .required = true}},
-         {{"image", Image, "edited PNG"}},
+         "Edit image",
+         "YOUR STEP: open the image in any image editor, change it, save it (same size and format), then click "
+         "Done editing. The run waits here until you do.",
+         {{.name = "png", .label = "image to edit", .type = Image, .required = true}},
+         {{"image", Image, "edited image"}},
          {"done"},
          true},
         {"ImportImage",
-         "Use existing PNG",
-         "Uses a PNG you've already edited (or any image, e.g. for the preview), instead of exporting one.",
-         {{.name = "png", .label = "PNG file", .type = Image, .widget = Widget::Path, .required = true,
-           .hint = "The edited PNG. For a texture it must be the same size as the original.",
-           .path = PathKind::OpenFile, .filter = "png"}},
-         {{"image", Image, "PNG"}}},
+         "Use existing image",
+         "Uses an image you've already edited (or any image, e.g. for the preview), instead of exporting one.",
+         {{.name = "png", .label = "Image file", .type = Image, .widget = Widget::Path, .required = true,
+           .hint = "A PNG, TGA or JPG. For a texture it must be the same size as the original.",
+           .path = PathKind::OpenFile, .filter = kEditImageFormats}},
+         {{"image", Image, "image"}}},
         {"SaveTex",
-         "Convert PNG to texture",
-         "Turns the edited PNG back into a game texture with the original's size, format and mipmaps.",
-         {{.name = "image", .label = "edited PNG", .type = Image, .required = true},
+         "Convert image to texture",
+         "Turns the edited image back into a game texture with the original's size, format and mipmaps.",
+         {{.name = "image", .label = "edited image", .type = Image, .required = true},
           {.name = "original", .label = "original texture", .type = Tex, .required = true}},
          {{"tex", Tex, "new texture"}}},
         {"PackageMod",
@@ -71,7 +73,7 @@ const std::vector<NodeSpec>& node_specs() {
          {{.name = "tex", .label = "texture", .type = Tex, .required = true, .multiple = true,
            .hint = "Each new texture in the mod. A new line appears as you connect one."},
           {.name = "preview", .label = "preview", .type = Image, .multiple = true,
-           .hint = "Images for Fluffy's preview, e.g. the edited PNGs. Several are tiled into one picture."},
+           .hint = "Images for Fluffy's preview, e.g. the edited images. Several are tiled into one picture."},
           {.name = "name", .label = "Mod name", .type = Text, .widget = Widget::Text, .required = true,
            .hint = "Shown in Fluffy; also the folder and .zip name."},
           {.name = "out", .label = "Output folder", .type = Text, .widget = Widget::Path, .required = true,
@@ -130,7 +132,7 @@ const char* type_name(PortType t) {
     return "?";
 }
 
-// "Export PNG for editing (node 2)": the user-facing name first, the id to find it by.
+// "Export image for editing (node 2)": the user-facing name first, the id to find it by.
 std::string node_label(const Node& n) {
     const NodeSpec* spec = find_spec(n.type);
     return std::string(spec ? spec->title : n.type.c_str()) + " (node " + std::to_string(n.id) + ")";
@@ -145,6 +147,13 @@ bool has_extension(const std::string& path, const char* filter) {
     for (std::string item; std::getline(list, item, ',');)
         if (ext.substr(1) == item) return true;
     return false;
+}
+
+// "png,tga" -> ".png, .tga"
+std::string extension_list(const char* filter) {
+    std::string exts = ".";
+    for (const char* c = filter; *c; ++c) exts += *c == ',' ? std::string(", .") : std::string(1, *c);
+    return exts;
 }
 
 // Kahn's algorithm; ties keep file order so runs are deterministic. Returns fewer nodes than exist on a cycle.
@@ -435,11 +444,8 @@ std::vector<std::string> Graph::validate() const {
                 const auto it = n.params.find(in.name);
                 const bool empty = it == n.params.end() || it->second.empty();
                 if (in.required && empty) errors.push_back(node_label(n) + ": " + in.label + " is required");
-                if (!empty && in.filter && !has_extension(it->second, in.filter)) {
-                    std::string exts = ".";
-                    for (const char* c = in.filter; *c; ++c) exts += *c == ',' ? std::string(", .") : std::string(1, *c);
-                    errors.push_back(node_label(n) + ": " + in.label + " must end in " + exts);
-                }
+                if (!empty && in.filter && !has_extension(it->second, in.filter))
+                    errors.push_back(node_label(n) + ": " + in.label + " must end in " + extension_list(in.filter));
             } else if (!in.editable() && in.required && linked == 0) {
                 errors.push_back(node_label(n) + ": input '" + in.label + "' is not connected");
             }
@@ -450,7 +456,7 @@ std::vector<std::string> Graph::validate() const {
             if (it == n.params.end() || it->second.empty())
                 errors.push_back(node_label(n) + ": " + out.field_label + " is required");
             else if (out.filter && !has_extension(it->second, out.filter))
-                errors.push_back(node_label(n) + ": " + out.field_label + " must end in ." + out.filter);
+                errors.push_back(node_label(n) + ": " + out.field_label + " must end in " + extension_list(out.filter));
         }
         for (const auto& [key, _] : n.params) {
             const InputSpec* in = find_input(*spec, key);
@@ -490,8 +496,8 @@ void migrate(Graph& g) {
         g.links.push_back({img.id, "image", package, "preview"});
     }
 
-    // Export PNG used to pause for editing itself, with an output named "image". Editing is now its own
-    // Edit PNG step: insert one after each such export and route the old links through it.
+    // Export image used to pause for editing itself, with an output named "image". Editing is now its own
+    // Edit image step: insert one after each such export and route the old links through it.
     std::vector<int> exports;
     for (const auto& n : g.nodes)
         if (n.type == "ExportImage") exports.push_back(n.id);
@@ -593,10 +599,10 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
     TempDir work;
     std::map<std::pair<int, std::string>, Value> outputs;
     RunResult result;
-    // Edit PNG steps still waiting for the user, and everything downstream of them: skipped this run. Other
-    // branches still run, so one run exports every PNG that needs editing.
+    // Edit image steps still waiting for the user, and everything downstream of them: skipped this run. Other
+    // branches still run, so one run exports every image that needs editing.
     std::set<int> waiting;
-    std::set<int> fresh_exports;  // Export PNG steps that wrote a new PNG in this run
+    std::set<int> fresh_exports;  // Export image steps that wrote a new image in this run
     std::vector<fs::path> to_edit;
 
     for (const Node* node : topo_order(g)) {
@@ -654,7 +660,7 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
                 const Value png = input("png");
                 const size_t in = g.links_into(n.id, "png").at(0);
                 const bool re_exported = fresh_exports.contains(g.links[in].from_node);
-                if (re_exported) result.reset_edits.push_back(n.id);  // a new PNG: an earlier "done" doesn't count
+                if (re_exported) result.reset_edits.push_back(n.id);  // a new image: an earlier "done" doesn't count
                 const auto flag = n.params.find("done");
                 if (opt.edits_done || (!re_exported && flag != n.params.end() && flag->second == "true")) {
                     outputs[{n.id, "image"}] = png;
@@ -668,7 +674,7 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
                 }
             } else if (n.type == "ImportImage") {
                 const fs::path png = resolve(text("png"));
-                if (!fs::is_regular_file(png)) throw GraphError("PNG not found: " + png.string());
+                if (!fs::is_regular_file(png)) throw GraphError("image not found: " + png.string());
                 outputs[{n.id, "image"}] = file_value(png);
                 done("using " + png.filename().string(), png);
             } else if (n.type == "SaveTex") {
@@ -700,12 +706,15 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
                 }
                 std::vector<fs::path> previews;
                 for (const auto& v : values("preview")) previews.push_back(v.path);
-                if (previews.size() == 1) {
+                // One preview is used as it is, except a TGA: Fluffy's TGA support is unconfirmed ([guide]), so it
+                // goes through tile_images like several previews do, which writes a PNG.
+                if (previews.size() == 1 && !has_extension(previews[0].string(), "tga")) {
                     spec.screenshot = previews[0];
-                } else if (previews.size() > 1) {
+                } else if (!previews.empty()) {
                     spec.screenshot = work.path / "preview.png";
                     tile_images(previews, spec.screenshot);
-                    log(node_label(n) + ": combined " + std::to_string(previews.size()) + " previews");
+                    if (previews.size() > 1)
+                        log(node_label(n) + ": combined " + std::to_string(previews.size()) + " previews");
                 }
                 const fs::path root = build_package(opt.profile, spec);
                 done("packaged " + std::to_string(spec.files.size()) + " texture(s) into " + root.filename().string() +
@@ -722,10 +731,10 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
     if (!to_edit.empty()) {
         result.paused = true;
         result.message = "Waiting for you: edit ";
-        result.message += to_edit.size() == 1 ? to_edit[0].string() : std::to_string(to_edit.size()) + " PNGs:";
+        result.message += to_edit.size() == 1 ? to_edit[0].string() : std::to_string(to_edit.size()) + " images:";
         if (to_edit.size() > 1)
             for (const auto& p : to_edit) result.message += "\n  " + p.string();
-        result.message += std::string("\nthen click Done editing on the Edit PNG step") + (to_edit.size() > 1 ? "s" : "") +
+        result.message += std::string("\nthen click Done editing on the Edit image step") + (to_edit.size() > 1 ? "s" : "") +
                           " and Run again (from the CLI: run again with --edited true).";
     } else {
         result.message = "Done.";

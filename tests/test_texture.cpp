@@ -102,11 +102,11 @@ TEST_CASE("load_profiles lists every valid profile and reports broken ones") {
     CHECK_THAT(errors[0], ContainsSubstring("'name' must be a non-empty string"));
 }
 
-TEST_CASE("png_size reads IHDR") {
+TEST_CASE("image_size reads a PNG's IHDR") {
     TempDir tmp;
-    CHECK(remod::png_size(fake_png(tmp.path, 1024, 768)) == std::pair<std::uint32_t, std::uint32_t>{1024, 768});
+    CHECK(remod::image_size(fake_png(tmp.path, 1024, 768)) == std::pair<std::uint32_t, std::uint32_t>{1024, 768});
     std::ofstream(tmp.path / "x.png") << "definitely not a png file here";
-    CHECK_THROWS_WITH(remod::png_size(tmp.path / "x.png"), ContainsSubstring("not a PNG"));
+    CHECK_THROWS_WITH(remod::image_size(tmp.path / "x.png"), ContainsSubstring("not a PNG"));
 }
 
 TEST_CASE("NoesisConverter checks inputs before running Noesis") {
@@ -164,7 +164,7 @@ TEST_CASE("round trip: tex -> png -> tex reproduces the original's TexMeta") {
         CAPTURE(e.path().string());
         const auto stem = std::to_string(count++);
         const auto loaded = conv.load_tex(e.path(), tmp.path / (stem + ".png"), re4r());
-        CHECK(remod::png_size(tmp.path / (stem + ".png")) == std::pair{loaded.width, loaded.height});
+        CHECK(remod::image_size(tmp.path / (stem + ".png")) == std::pair{loaded.width, loaded.height});
         const auto saved =
             conv.save_tex(tmp.path / (stem + ".png"), e.path(), tmp.path / (stem + ".tex." + re4r().tex_suffix), re4r());
         CHECK(saved.width == loaded.width);
@@ -177,6 +177,17 @@ TEST_CASE("round trip: tex -> png -> tex reproduces the original's TexMeta") {
         const fs::path plain = tmp.path / (stem + " plain.tex");
         fs::copy_file(e.path(), plain);
         CHECK(conv.load_tex(plain, tmp.path / (stem + " plain.png"), re4r()).width == loaded.width);
+
+        // The other edit formats, both ways: the format comes from the extension.
+        for (const char* ext : {".tga", ".jpg"}) {
+            CAPTURE(ext);
+            const fs::path img = tmp.path / (stem + ext);
+            conv.load_tex(e.path(), img, re4r());
+            CHECK(remod::image_size(img) == std::pair{loaded.width, loaded.height});
+            const auto back = conv.save_tex(img, e.path(), tmp.path / (stem + ext + ".tex." + re4r().tex_suffix), re4r());
+            CHECK(back.format == loaded.format);
+            CHECK(back.mip_count == loaded.mip_count);
+        }
     }
     REQUIRE(count > 0);
 }
