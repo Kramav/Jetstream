@@ -99,7 +99,7 @@ TEST_CASE("route: different outputs keep apart on generated layouts (no shared o
     std::mt19937 rng(7);
     auto uni = [&](float a, float b) { return std::uniform_real_distribution<float>(a, b)(rng); };
     auto pick = [&](int n) { return int(rng() % unsigned(n)); };
-    size_t links_total = 0, odd = 0;
+    size_t links_total = 0, odd = 0, too_close = 0;
     for (int layout = 0; layout < 60; ++layout) {
         std::vector<Box> blocks;
         std::vector<int> column;
@@ -110,11 +110,13 @@ TEST_CASE("route: different outputs keep apart on generated layouts (no shared o
                 column.push_back(c);
                 y += h + uni(30, 200);
             }
-        bool crowded = false;  // blocks closer than the gap are what the plain fallback is for
+        // Blocks closer than two gaps leave no room for the full clearance (links squeeze to half the gap there).
+        const float room = 2 * gap;
+        bool crowded = false;
         for (size_t a = 0; a < blocks.size(); ++a)
             for (size_t b = a + 1; b < blocks.size(); ++b)
-                crowded = crowded || (blocks[a].x0 < blocks[b].x1 + gap && blocks[b].x0 < blocks[a].x1 + gap &&
-                                      blocks[a].y0 < blocks[b].y1 + gap && blocks[b].y0 < blocks[a].y1 + gap);
+                crowded = crowded || (blocks[a].x0 < blocks[b].x1 + room && blocks[b].x0 < blocks[a].x1 + room &&
+                                      blocks[a].y0 < blocks[b].y1 + room && blocks[b].y0 < blocks[a].y1 + room);
         if (crowded) continue;
         std::vector<LinkRoute> links;
         std::vector<std::pair<int, int>> used;
@@ -129,6 +131,20 @@ TEST_CASE("route: different outputs keep apart on generated layouts (no shared o
         }
         const auto r = remod::route_links(blocks, links, gap);
         links_total += links.size();
+        // Lines keep clear of every block, but for the first and last segment at the link's own blocks' edges.
+        for (size_t i = 0; i < links.size(); ++i) {
+            const auto& p = r.paths[i];
+            for (size_t a = 0; a + 1 < p.size(); ++a)
+                for (const Box& b : blocks) {
+                    const bool own = (a == 0 && std::abs(b.x1 - p[0].x) < 0.01f) ||
+                                     (a + 2 == p.size() && std::abs(b.x0 - p.back().x) < 0.01f);
+                    const float c = gap * 0.85f;  // the router keeps 0.9
+                    const float x0 = std::min(p[a].x, p[a + 1].x), x1 = std::max(p[a].x, p[a + 1].x);
+                    const float y0 = std::min(p[a].y, p[a + 1].y), y1 = std::max(p[a].y, p[a + 1].y);
+                    const bool close = x1 > b.x0 - c && x0 < b.x1 + c && y1 > b.y0 - c && y0 < b.y1 + c;
+                    if (close && !own) ++too_close;
+                }
+        }
         for (size_t i = 0; i < links.size(); ++i)
             for (size_t k = 0; k < i; ++k) {
                 if (links[i].net == links[k].net) continue;
@@ -151,8 +167,36 @@ TEST_CASE("route: different outputs keep apart on generated layouts (no shared o
                         if (remod::hit_link({corners == &p ? q : p}, (*corners)[c], 0.5f) == 0) ++odd;
             }
     }
-    REQUIRE(links_total > 200);
-    CHECK(odd * 20 < links_total);  // under 5% (the previous router: 22%, mostly hugging lines and touching corners)
+    REQUIRE(links_total > 100);
+    CHECK(odd * 20 < links_total);
+    CHECK(too_close == 0);  // under 5% (the previous router: 22%, mostly hugging lines and touching corners)
+}
+
+// Proper crossings between two paths (a horizontal segment of one through a vertical segment of the other).
+int crossings(const std::vector<Pt>& a, const std::vector<Pt>& b) {
+    int n = 0;
+    for (size_t i = 0; i + 1 < a.size(); ++i)
+        for (size_t k = 0; k + 1 < b.size(); ++k)
+            for (int flip = 0; flip < 2; ++flip) {
+                const Pt h0 = flip ? b[k] : a[i], h1 = flip ? b[k + 1] : a[i + 1];
+                const Pt v0 = flip ? a[i] : b[k], v1 = flip ? a[i + 1] : b[k + 1];
+                if (h0.y != h1.y || v0.x != v1.x) continue;
+                if (v0.x > std::min(h0.x, h1.x) && v0.x < std::max(h0.x, h1.x) && h0.y > std::min(v0.y, v1.y) &&
+                    h0.y < std::max(v0.y, v1.y))
+                    ++n;
+            }
+    return n;
+}
+
+TEST_CASE("route: links into one block's inputs take lanes that don't cross when they can") {
+    // The upper input's link arrives from below the lower input (the user's Export / Convert layout, 2026-10-01):
+    // routed one at a time, the first link took the inner lane and the second had to cross it.
+    const std::vector<Box> blocks{{-100, 10, 0, 60}, {-100, 100, 0, 150}, {200, -30, 300, 60}};
+    const std::vector<LinkRoute> links{{0, {0, 40}, {200, 0}}, {1, {0, 120}, {200, 25}}};
+    const auto r = remod::route_links(blocks, links, kGap);
+    for (size_t i = 0; i < links.size(); ++i) check_path(r.paths.at(i), links[i], blocks);
+    CHECK(crossings(r.paths[0], r.paths[1]) == 0);
+    CHECK_FALSE(overlap(r.paths[0], r.paths[1]));
 }
 
 TEST_CASE("route: a boxed-in pin falls back to a plain path") {

@@ -4,6 +4,7 @@
 #include "profile.hpp"
 #include "texture_converter.hpp"
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -174,6 +175,14 @@ void set_edit_done(Graph& graph, int node, bool done);
 // The browser's "Use in graph": the Original texture (LoadTex) block a picked texture goes into. `selected` if it
 // is one, else the graph's only one; 0 if neither.
 int texture_target(const Graph& graph, int selected);
+
+// "Tidy up": positions that line blocks up in columns by step order. A block goes one column right of the furthest
+// block linking into it; within a column, blocks follow (and sit level with, where there's room) the blocks feeding
+// them. Columns are as wide as their widest block, `gap_x` apart; blocks `gap_y` apart. The layout starts at the
+// blocks' current top-left corner. `sizes` (width, height) and the result (top-left corners) are in `graph.nodes`
+// order.
+std::vector<std::array<float, 2>> tidy_layout(const Graph& graph, const std::vector<std::array<float, 2>>& sizes,
+                                              float gap_x, float gap_y);
 
 // "<natives root>/<rest>" in `file` (case-insensitive) -> "<rest>", else "". Lets LoadTex infer the game path
 // when the .tex sits inside an extracted natives tree.

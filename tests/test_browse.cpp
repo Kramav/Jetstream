@@ -9,6 +9,7 @@
 #include <array>
 #include <bit>
 #include <cstdlib>
+#include <tuple>
 
 using test::TempDir;
 namespace fs = std::filesystem;
@@ -263,6 +264,35 @@ TEST_CASE("preview_file prefers the streaming copy") {
     test::write_file(dir.path / "streaming/a/y.tex.1", "x");
     CHECK(remod::preview_file(dir.path, "a/x.tex.1") == dir.path / "a/x.tex.1");
     CHECK(remod::preview_file(dir.path, "a/y.tex.1") == dir.path / "streaming/a/y.tex.1");
+}
+
+TEST_CASE("tidy_layout: columns by step order, blocks level with what feeds them") {
+    remod::Graph g;
+    for (const auto& [id, type, x, y] : std::vector<std::tuple<int, const char*, float, float>>{
+             {1, "LoadTex", 500.0f, 300.0f}, {2, "ExportImage", 40.0f, 900.0f}, {3, "EditImage", 0.0f, 0.0f},
+             {4, "SaveTex", 900.0f, 20.0f}, {5, "PackageMod", 100.0f, 100.0f}, {6, "Text", 300.0f, 50.0f}})
+        g.nodes.push_back({id, type, {}, x, y});
+    g.links = {{1, "tex", 2, "tex"}, {2, "png", 3, "png"}, {3, "image", 4, "image"}, {1, "tex", 4, "original"},
+               {4, "tex", 5, "tex"}, {6, "text", 5, "name"}};
+    const std::vector<std::array<float, 2>> sizes{{300, 200}, {300, 150}, {250, 120}, {300, 180}, {320, 400}, {200, 80}};
+    const auto at = remod::tidy_layout(g, sizes, 100, 40);
+    REQUIRE(at.size() == 6);
+    // Columns: LoadTex and Text first; Export, Edit, SaveTex, Package each one further right.
+    CHECK(at[0][0] == 0);
+    CHECK(at[5][0] == 0);
+    CHECK(at[1][0] == 300 + 100);
+    CHECK(at[2][0] == at[1][0] + 300 + 100);
+    CHECK(at[3][0] == at[2][0] + 250 + 100);
+    CHECK(at[4][0] == at[3][0] + 300 + 100);
+    // Starts at the old top-left corner; Text (above LoadTex before) stays above it, with the gap between them.
+    CHECK(at[5][1] == 0);
+    CHECK(at[0][1] == 80 + 40);
+    // Level with what feeds them: Export with LoadTex; SaveTex between Edit and LoadTex.
+    CHECK(at[1][1] == at[0][1]);
+    CHECK(at[3][1] == (at[2][1] + at[0][1]) / 2);
+    // A cycle (not allowed by can_connect, but a file could hold one) doesn't hang.
+    g.links.push_back({5, "tex", 1, "tex"});
+    CHECK(remod::tidy_layout(g, sizes, 100, 40).size() == 6);
 }
 
 TEST_CASE("texture_target: the selected Original texture block, else the only one") {

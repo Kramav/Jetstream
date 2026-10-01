@@ -26,6 +26,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -245,6 +246,10 @@ struct State {
     std::string game_files = saved.game_files_dir;  // REtool folder; empty = ask the RE plugin (see game_files_dir)
     bool show_help = saved.show_help;
     bool build_mode = saved.build_mode;  // Build layout (edit structure) vs Use layout (fill in and run)
+    bool overview = false;  // zoomed out: blocks show only their title, status and linked rows
+    float detail = 1;       // eases to 0 in the overview, back to 1 zoomed in
+    bool tidy_requested = false;  // Tidy up clicked: arrange the blocks this frame
+    bool show_descriptions = saved.show_descriptions;  // blocks' description text (else a tooltip on the title)
     // Where a menu was opened, and on what: right-click / let-go position, pin, link index, node.
     ImVec2 menu_pos;
     ed::PinId menu_pin;
@@ -273,6 +278,7 @@ struct State {
     std::vector<remod::Box> route_blocks;
     std::vector<remod::LinkRoute> route_requests;
     remod::Routes routes;
+    bool routes_settled = true;  // routed with every pass (a quick single pass while blocks move)
     std::vector<size_t> routed;
     std::mutex log_mutex;
     std::vector<std::string> log;  // written by the run thread
@@ -306,7 +312,8 @@ void remember_paths(State& s) {
                               .noesis_path = s.noesis_path,
                               .show_help = s.show_help,
                               .game_files_dir = s.game_files,
-                              .build_mode = s.build_mode};
+                              .build_mode = s.build_mode,
+                              .show_descriptions = s.show_descriptions};
     if (now == s.saved || s.settings_file.empty()) return;
     try {
         remod::save_settings(now, s.settings_file);
@@ -545,6 +552,53 @@ ImU32 port_color(remod::PortType type) {
     return IM_COL32_WHITE;
 }
 
+// Text wrapped to `width`, whatever the position. ImGui's own wrap position is window-local and ignored unless
+// positive, which the graph canvas's coordinates often aren't: blocks left of its origin didn't wrap and grew wide.
+void wrapped_text(const char* text, float width, ImU32 color) {
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), at, color, text, nullptr, width);
+    ImGui::Dummy(ImGui::CalcTextSize(text, nullptr, false, width));
+}
+
+// Draws its scope at `alpha` (1 as is, 0 invisible), not clickable while faded; it keeps its place in the layout.
+struct Faded {
+    bool on;
+    explicit Faded(float alpha) : on(alpha < 1) {
+        if (!on) return;
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * ImMax(alpha, 0.0f));
+        ImGui::BeginDisabled();
+    }
+    ~Faded() {
+        if (!on) return;
+        ImGui::EndDisabled();
+        ImGui::PopStyleVar();
+    }
+    Faded(const Faded&) = delete;
+    Faded& operator=(const Faded&) = delete;
+};
+
+// Draws `body` folded by `k`: as is at 1; fading out from 1 to 0.5; below that invisible and shrinking to no height
+// (what follows moves up), gone at 0. Blocks then change size smoothly instead of jumping.
+template <class Body>
+void folding(float k, const Body& body) {
+    if (k <= 0) return;
+    if (k >= 1) {
+        body();
+        return;
+    }
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImVec2 start = ImGui::GetCursorScreenPos(), max_before = window->DC.CursorMaxPos;
+    {
+        const Faded faded(k * 2 - 1);
+        body();
+    }
+    // Take back the space it used, then claim only its folded share.
+    const float height = ImGui::GetCursorScreenPos().y - start.y;
+    window->DC.CursorMaxPos = max_before;
+    ImGui::SetCursorScreenPos(start);
+    ImGui::Dummy(ImVec2(0, ImMax(0.0f, height * ImMin(1.0f, k * 2) - ImGui::GetStyle().ItemSpacing.y)));
+}
+
 // One pin: a small circle on the node border (links attach to its centre, drags start from it) around the row's
 // label, which is drawn inside the node - left-aligned for inputs, right-aligned for outputs. Filled once
 // connected. Rows are frame-height tall so labels line up with the text boxes next to them.
@@ -561,9 +615,9 @@ void draw_pin(State& s, ed::PinId id, const std::string& label, remod::PortType 
     const float r = ImGui::GetFontSize() * 0.3f;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     if (connected)
-        draw->AddCircleFilled(center, r, port_color(type));
+        draw->AddCircleFilled(center, r, ImGui::GetColorU32(port_color(type)));  // (style alpha: Faded)
     else
-        draw->AddCircle(center, r, port_color(type), 0, 2.0f);
+        draw->AddCircle(center, r, ImGui::GetColorU32(port_color(type)), 0, 2.0f);
     ed::PinPivotRect(center, center);
     ed::PinRect(center - ImVec2(r * 2, r * 2), center + ImVec2(r * 2, r * 2));
     ed::EndPin();
@@ -623,8 +677,24 @@ void draw_mode_switch(State& s) {
         }
         if (active) ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.tip);
-        if (&m != &modes[1]) ImGui::SameLine();
+        ImGui::SameLine();
     }
+    // At the right end of the same line: Tidy up (Build layout) and the blocks' description texts, which take a lot
+    // of room once known.
+    const char* label = "Descriptions";
+    const char* tidy = "Tidy up";
+    float box = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+    if (s.build_mode) box += ImGui::CalcTextSize(tidy).x + style.FramePadding.x * 2 + style.ItemSpacing.x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImMax(0.0f, ImGui::GetContentRegionAvail().x - box));
+    if (s.build_mode) {
+        if (ImGui::Button(tidy)) s.tidy_requested = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Line the blocks up in columns, in step order, each level with the blocks feeding it.");
+        ImGui::SameLine();
+    }
+    if (ImGui::Checkbox(label, &s.show_descriptions)) remember_paths(s);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Show what each block does under its title. When off, hover a block's title to see it.");
 }
 
 void draw_canvas(State& s, ed::EditorContext* editor) {
@@ -660,7 +730,15 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     const float button_width = ImGui::CalcTextSize("...").x + style.FramePadding.x * 2;
     const float node_width = label_width + field_width + style.ItemSpacing.x + button_width;  // content width
     const ImVec4 padding = ed::GetStyle().NodePadding;  // x = left, z = right
-    const char* hovered_hint = nullptr;  // tooltip drawn after the nodes, outside the canvas transform
+    std::string hovered_hint;  // tooltip drawn after the nodes, outside the canvas transform
+    // Zoomed out: the overview, blocks showing only their (bigger) title, status and linked rows; the rest folds
+    // away. `detail` eases between 1 (all) and 0 (overview) over a quarter second, so blocks and their lines change
+    // smoothly; the switch has some slack (55% / 65% zoom) so it doesn't flicker at the threshold.
+    if (zoom < 0.55f) s.overview = true;
+    else if (zoom > 0.65f) s.overview = false;
+    const float ease = ImGui::GetIO().DeltaTime / 0.25f;
+    s.detail = s.overview ? ImMax(0.0f, s.detail - ease) : ImMin(1.0f, s.detail + ease);
+    const float detail = s.detail;
     for (auto& n : s.graph.nodes) {
         const remod::NodeSpec* spec = remod::find_spec(n.type);
         const auto status_it = s.statuses.find(n.id);
@@ -681,23 +759,36 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         if (!spec) {
             ImGui::Text("%s (unknown node type)", n.type.c_str());
         } else {
-            if (manual) {
-                ImGui::TextColored(kAmber, "YOUR STEP");
-                ImGui::SameLine();
-            }
-            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1, 1), "%s", spec->title);
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", n.type.c_str());
-            ImGui::PushTextWrapPos(x0 + node_width);
-            ImGui::TextDisabled("%s", spec->summary);
-            if (status) ImGui::TextColored(state_color(status->state), "%s", status_text(*status).c_str());
-            ImGui::PopTextWrapPos();
+            // A large title, readable without zooming in (larger in the overview), with the type at its right (Build
+            // layout only); below it small: the step badge, the description (if shown) and the last run's status.
+            const char* type = s.build_mode ? n.type.c_str() : nullptr;
+            const float type_width = type ? ImGui::CalcTextSize(type).x + style.ItemSpacing.x : 0;
+            const ImVec2 title_at = ImGui::GetCursorScreenPos();
+            // 1.6 -> 2.6 times the font as detail goes; in 0.05 steps, so a fold doesn't rasterize a size per frame.
+            ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * std::round((1.6f + (1 - detail)) * 20) / 20);
+            const float title_size = ImGui::GetFontSize();
+            wrapped_text(spec->title, node_width - type_width, ImGui::GetColorU32(ImVec4(0.55f, 0.8f, 1, 1)));
+            ImGui::PopFont();
+            if ((!s.show_descriptions || detail < 1) && ImGui::IsItemHovered()) hovered_hint = spec->summary;
+            if (type && detail > 0)  // on the title's first line, bottoms level
+                ImGui::GetWindowDrawList()->AddText(
+                    ImVec2(title_at.x + node_width - ImGui::CalcTextSize(type).x, title_at.y + title_size - font),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled, detail), type);
+            if (manual) ImGui::TextColored(kAmber, "YOUR STEP");
+            if (s.show_descriptions)
+                folding(detail, [&] { wrapped_text(spec->summary, node_width, ImGui::GetColorU32(ImGuiCol_TextDisabled)); });
+            if (status) wrapped_text(status_text(*status).c_str(), node_width, ImGui::GetColorU32(state_color(status->state)));
 
-            for (size_t slot = 0; slot < spec->inputs.size(); ++slot) {
+            // One input: a pin and its field, or (multiple) one row per link plus a row to connect the next one.
+            // Where a link comes from is in the row's tooltip (the line shows it too). The overview folds away
+            // everything but linked rows.
+            auto draw_input = [&](size_t slot) {
                 const remod::InputSpec& in = spec->inputs[slot];
                 const std::vector<size_t> linked = s.graph.links_into(n.id, in.name);
+                auto from = [&](size_t link) {
+                    return std::string(in.hint) + "\nFrom: " + source_of(s.graph, s.graph.links[link]);
+                };
                 ImGui::PushID(in.name);
-
                 if (in.multiple) {  // one row per link, plus (when building) an empty row to connect the next one
                     const bool numbered = std::string(in.name) == "parts";  // Text node: rows are {1}, {2}, ...
                     const size_t rows = linked.size() + (s.build_mode || linked.empty() ? 1 : 0);
@@ -707,55 +798,62 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                         if (row == linked.size())
                             label = s.build_mode ? "+ " + (numbered ? "{" + n_str + "}" : std::string(in.label))
                                                  : std::string(in.label) + ": none connected";
-                        else
-                            label += "  <- " + source_of(s.graph, s.graph.links[linked[row]]);
-                        draw_pin(s, pin_id(n.id, false, slot, row), label, in.type, false, row < linked.size(), x0,
-                                 node_width, left_edge);
-                        if (ImGui::IsItemHovered()) hovered_hint = in.hint;
+                        folding(row < linked.size() ? 1.0f : detail, [&] {
+                            draw_pin(s, pin_id(n.id, false, slot, row), label, in.type, false, row < linked.size(), x0,
+                                     node_width, left_edge);
+                            if (ImGui::IsItemHovered()) hovered_hint = row < linked.size() ? from(linked[row]) : in.hint;
+                        });
                     }
                     ImGui::PopID();
-                    continue;
+                    return;
                 }
 
-                const std::string label = in.required ? std::string(in.label) + " *" : std::string(in.label);
-                draw_pin(s, pin_id(n.id, false, slot), label, in.type, false, !linked.empty(), x0, node_width, left_edge);
-                if (ImGui::IsItemHovered()) hovered_hint = in.hint;
-                if (!in.editable()) {
-                    ImGui::PopID();
-                    continue;
-                }
-                // Not SameLine(x): inside a node (an ImGui group) that offset is group-relative, so x0 would be
-                // counted twice and nodes would widen with their canvas position.
-                ImGui::SameLine();
-                ImGui::SetCursorPosX(x0 + label_width);
-                std::string& value = n.params[in.name];
-                if (!linked.empty()) {  // a link overrides the typed value
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextDisabled("<- %s", source_of(s.graph, s.graph.links[linked[0]]).c_str());
-                } else if (in.widget == remod::Widget::Checkbox) {
-                    bool on = value == "true";
-                    if (ImGui::Checkbox("##v", &on)) value = on ? "true" : "";
-                } else {
-                    ImGui::SetNextItemWidth(field_width);
-                    ImGui::InputText("##v", &value);
-                    if (ImGui::IsItemHovered()) hovered_hint = in.hint;
-                    if (in.widget == remod::Widget::Path) {
-                        ImGui::SameLine();
-                        const bool texture = in.path == remod::PathKind::OpenTexture;
-                        if (ImGui::SmallButton("...") &&
-                            browse(in.path, texture ? s.texture_filter.c_str() : in.filter, value,
-                                   texture ? game_files_dir(s) : std::string()) &&
-                            texture)
-                            detect_game(s, value);
-                        if (ImGui::IsItemHovered()) hovered_hint = "Browse...";
+                folding(linked.empty() ? detail : 1.0f, [&] {
+                    const std::string label = in.required ? std::string(in.label) + " *" : std::string(in.label);
+                    draw_pin(s, pin_id(n.id, false, slot), label, in.type, false, !linked.empty(), x0, node_width,
+                             left_edge);
+                    if (ImGui::IsItemHovered()) hovered_hint = linked.empty() ? std::string(in.hint) : from(linked[0]);
+                    if (!in.editable()) return;
+                    // Not SameLine(x): inside a node (an ImGui group) that offset is group-relative, so x0 would be
+                    // counted twice and nodes would widen with their canvas position.
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(x0 + label_width);
+                    const Faded field(linked.empty() ? 1.0f : detail);  // a linked row stays; its field fades
+                    std::string& value = n.params[in.name];
+                    if (!linked.empty()) {  // a link overrides the typed value
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextDisabled("linked");
+                        if (ImGui::IsItemHovered()) hovered_hint = from(linked[0]);
+                    } else if (in.widget == remod::Widget::Checkbox) {
+                        bool on = value == "true";
+                        if (ImGui::Checkbox("##v", &on)) value = on ? "true" : "";
+                    } else {
+                        ImGui::SetNextItemWidth(field_width);
+                        ImGui::InputText("##v", &value);
+                        if (ImGui::IsItemHovered()) hovered_hint = in.hint;
+                        if (in.widget == remod::Widget::Path) {
+                            ImGui::SameLine();
+                            const bool texture = in.path == remod::PathKind::OpenTexture;
+                            if (ImGui::SmallButton("...") &&
+                                browse(in.path, texture ? s.texture_filter.c_str() : in.filter, value,
+                                       texture ? game_files_dir(s) : std::string()) &&
+                                texture)
+                                detect_game(s, value);
+                            if (ImGui::IsItemHovered()) hovered_hint = "Browse...";
+                        }
                     }
-                }
+                });
                 ImGui::PopID();
-            }
+            };
+
+            // Fixed inputs first; inputs that grow a row per link come last, at the bottom of the node, so the
+            // fields don't move down as links are added.
+            for (size_t slot = 0; slot < spec->inputs.size(); ++slot)
+                if (!spec->inputs[slot].multiple) draw_input(slot);
             if (manual) {  // Edit image: the user's own step
                 const std::filesystem::path file = status ? status->file : std::filesystem::path();
                 if (file.empty()) {
-                    ImGui::TextDisabled("Run first: Export image creates the file to edit.");
+                    folding(detail, [] { ImGui::TextDisabled("Run first: Export image creates the file to edit."); });
                 } else {
                     if (ImGui::Button("Open in editor")) open_in_editor(file);
                     if (ImGui::IsItemHovered()) hovered_hint = "Opens the image in your image editor (whatever opens that file type).";
@@ -776,6 +874,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 const remod::PortSpec& out = spec->outputs[i];
                 ImGui::PushID(out.name);
                 if (out.field) {  // where the node writes this output: on the output side, before its pin
+                    const Faded faded(detail);
                     std::string& value = n.params[out.field];
                     ImGui::SetCursorPosX(x0 + node_width -
                                          (field_width + style.ItemSpacing.x * 2 + button_width +
@@ -792,6 +891,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                          x0, node_width, right_edge);
                 ImGui::PopID();
             }
+            for (size_t slot = 0; slot < spec->inputs.size(); ++slot)
+                if (spec->inputs[slot].multiple) draw_input(slot);
         }
         ImGui::Dummy(ImVec2(node_width, 0));  // fixes the node width so the right border (and its pins) line up
         ImGui::PopID();
@@ -800,10 +901,24 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         ed::PopStyleColor();
     }
     ImGui::SetFontRasterizerDensity(old_density);  // tooltips and menus below are drawn unzoomed
-    if (hovered_hint) {
+    if (!hovered_hint.empty()) {
         ed::Suspend();
-        ImGui::SetTooltip("%s", hovered_hint);
+        ImGui::SetTooltip("%s", hovered_hint.c_str());
         ed::Resume();
+    }
+
+    if (s.tidy_requested) {  // Build layout's Tidy up: columns by step order (core decides where)
+        s.tidy_requested = false;
+        std::vector<std::array<float, 2>> sizes;
+        for (auto& n : s.graph.nodes) {
+            const ImVec2 p = ed::GetNodePosition(n.id), size = ed::GetNodeSize(n.id);
+            n.x = p.x;
+            n.y = p.y;
+            sizes.push_back({size.x, size.y});
+        }
+        const auto at = remod::tidy_layout(s.graph, sizes, font * 8, font * 2);
+        for (size_t i = 0; i < at.size(); ++i) ed::SetNodePosition(s.graph.nodes[i].id, ImVec2(at[i][0], at[i][1]));
+        s.navigate = true;  // fit the view to the result
     }
 
     // Links: routed around the blocks with right angles (core/route), one trunk per output that branches to each
@@ -836,18 +951,25 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         routed.push_back(i);
         colors.push_back(port_color(fs->outputs[out_slot].type));
     }
+    // While blocks move, one quick pass per frame (Debug: 7 ms for the 5-block example); once they stop, all three
+    // passes (19 ms), which untangle crossings. ponytail: cache per link or throttle if layouts get much bigger.
     if (blocks != s.route_blocks || requests != s.route_requests) {
-        // ponytail: reroutes every frame while a block moves (Debug: 7 ms for the 5-block example, ~40 ms for 10
-        // blocks and 20 links); cache per link or throttle if layouts get much bigger.
-        s.routes = remod::route_links(blocks, requests, font * 0.8f);
+        s.routes = remod::route_links(blocks, requests, font * 0.8f, 1);
+        s.routes_settled = false;
         s.route_blocks = std::move(blocks);
         s.route_requests = std::move(requests);
+    } else if (!s.routes_settled) {
+        s.routes = remod::route_links(s.route_blocks, s.route_requests, font * 0.8f);
+        s.routes_settled = true;
     }
     s.routed = std::move(routed);
     const ImVec2 mouse = ImGui::GetMousePos();  // canvas coordinates here, inside the editor
     const int hovered_link = s.build_mode && ed::GetHoveredNode().Get() == 0 && ImGui::IsWindowHovered()
                                  ? remod::hit_link(s.routes.paths, {mouse.x, mouse.y}, font * 0.4f)
                                  : -1;
+    // SetUserContext also moves the layout cursor to the mouse; put it back afterwards. Left at the mouse, ImGui stops
+    // the app at ed::End when the mouse is below or right of the blocks (e.g. over the panels under the graph).
+    const ImVec2 cursor = ImGui::GetCursorScreenPos();
     reinterpret_cast<ed::Detail::EditorContext*>(editor)->SetUserContext();  // the top layer, above the blocks
     ImDrawList* draw = ImGui::GetWindowDrawList();
     // That layer expects its clip rectangle in screen coordinates (the editor converts it once more at the end),
@@ -862,6 +984,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                               on >= 0 && size_t(on) < colors.size() ? colors[on] : IM_COL32_WHITE);
     }
     draw->PopClipRect();
+    ImGui::SetCursorScreenPos(cursor);
+    ImGui::Dummy(ImVec2(0, 0));  // an item at the cursor, as ImGui requires after moving it
 
     // Dragging a new link: core decides whether it's allowed. Letting go on empty canvas offers nodes to add
     // there, already connected ("add node here").

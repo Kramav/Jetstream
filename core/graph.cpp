@@ -776,4 +776,63 @@ int texture_target(const Graph& g, int selected) {
     return only;
 }
 
+
+std::vector<std::array<float, 2>> tidy_layout(const Graph& g, const std::vector<std::array<float, 2>>& sizes,
+                                              float gap_x, float gap_y) {
+    const size_t n = g.nodes.size();
+    std::vector<std::array<float, 2>> out(n);
+    if (n == 0 || sizes.size() != n) return out;
+    std::map<int, size_t> index;
+    for (size_t i = 0; i < n; ++i) index[g.nodes[i].id] = i;
+    std::vector<std::vector<size_t>> feeders(n);  // the blocks linking into each one
+    for (const Link& l : g.links)
+        if (index.contains(l.from_node) && index.contains(l.to_node) && l.from_node != l.to_node)
+            feeders[index[l.to_node]].push_back(index[l.from_node]);
+
+    // Column: one right of the furthest block feeding it (the longest chain of links into it). At most n rounds,
+    // so a cycle can't loop forever.
+    std::vector<size_t> column(n, 0);
+    for (size_t round = 0; round < n; ++round) {
+        bool changed = false;
+        for (size_t i = 0; i < n; ++i)
+            for (const size_t f : feeders[i])
+                if (column[f] + 1 > column[i] && column[f] + 1 < n) column[i] = column[f] + 1, changed = true;
+        if (!changed) break;
+    }
+
+    // Columns left to right from the current top-left corner, each as wide as its widest block. Within a column,
+    // blocks go in the order of (and level with, where there's room) the blocks feeding them; blocks fed by nothing
+    // keep their current order.
+    float left = g.nodes[0].x, top = g.nodes[0].y;
+    for (const Node& node : g.nodes) left = std::min(left, node.x), top = std::min(top, node.y);
+    const size_t columns = *std::ranges::max_element(column) + 1;
+    float x = left;
+    for (size_t c = 0; c < columns; ++c) {
+        struct Entry {
+            float key;   // order in the column
+            bool level;  // sit at `key` if there's room (fed by placed blocks), else just stack
+            size_t i;
+        };
+        std::vector<Entry> blocks;
+        float width = 0;
+        for (size_t i = 0; i < n; ++i) {
+            if (column[i] != c) continue;
+            float want = 0, placed = 0;  // feeders already placed (in earlier columns; a cycle's aren't)
+            for (const size_t f : feeders[i])
+                if (column[f] < c) want += out[f][1], ++placed;
+            blocks.push_back({placed > 0 ? want / placed : g.nodes[i].y, placed > 0, i});
+            width = std::max(width, sizes[i][0]);
+        }
+        std::ranges::stable_sort(blocks, {}, &Entry::key);
+        float y = top;
+        for (const Entry& b : blocks) {
+            if (b.level) y = std::max(y, b.key);
+            out[b.i] = {x, y};
+            y += sizes[b.i][1] + gap_y;
+        }
+        x += width + gap_x;
+    }
+    return out;
+}
+
 }  // namespace remod

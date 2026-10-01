@@ -85,6 +85,15 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - **Edit format = the file extension:** PNG, TGA or JPG (`kEditImageFormats`). Noesis reads and writes each, both ways
   (spike 2026-09-30, header-identical `.tex` from TGA and JPG). BMP is left out: Noesis writes it 24-bit, without
   alpha. Previews from TGA are read by the tool's own TGA reader (WIC has none); a single TGA preview is converted to PNG.
+- **Block layout (user, 2026-10-01):** a large title (1.6x font) readable unzoomed, then type and summary small; fixed
+  inputs, then outputs; inputs that grow a row per link (`multiple`) always last, at the bottom of the block.
+  Descriptions can be hidden ("Descriptions" checkbox above the graph, `Settings::show_descriptions`); the title's
+  tooltip shows them then. The type name shows in Build layout only, at the title's right. Linked rows don't name
+  their source (the line shows it; the row's tooltip says "From: ..."). Zoomed out (below 55%, back above 65%):
+  the overview, a bigger title, status and linked rows; the rest folds away (`folding`: fades, then shrinks)
+  over 0.25 s, so blocks and lines change smoothly. A user tried both instant switching (too jarring) and keeping
+  blocks full size in the overview (wasted space). **Not finished (user, 2026-10-01): "good enough for now";
+  open: the final full reroute after the fold can still shift a line once.** Build layout's "Tidy up" arranges blocks in columns by step order (core `tidy_layout`).
 - **Outputs are on the right.** A field for where a node writes its output (Export's PNG file) is part of that
   output (`PortSpec::field`), shown on the output side and not linkable.
 - **Manual editing is its own step (EditImage, `NodeSpec::manual`).** A run waits there until the user marks it
@@ -99,7 +108,12 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   (junction dots) and never rejoins it; different outputs avoid sharing a line, running right beside one (closer
   than 0.6 gap) and turning on each other. Two lanes around each block; spare midlines only where there's room.
   Measured 2026-10-01 on 143 generated layouts (728 links), old → new: lines beside another 115 → 6, shared lines
-  5 → 0, touching corners 43 → 0; Debug 7 ms for the example graph. The app draws them itself on the editor's top layer
+  5 → 0, touching corners 43 → 0. Crossings cost a little (PCB-like traces) and each link is rerouted against all
+  the others (rip-up and reroute, 3 passes): crossings 585 → 424, the user's Export / Convert crossing gone. The
+  app routes one quick pass while blocks move (Debug 7 ms for the example graph) and all passes once they stop
+  (19 ms). Lines keep 0.9 gap (the gap = 0.8 font, a pin's stub length) from every block except at their own pins;
+  only where blocks stand closer than that does a link squeeze to half the gap. The app draws them itself on the
+  editor's top layer
   (imgui-node-editor only draws beziers) and hit-tests them with `hit_link` for the right-click menu.
 - **Every run reports each node's state** (`RunResult::nodes`, or `RunError::nodes` on failure): done, waiting
   for the user, failed with its reason, or not reached. The app shows these as coloured node borders and badges.
