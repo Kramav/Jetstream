@@ -53,6 +53,36 @@ std::vector<Pt> simplify(const std::vector<Pt>& in) {
     return out;
 }
 
+// Does the segment a-b run along a side of `b`, outside it, within `reach`? Returns how far it runs along (0 if not)
+// and which side: 0 top, 1 bottom, 2 left, 3 right.
+std::pair<float, int> along_side(Pt a, Pt c, const Box& b, float reach) {
+    if (std::abs(a.y - c.y) < kSame) {
+        const float along = std::min(std::max(a.x, c.x), b.x1) - std::max(std::min(a.x, c.x), b.x0);
+        if (along > 0 && a.y < b.y0 && b.y0 - a.y <= reach) return {along, 0};
+        if (along > 0 && a.y > b.y1 && a.y - b.y1 <= reach) return {along, 1};
+    } else {
+        const float along = std::min(std::max(a.y, c.y), b.y1) - std::max(std::min(a.y, c.y), b.y0);
+        if (along > 0 && a.x < b.x0 && b.x0 - a.x <= reach) return {along, 2};
+        if (along > 0 && a.x > b.x1 && a.x - b.x1 <= reach) return {along, 3};
+    }
+    return {0.0f, 0};
+}
+
+// True if `path` lines two or more sides of one block within `reach`, each for over half its length: it would read
+// as the block's outline (the user's wrapped Original texture, 2026-10-01).
+bool follows_outline(const std::vector<Pt>& path, const std::vector<Box>& blocks, float reach) {
+    for (const Box& b : blocks) {
+        float lined[4] = {};
+        for (size_t k = 0; k + 1 < path.size(); ++k) {
+            const auto [along, side] = along_side(path[k], path[k + 1], b, reach);
+            lined[side] += along;
+        }
+        const float half_w = (b.x1 - b.x0) * 0.5f, half_h = (b.y1 - b.y0) * 0.5f;
+        if ((lined[0] > half_w) + (lined[1] > half_w) + (lined[2] > half_h) + (lined[3] > half_h) >= 2) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>& links, float gap, int passes) {
@@ -83,11 +113,23 @@ Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>&
         return char((blocked(xa, xb, ya, yb, gap * kClearance) ? 0 : kClear) |
                     (blocked(xa, xb, ya, yb, gap * 0.5f) ? 0 : kTight));
     };
-    std::vector<char> right_ok(n), down_ok(n);
+    // Edges on the lane right beside a block's side (within 1.5 gaps): lines prefer a lane further out when there is
+    // one, as PCB traces keep off pads, and a line can't read as part of a block's border.
+    const float beside_block = 1.5f * gap;
+    auto hugs = [&](Pt a, Pt c) {
+        return std::ranges::any_of(blocks, [&](const Box& b) { return along_side(a, c, b, beside_block).first > 0; });
+    };
+    std::vector<char> right_ok(n), down_ok(n), right_hug(n), down_hug(n);
     for (int ix = 0; ix < nx; ++ix)
         for (int iy = 0; iy < ny; ++iy) {
-            if (ix + 1 < nx) right_ok[at(ix, iy)] = free_bits(xs[ix], xs[ix + 1], ys[iy], ys[iy]);
-            if (iy + 1 < ny) down_ok[at(ix, iy)] = free_bits(xs[ix], xs[ix], ys[iy], ys[iy + 1]);
+            if (ix + 1 < nx) {
+                right_ok[at(ix, iy)] = free_bits(xs[ix], xs[ix + 1], ys[iy], ys[iy]);
+                right_hug[at(ix, iy)] = hugs({xs[ix], ys[iy]}, {xs[ix + 1], ys[iy]});
+            }
+            if (iy + 1 < ny) {
+                down_ok[at(ix, iy)] = free_bits(xs[ix], xs[ix], ys[iy], ys[iy + 1]);
+                down_hug[at(ix, iy)] = hugs({xs[ix], ys[iy]}, {xs[ix], ys[iy + 1]});
+            }
         }
 
     // What the other links use, to share trunks and keep nets apart: the net on each edge, and the nets that pass
@@ -130,14 +172,14 @@ Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>&
         while (step(p, d).to != q) ++d;
         return d;
     };
-    // How much a lane costs per unit length: free on its own trunk, then plain, beside its own trunk, beside
-    // another net, back on its own trunk after leaving it (a loop), and along another net's line.
+    // How much a lane costs per unit length: free on its own trunk, then plain, right beside a block, beside its own
+    // trunk, beside another net, back on its own trunk after leaving it (a loop), and along another net's line.
     auto rate = [&](const Edge& e, int net, bool left_trunk) {
         const int own = owner(e);
         if (own == net) return left_trunk ? 10.0f : 0.0f;
         if (own != -1) return 30.0f;
         const int ix = e.base / ny, iy = e.base % ny;
-        float r = 1;
+        float r = (e.across ? right_hug : down_hug)[size_t(e.base)] ? 2.0f : 1.0f;
         for (const int k : e.across ? near_y[size_t(iy)] : near_x[size_t(ix)]) {
             const int beside = e.across ? right_net[at(ix, k)] : down_net[at(k, iy)];
             if (other(beside, net)) return 8.0f;
@@ -244,14 +286,42 @@ Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>&
     for (int pass = 0; pass < std::max(passes, 1); ++pass)
         for (size_t i = 0; i < links.size(); ++i) route_one(i);
 
+    // Only clean routes are drawn: none that reads as a block's outline or takes the long way round. Such a link tries
+    // the squeezed lanes once (a short S-bend through a narrow gap beats a loop around a block); failing that, and with
+    // no way at all, it's a portal pair.
+    auto path_of = [&](size_t i) {
+        std::vector<Pt> p{links[i].from};
+        for (const int g : grids[i]) p.push_back(point(g));
+        p.push_back(links[i].to);
+        return simplify(p);
+    };
+    auto clean = [&](size_t i) {
+        if (grids[i].empty()) return false;
+        const std::vector<Pt> p = path_of(i);
+        float length = 0;
+        for (size_t k = 0; k + 1 < p.size(); ++k) length += std::abs(p[k + 1].x - p[k].x) + std::abs(p[k + 1].y - p[k].y);
+        const LinkRoute& l = links[i];
+        const float direct = std::abs(l.to.x - l.from.x) + std::abs(l.to.y - l.from.y);
+        return length <= 2.5f * direct + 10 * gap && !follows_outline(p, blocks, beside_block);
+    };
+    std::vector<char> portals(links.size(), 0);
+    for (size_t i = 0; i < links.size(); ++i) {
+        if (clean(i)) continue;
+        occupy(i);
+        grids[i].clear();
+        if (search(i, kTight) && clean(i)) continue;
+        grids[i].clear();
+        portals[i] = 1;
+    }
+
     Routes out;
+    out.portals = portals;
     std::map<int, std::set<std::pair<int, int>>> net_edges;  // edges laid by earlier links of each net
     for (size_t i = 0; i < links.size(); ++i) {
         const LinkRoute& l = links[i];
         const std::vector<int>& g = grids[i];
-        if (g.empty()) {  // no way around: a plain right-angle path, drawn over whatever is in the way
-            const float mx = (l.from.x + l.to.x) * 0.5f;
-            out.paths.push_back(simplify({l.from, {mx, l.from.y}, {mx, l.to.y}, l.to}));
+        if (portals[i]) {  // a stub at each pin, two gaps long; no line between
+            out.paths.push_back({l.from, {l.from.x + 2 * gap, l.from.y}, {l.to.x - 2 * gap, l.to.y}, l.to});
             continue;
         }
         auto& laid = net_edges[l.net];
@@ -277,9 +347,10 @@ Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>&
     return out;
 }
 
-int hit_link(const std::vector<std::vector<Pt>>& paths, Pt p, float tolerance) {
+int hit_link(const std::vector<std::vector<Pt>>& paths, Pt p, float tolerance, const std::vector<char>& portals) {
     for (size_t i = 0; i < paths.size(); ++i)
         for (size_t k = 0; k + 1 < paths[i].size(); ++k) {
+            if (k == 1 && i < portals.size() && portals[i]) continue;  // nothing drawn between a portal's stubs
             const Pt a = paths[i][k], b = paths[i][k + 1];
             const float x = std::clamp(p.x, std::min(a.x, b.x), std::max(a.x, b.x));
             const float y = std::clamp(p.y, std::min(a.y, b.y), std::max(a.y, b.y));

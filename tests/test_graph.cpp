@@ -792,6 +792,7 @@ TEST_CASE("Copy file: the editor's destination-exists warning follows the file")
     g.find(1)->params["dest"] = "out/a.txt";
     CHECK(remod::destination_warnings(g, tmp.path).size() == 1);  // a file path doesn't depend on the source
     g.disconnect(1);
+    g.flip(1, "dest");  // circle to the left, so a link can set it
     REQUIRE(g.connect({3, "text", 1, "dest"}).empty());
     CHECK(remod::destination_warnings(g, tmp.path).empty());  // linked destination
 }
@@ -854,6 +855,7 @@ TEST_CASE("a Value is kept in the graph and becomes the kind of field it feeds")
     g.add_node("Split");                             // 9
     using remod::PortType;
     CHECK(g.output_type(7, "value") == PortType::Any);  // open until connected
+    g.flip(5, "out");  // the output folder from a link: its circle on the left
     REQUIRE(g.connect({7, "value", 5, "out"}).empty());
     CHECK(g.output_type(7, "value") == PortType::Folder);
     CHECK(remod::picker_for(g.output_type(7, "value")) == remod::PathKind::Folder);
@@ -880,6 +882,254 @@ TEST_CASE("a Value is kept in the graph and becomes the kind of field it feeds")
     wrong.add_node("PackageMod");  // 3
     wrong.add_node("SaveTex");  // 4
     REQUIRE(wrong.connect({1, "value", 2, "in"}).empty());
+    wrong.flip(3, "out");
     REQUIRE(wrong.connect({2, "out", 3, "out"}).empty());
     CHECK_THAT(wrong.connect({2, "out", 4, "original"}), ContainsSubstring("needs a texture"));
+}
+
+namespace {
+
+// A Text "{1}" block showing what `node`'s `port` passes on: its status reads "\"<value>\"" after a run.
+int observe(Graph& g, int node, const std::string& port) {
+    const int id = g.add_node("Text").id;
+    g.find(id)->params["text"] = "{1}";
+    REQUIRE(g.connect({node, port, id, "parts"}).empty());
+    return id;
+}
+
+remod::RunResult run_in(const Graph& g, const fs::path& dir, std::vector<std::string>* log = nullptr) {
+    FakeConverter conv;
+    return remod::run_graph(g, {.profile = re4r(), .converter = conv, .base_dir = dir,
+                                .log = [log](const std::string& s) { if (log) log->push_back(s); }});
+}
+
+std::string run_fails(const Graph& g, const fs::path& dir) {
+    try {
+        run_in(g, dir);
+    } catch (const remod::RunError& e) {
+        return e.what();
+    }
+    return "(ran without an error)";
+}
+
+}  // namespace
+
+TEST_CASE("Move file moves once, with Copy file's overwrite modes") {
+    TempDir tmp;
+    test::write_file(tmp.path / "a.txt", "new");
+    Graph g;
+    auto& move = g.add_node("MoveFile");
+    move.params["source"] = "a.txt";
+    move.params["dest"] = "out\\";  // a folder to create
+    const int seen = observe(g, 1, "path");
+    const auto r = run_in(g, tmp.path);
+    const fs::path target = (tmp.path / "out/a.txt").lexically_normal();
+    CHECK(test::read_file(target) == "new");
+    CHECK_FALSE(fs::exists(tmp.path / "a.txt"));
+    CHECK(r.nodes.at(seen).message == "\"" + target.string() + "\"");
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("moved by an earlier run?"));
+
+    test::write_file(tmp.path / "a.txt", "newer");
+    std::vector<std::string> log;
+    g.find(1)->params["if_exists"] = "skip";
+    run_in(g, tmp.path, &log);
+    CHECK(test::read_file(target) == "new");  // kept, and the source stays where it was
+    CHECK(fs::exists(tmp.path / "a.txt"));
+    CHECK_THAT(log[0], ContainsSubstring("destination exists") && ContainsSubstring("(skipped)"));
+    g.find(1)->params["if_exists"] = "overwrite";
+    run_in(g, tmp.path);
+    CHECK(test::read_file(target) == "newer");
+    CHECK_FALSE(fs::exists(tmp.path / "a.txt"));
+}
+
+TEST_CASE("Rename file renames in its folder") {
+    TempDir tmp;
+    test::write_file(tmp.path / "a.png", "x");
+    Graph g;
+    auto& ren = g.add_node("RenameFile");
+    ren.params["source"] = "a.png";
+    ren.params["name"] = "b.png";
+    CHECK(remod::destination_warnings(g, tmp.path).empty());
+    test::write_file(tmp.path / "b.png", "old");
+    CHECK(remod::destination_warnings(g, tmp.path).size() == 1);  // the editor warns, as for Copy and Move
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("destination exists"));
+    fs::remove(tmp.path / "b.png");
+    CHECK(run_in(g, tmp.path).nodes.at(1).message == "renamed to b.png");
+    CHECK(test::read_file(tmp.path / "b.png") == "x");
+    CHECK_FALSE(fs::exists(tmp.path / "a.png"));
+    g.find(1)->params["source"] = "b.png";
+    g.find(1)->params["name"] = "sub\\c.png";
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("just a name"));
+}
+
+TEST_CASE("Delete file deletes files only, and a missing one is fine unless you say otherwise") {
+    TempDir tmp;
+    test::write_file(tmp.path / "a.txt", "x");
+    Graph g;
+    auto& del = g.add_node("DeleteFile");
+    del.params["source"] = "a.txt";
+    del.params["recycle"] = "";  // for good: the test doesn't fill your Recycle Bin
+    CHECK(run_in(g, tmp.path).nodes.at(1).message == "deleted a.txt");
+    CHECK_FALSE(fs::exists(tmp.path / "a.txt"));
+    CHECK(run_in(g, tmp.path).nodes.at(1).message == "already gone: a.txt");
+    g.find(1)->params["missing_ok"] = "";
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("not found"));
+    fs::create_directories(tmp.path / "dir");
+    g.find(1)->params["source"] = "dir";
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("is a folder"));
+    CHECK(fs::is_directory(tmp.path / "dir"));
+}
+
+TEST_CASE("Make folder makes it once; Join path builds on it and becomes the kind it feeds") {
+    TempDir tmp;
+    const fs::path tex = tmp.path / "natives/STM/ui/a.tex.143221013";
+    test::write_fake_tex(tex, 143221013, 64, 32, 1, 5, 99);
+    Graph g = pipeline(tex.string(), "a.png", "typed, overridden by the link");
+    remod::set_edit_done(g, 3, true);
+    test::write_fake_png(tmp.path / "a.png", 64, 32);
+    g.add_node("MakeFolder").params["folder"] = "builds/v1";  // 7
+    auto& join = g.add_node("JoinPath");                      // 8
+    join.params["add"] = "fluffy";
+    REQUIRE(g.connect({7, "folder", 8, "folder"}).empty());
+    g.flip(5, "out");
+    REQUIRE(g.connect({8, "path", 5, "out"}).empty());
+    CHECK(g.output_type(8, "path") == remod::PortType::Folder);
+    const auto r = run_in(g, tmp.path);
+    CHECK(fs::is_regular_file(tmp.path / "builds/v1/fluffy/M.zip"));
+    CHECK_THAT(r.nodes.at(7).message, ContainsSubstring("made"));
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("Replace existing"));  // a second run: folder already there,
+    g.find(5)->params["replace"] = "true";                                      // the build is what stops it
+    CHECK_THAT(run_in(g, tmp.path).nodes.at(7).message, ContainsSubstring("already there"));
+
+    g.find(8)->params["add"] = "D:\\elsewhere";
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("must be a relative path"));
+    test::write_file(tmp.path / "file", "x");
+    g.find(7)->params["folder"] = "file";
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("is a file, not a folder"));
+}
+
+TEST_CASE("Path parts, Change extension and Require file") {
+    TempDir tmp;
+    Graph g;
+    g.add_node("PathParts").params["path"] = "\"sub\\shot.tga\"";  // 1
+    const int folder = observe(g, 1, "folder"), name = observe(g, 1, "name"), stem = observe(g, 1, "stem"),
+              ext = observe(g, 1, "extension");
+    auto& change = g.add_node("ChangeExtension");  // 6
+    change.params["path"] = "sub/shot.tga";
+    change.params["ext"] = "png";
+    const int changed = observe(g, 6, "path");
+    const auto r = run_in(g, tmp.path);
+    CHECK(r.nodes.at(folder).message == "\"" + (tmp.path / "sub").lexically_normal().string() + "\"");
+    CHECK(r.nodes.at(name).message == "\"shot.tga\"");
+    CHECK(r.nodes.at(stem).message == "\"shot\"");
+    CHECK(r.nodes.at(ext).message == "\".tga\"");
+    CHECK(r.nodes.at(changed).message == "\"" + (tmp.path / "sub/shot.png").lexically_normal().string() + "\"");
+    CHECK(remod::find_spec("PathParts")->utility);
+    CHECK_FALSE(remod::find_spec("MoveFile")->utility);
+
+    Graph req;
+    req.add_node("RequireFile").params["file"] = "needed.png";
+    const int after = observe(req, 1, "file");
+    CHECK_THAT(run_fails(req, tmp.path), ContainsSubstring("required file missing"));
+    test::write_file(tmp.path / "needed.png", "x");
+    CHECK(run_in(req, tmp.path).nodes.at(after).message == "\"" + (tmp.path / "needed.png").string() + "\"");
+}
+
+TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {
+    auto result = [](const char* type, const char* input) {
+        const char* r = remod::find_input(*remod::find_spec(type), input)->result;
+        return std::string(r ? r : "");
+    };
+    CHECK(result("CopyFile", "dest") == "path");
+    CHECK(result("MoveFile", "dest") == "path");
+    CHECK(result("RenameFile", "name") == "path");
+    CHECK(result("MakeFolder", "folder") == "folder");
+    CHECK(result("PackageMod", "out") == "mod");
+    CHECK(result("CopyFile", "source").empty());
+    CHECK(result("JoinPath", "folder").empty());  // what it starts from, not where it writes
+
+    Graph g;
+    g.add_node("Value");       // 1
+    g.add_node("PackageMod");  // 2
+    g.add_node("Text");        // 3
+    REQUIRE(g.connect({2, "mod", 3, "parts"}).empty());  // default: typed, the built mod's path goes on
+    CHECK_THAT(g.connect({1, "value", 2, "out"}), ContainsSubstring("is typed on the block; flip its row"));
+    CHECK_FALSE(remod::is_flipped(*g.find(2), "out"));
+
+    g.flip(2, "out");  // circle to the left: a Value can set it; the result isn't offered, its link goes
+    CHECK(remod::is_flipped(*g.find(2), "out"));
+    CHECK(g.links.empty());
+    REQUIRE(g.connect({1, "value", 2, "out"}).empty());
+    CHECK_THAT(g.connect({2, "mod", 3, "parts"}), ContainsSubstring("isn't passed on"));
+    CHECK_FALSE(has(g.validate(), "unknown parameter"));  // "flip:out" is known
+
+    TempDir tmp;
+    remod::save_graph(g, tmp.path / "g.json");
+    CHECK(remod::is_flipped(*remod::load_graph(tmp.path / "g.json").find(2), "out"));  // kept in the file
+    CHECK(remod::is_flipped(*g.find(g.duplicate_node(2)), "out"));                  // and by Duplicate
+
+    g.flip(2, "out");  // back: the Value's link goes
+    CHECK_FALSE(remod::is_flipped(*g.find(2), "out"));
+    CHECK(g.links.empty());
+
+    // Adding a block onto a pin never picks a typed destination to link into.
+    const auto choices = g.choices_for_pin(1, "value", true);
+    for (const auto& c : choices)
+        if (c.spec->type == std::string("CopyFile")) CHECK(c.port == "source");
+}
+
+TEST_CASE("a block can be named; the heading and run messages use the name") {
+    Graph g;
+    g.add_node("Value").params["value"] = "builds";  // 1
+    CHECK(remod::block_title(*g.find(1)) == "Value");
+    remod::set_block_title(g, 1, "  Mod Output Folder ");
+    CHECK(remod::block_title(*g.find(1)) == "Mod Output Folder");
+    CHECK(g.validate().empty());  // "title" is a known parameter
+    TempDir tmp;
+    remod::save_graph(g, tmp.path / "g.json");
+    CHECK(remod::block_title(*remod::load_graph(tmp.path / "g.json").find(1)) == "Mod Output Folder");
+    CHECK(remod::block_title(*g.find(g.duplicate_node(1))) == "Mod Output Folder");
+    g.find(1)->params["value"] = "";
+    CHECK(has(g.validate(), "Mod Output Folder (node 1): Value is required"));
+    remod::set_block_title(g, 1, "   ");
+    CHECK(remod::block_title(*g.find(1)) == "Value");
+    CHECK_FALSE(g.find(1)->params.contains("title"));
+}
+
+TEST_CASE("placement: blocks let go too close move apart; added blocks make room and keep the flow's order") {
+    using P = std::vector<std::array<float, 2>>;
+    // keep_apart: dropped onto the right end of another block, it moves the shortest way out (right and down tie
+    // at 40 here; right goes first, keeping the flow).
+    const P sizes{{100, 50}, {100, 50}};
+    const P moved = remod::keep_apart({{0, 0}, {80, 30}}, sizes, 1, 20);
+    CHECK(moved[0] == std::array<float, 2>{0, 0});  // the other block stays
+    CHECK(moved[1] == std::array<float, 2>{120, 30});  // its right edge (100) + the 20 gap
+    CHECK(remod::keep_apart({{0, 0}, {200, 0}}, sizes, 1, 20)[1] == std::array<float, 2>{200, 0});  // far enough
+
+    // make_room: a Split put on the link Original texture -> Export goes right of Original texture, level with it;
+    // Export and what follows it move right to keep the gap.
+    Graph g;
+    g.add_node("LoadTex");      // 1
+    g.add_node("ExportImage");  // 2
+    g.add_node("EditImage");    // 3
+    REQUIRE(g.connect({1, "tex", 2, "tex"}).empty());
+    REQUIRE(g.connect({2, "png", 3, "png"}).empty());
+    const int split = g.insert_node(0, "Split");  // 4
+    const P at = remod::make_room(g, {{0, 0}, {400, 0}, {800, 0}, {150, 200}},
+                                  {{300, 100}, {300, 100}, {300, 100}, {100, 80}}, split, 50, 30);
+    CHECK(at[3] == std::array<float, 2>{350, 0});  // 300 wide + 50 right of Original texture
+    CHECK(at[1][0] == 500);  // Export: from 400 to the Split's right edge (450) + 50
+    CHECK(at[2][0] == 900);  // and Edit after it, by the same 100
+    CHECK(at[0] == std::array<float, 2>{0, 0});
+
+    // Loading an old file that gains blocks says so (front ends tidy up then).
+    TempDir tmp;
+    bool added = false;
+    test::write_file(tmp.path / "old.json", R"({"schema_version": 0, "profile": "re4r",
+      "nodes": [{"id": 1, "type": "Text"}, {"id": 2, "type": "Text"}, {"id": 3, "type": "Text"}],
+      "links": [{"from": [1, "text"], "to": [2, "parts"]}, {"from": [1, "text"], "to": [3, "parts"]}]})");
+    remod::load_graph(tmp.path / "old.json", &added);
+    CHECK(added);  // a Split for the fan-out
+    remod::load_graph(REMOD_SCHEMAS_DIR "/graph.v0.example.json", &added);
+    CHECK_FALSE(added);
 }

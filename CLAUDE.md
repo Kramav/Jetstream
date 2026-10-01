@@ -81,8 +81,10 @@ ExportImage/ImportImage reduce to handing that PNG to the user and checking the 
 Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png2tex` and `package`.
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
-- Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, PackageMod, CopyFile; utilities
-  Value, Text and Split.
+- Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, PackageMod; file steps CopyFile,
+  MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
+  RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
+  utility.**
 - **Node types live in `core/nodes.*` (user, 2026-10-01: kept apart for cleanliness).** One function per type returns
   its `NodeSpec`, run code included (`NodeSpec::run`, given a `NodeRun`: inputs, outputs, done/wait/log/warn; core-only
   `core/node_run.hpp`). `core/graph.*` is the engine (editing, validation, file format, `run_graph`) and has no
@@ -97,10 +99,22 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   path) must look less significant than the real steps.** `NodeSpec::utility`: a narrow block, a smaller grey title,
   the description only as the title's tooltip, no type name; listed after the main steps in menus ("Utilities"
   submenu on the canvas). CopyFile is a real step, not a utility.
+- **File steps (2026-10-01).** Copy, Move and Rename share one helper (`transfer` in nodes.cpp): Overwrite mode, the
+  run-time destination-exists log line, same-file and folder refusals, long paths; the editor's "Destination exists"
+  covers all three. Move renames, or copies then removes the original across drives; a second run of a Move finds no
+  source and says so ("moved by an earlier run?"). Delete goes to the Recycle Bin by default (`SHFileOperationW`,
+  Windows asks first only where a drive has no Recycle Bin; under 260 characters only) and never deletes a folder;
+  "Missing is fine" is on by default so re-runs pass. **Not tested automatically: the Recycle Bin path** (tests delete
+  for good, so they don't fill the user's bin). Steps run in data order only: a Delete or Make folder with typed
+  paths has no "after this step" (no exec pins); link something through it if order matters. Join path's "Add" must
+  be relative (an absolute one would silently replace the folder) and its output takes the kind it feeds, like Value.
 - **Value (user, 2026-10-01): a variable kept in the graph file**, e.g. the output folder, version or author, outside
   the Package block. Any kind, like Split: it becomes the kind of field it feeds (`Graph::wanted_type`, first link,
   through Splits), with that kind's picker (`picker_for`) and colour. One field (an output field, so not linkable);
   several uses go through a Split. Typed paths resolve against the graph's folder, like typed fields.
+- **Blocks can be named (user, 2026-10-01: e.g. a Value "Mod Output Folder").** Double-click the title, or Rename...
+  in the block's menu; both layouts (a label, not structure). Node param "title" (`block_title`, `set_block_title`);
+  the large heading shows it, the type's own title moves to the heading's right, and run messages use it.
 - **Edit format = the file extension:** PNG, TGA or JPG (`kEditImageFormats`). Noesis reads and writes each, both ways
   (spike 2026-09-30, header-identical `.tex` from TGA and JPG). BMP is left out: Noesis writes it 24-bit, without
   alpha. Previews from TGA are read by the tool's own TGA reader (WIC has none); a single TGA preview is converted to PNG.
@@ -114,7 +128,14 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   blocks full size in the overview (wasted space). **Not finished (user, 2026-10-01): "good enough for now";
   open: the final full reroute after the fold can still shift a line once.** Build layout's "Tidy up" arranges blocks in columns by step order (core `tidy_layout`).
 - **Outputs are on the right.** A field for where a node writes its output (Export's PNG file) is part of that
-  output (`PortSpec::field`), shown on the output side and not linkable.
+  output (`PortSpec::field`), shown on the output side and not linkable. **Destinations too, on every block (user, 2026-10-01):** an input
+  that says where a node writes (`InputSpec::result`: Copy/Move destination, Rename's new name, Make folder, Package's
+  output folder) shares a row with the output it produces, on the output side, with ONE circle. By default it's on
+  the right: the field is typed and the circle passes the result on (Package: the built mod's .zip, output "mod").
+  The row's `<>` button (Build layout) flips it (`Graph::flip`, node param "flip:<input>"): circle on the left, a
+  link sets the field (e.g. a stored Value), and the result isn't offered; flipping drops the links of the side that
+  goes away. Export's "Image file" doesn't flip: its result is what the rest of the pipeline needs. **Flipping never
+  moves the row (user): only the circle changes side**, so a flipped row is drawn at its output's place.
 - **Manual editing is its own step (EditImage, `NodeSpec::manual`).** A run waits there until the user marks it
   done (`done` state param; the CLI's `--edited true`). A freshly re-exported PNG voids an earlier "done"
   (`RunResult::reset_edits`, applied by `apply_run`).
@@ -134,6 +155,16 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   only where blocks stand closer than that does a link squeeze to half the gap. The app draws them itself on the
   editor's top layer
   (imgui-node-editor only draws beziers) and hit-tests them with `hit_link` for the right-click menu.
+- **Clean routes only, "like an efficiently routed PCB" (user, 2026-10-01, after a line wrapped a whole block and read
+  as its border).** In core: the lane right beside a block's side (within 1.5 gaps) costs 2x, so lines take a lane a
+  little away when there is one; a route that lines two sides of one block for over half their length, or runs over
+  2.5x the direct distance + 10 gaps, is not clean: it tries the squeezed lanes (half the gap) once, else the link is
+  a **portal pair** (`Routes::portals`): a stub at each pin ending in a numbered tag, the same number at both ends,
+  hover shows a dashed line and From/To. 142 generated links: 0 portals. In the app: blocks let go closer than three
+  lanes (2.4 font) to another move the least distance out (`keep_apart`); a block added onto a link or a pin
+  (insert, add connected, duplicate, Use in graph) goes beside what it's linked to and pushes the blocks after it right
+  (`make_room`); Tidy up spaces rows by the same gap; old files that gained blocks on load are tidied
+  (`load_graph(..., &added_blocks)`); the line above the graph counts links without a clean route.
 - **Every run reports each node's state** (`RunResult::nodes`, or `RunError::nodes` on failure): done, waiting
   for the user, failed with its reason, or not reached. The app shows these as coloured node borders and badges.
 - **Every input has a pin** (`InputSpec`). Editable inputs can be typed or linked; a link wins.

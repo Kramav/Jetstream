@@ -56,6 +56,11 @@ struct InputSpec {
     const char* filter = nullptr;  // extensions for typed file paths, e.g. "png,jpg"; nullptr = any
     const char* initial = "";      // a new node's value, e.g. "true" for a checkbox ticked by default
     std::vector<std::array<const char*, 2>> options = {};  // Choice: {stored value, what users read}
+    // A destination (where the node writes: Copy's destination, Package's output folder) names the output it shares
+    // a row with, on the output side. The row has one circle: on the right by default (the field is typed, the
+    // circle passes the result on), on the left once flipped (Graph::flip: a link sets the field, e.g. from a Value,
+    // and the result isn't passed on).
+    const char* result = nullptr;
     bool editable() const { return widget != Widget::None; }
 };
 

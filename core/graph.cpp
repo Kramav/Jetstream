@@ -15,9 +15,22 @@ namespace remod {
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-std::string node_label(const Node& n) {
+std::string node_label(const Node& n) { return block_title(n) + " (node " + std::to_string(n.id) + ")"; }
+
+std::string block_title(const Node& n) {
+    if (const auto it = n.params.find("title"); it != n.params.end() && !it->second.empty()) return it->second;
     const NodeSpec* spec = find_spec(n.type);
-    return std::string(spec ? spec->title : n.type.c_str()) + " (node " + std::to_string(n.id) + ")";
+    return spec ? spec->title : n.type;
+}
+
+void set_block_title(Graph& g, int node, const std::string& title) {
+    Node* n = g.find(node);
+    if (!n) return;
+    const auto first = title.find_first_not_of(" \t"), last = title.find_last_not_of(" \t");
+    if (first == std::string::npos)
+        n->params.erase("title");
+    else
+        n->params["title"] = title.substr(first, last - first + 1);
 }
 
 bool has_extension(const std::string& path, const char* filter) {
@@ -99,6 +112,12 @@ std::string check_link(const Graph& g, const Link& l) {
     if (!accepts(*in, g.output_type(l.from_node, l.from_port)))
         return std::string("'") + out->label + "' can't go into '" + in->label + "': that input needs " +
                type_name(in->type);
+    if (in->result && !is_flipped(*to, in->name))
+        return std::string("'") + in->label + "' is typed on the block; flip its row (<> in Build layout) to link into it";
+    for (const auto& dest : from_spec->inputs)
+        if (dest.result && l.from_port == dest.result && is_flipped(*from, dest.name))
+            return std::string("'") + out->label + "' isn't passed on while '" + dest.label +
+                   "' takes a link; flip that row back (<> in Build layout)";
     return "";
 }
 
@@ -201,9 +220,10 @@ namespace {
 // field (from text or a path), a multiple input, or a pass-through (a Split takes anything). nullptr if none.
 const InputSpec* best_input(const NodeSpec& spec, PortType out) {
     for (const auto& in : spec.inputs)
-        if (in.type == out) return &in;
+        if (in.type == out && !in.result) return &in;
     for (const auto& in : spec.inputs)
-        if (accepts(in, out) && (in.multiple || out == PortType::Text || out == PortType::Path || in.type == PortType::Any))
+        if (!in.result && accepts(in, out) &&
+            (in.multiple || out == PortType::Text || out == PortType::Path || in.type == PortType::Any))
             return &in;
     return nullptr;
 }
@@ -352,6 +372,26 @@ void Graph::disconnect_node(int id) {
     std::erase_if(links, [id](const Link& l) { return l.from_node == id || l.to_node == id; });
 }
 
+bool is_flipped(const Node& node, std::string_view input) {
+    const auto it = node.params.find("flip:" + std::string(input));
+    return it != node.params.end() && it->second == "true";
+}
+
+void Graph::flip(int node, const std::string& input) {
+    Node* n = find(node);
+    const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+    const InputSpec* in = spec ? find_input(*spec, input) : nullptr;
+    if (!in || !in->result) return;
+    const bool to_left = !is_flipped(*n, input);
+    std::erase_if(links, [&](const Link& l) {  // the side going away
+        return to_left ? l.from_node == node && l.from_port == in->result : l.to_node == node && l.to_port == input;
+    });
+    if (to_left)
+        n->params["flip:" + input] = "true";
+    else
+        n->params.erase("flip:" + input);
+}
+
 std::vector<std::string> Graph::validate() const {
     std::vector<std::string> errors;
     if (profile.empty()) errors.push_back("graph has no profile");
@@ -393,7 +433,8 @@ std::vector<std::string> Graph::validate() const {
         }
         for (const auto& [key, _] : n.params) {
             const InputSpec* in = find_input(*spec, key);
-            const bool known = (in && in->editable()) ||
+            const InputSpec* flips = key.starts_with("flip:") ? find_input(*spec, key.substr(5)) : nullptr;
+            const bool known = (in && in->editable()) || (flips && flips->result) || key == "title" ||
                                std::ranges::any_of(spec->outputs, [&](const PortSpec& o) { return o.field && key == o.field; }) ||
                                std::ranges::any_of(spec->state, [&](const char* s) { return key == s; });
             if (!known) errors.push_back(node_label(n) + ": unknown parameter '" + key + "'");
@@ -466,7 +507,7 @@ void migrate(Graph& g) {
 
 }  // namespace
 
-Graph load_graph(const fs::path& file) {
+Graph load_graph(const fs::path& file, bool* added_blocks) {
     std::ifstream in(file);
     if (!in) throw GraphError("cannot open graph file " + file.string());
     try {
@@ -487,7 +528,9 @@ Graph load_graph(const fs::path& file) {
         for (const auto& jl : j.value("links", json::array()))
             g.links.push_back({jl.at("from").at(0).get<int>(), jl.at("from").at(1).get<std::string>(),
                                jl.at("to").at(0).get<int>(), jl.at("to").at(1).get<std::string>()});
+        const size_t before = g.nodes.size();
         migrate(g);
+        if (added_blocks) *added_blocks = g.nodes.size() != before;
         return g;
     } catch (const json::exception& e) {
         throw GraphError(file.string() + ": invalid graph file: " + e.what());
@@ -669,6 +712,69 @@ std::vector<std::array<float, 2>> tidy_layout(const Graph& g, const std::vector<
         x += width + gap_x;
     }
     return out;
+}
+
+std::vector<std::array<float, 2>> keep_apart(const std::vector<std::array<float, 2>>& positions,
+                                             const std::vector<std::array<float, 2>>& sizes, size_t moved,
+                                             float min_gap) {
+    std::vector<std::array<float, 2>> out = positions;
+    if (moved >= out.size() || sizes.size() != out.size()) return out;
+    std::array<float, 2>& p = out[moved];
+    const std::array<float, 2>& s = sizes[moved];
+    // Out of each block it's too close to, the shortest way; a few rounds, as one move can bring it near another.
+    // ponytail: greedy, may settle a little further than needed in a crowd; fine for hand-built layouts.
+    for (size_t round = 0; round < 4 * out.size(); ++round) {
+        bool clear = true;
+        for (size_t j = 0; j < out.size(); ++j) {
+            if (j == moved) continue;
+            const float x0 = out[j][0] - min_gap, x1 = out[j][0] + sizes[j][0] + min_gap;
+            const float y0 = out[j][1] - min_gap, y1 = out[j][1] + sizes[j][1] + min_gap;
+            if (p[0] + s[0] <= x0 || p[0] >= x1 || p[1] + s[1] <= y0 || p[1] >= y1) continue;
+            const float right = x1 - p[0], left = p[0] + s[0] - x0, down = y1 - p[1], up = p[1] + s[1] - y0;
+            const float least = std::min({right, left, down, up});
+            if (least == right) p[0] += right;
+            else if (least == left) p[0] -= left;
+            else if (least == down) p[1] += down;
+            else p[1] -= up;
+            clear = false;
+        }
+        if (clear) break;
+    }
+    return out;
+}
+
+std::vector<std::array<float, 2>> make_room(const Graph& g, const std::vector<std::array<float, 2>>& positions,
+                                            const std::vector<std::array<float, 2>>& sizes, int id, float gap_x,
+                                            float min_gap) {
+    std::vector<std::array<float, 2>> out = positions;
+    std::map<int, size_t> index;
+    for (size_t i = 0; i < g.nodes.size(); ++i) index[g.nodes[i].id] = i;
+    if (!index.contains(id) || out.size() != g.nodes.size() || sizes.size() != out.size()) return out;
+    const size_t me = index[id];
+    std::vector<size_t> feeders, targets;
+    for (const Link& l : g.links) {
+        if (l.to_node == id && index.contains(l.from_node)) feeders.push_back(index[l.from_node]);
+        if (l.from_node == id && index.contains(l.to_node)) targets.push_back(index[l.to_node]);
+    }
+    if (!feeders.empty())
+        out[me] = {out[feeders[0]][0] + sizes[feeders[0]][0] + gap_x, out[feeders[0]][1]};
+    else if (!targets.empty())
+        out[me] = {out[targets[0]][0] - gap_x - sizes[me][0], out[targets[0]][1]};
+    float need = 0;  // how far the blocks it feeds must move right to stay `gap_x` after it
+    for (const size_t t : targets) need = std::max(need, out[me][0] + sizes[me][0] + gap_x - out[t][0]);
+    if (need > 0) {
+        std::set<size_t> after;
+        std::vector<size_t> todo = targets;
+        while (!todo.empty()) {
+            const size_t i = todo.back();
+            todo.pop_back();
+            if (i == me || !after.insert(i).second) continue;
+            for (const Link& l : g.links)
+                if (l.from_node == g.nodes[i].id && index.contains(l.to_node)) todo.push_back(index[l.to_node]);
+        }
+        for (const size_t i : after) out[i][0] += need;
+    }
+    return keep_apart(out, sizes, me, min_gap);
 }
 
 }  // namespace remod

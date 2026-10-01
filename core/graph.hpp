@@ -74,12 +74,24 @@ struct Graph {
     // Same type and typed values (not run state such as "done"), no links, placed a little offset.
     int duplicate_node(int id);
     void disconnect_node(int id);  // removes every link to or from it
+    // Moves a destination row's circle to the other side (InputSpec::result): left, a link sets it; right (the
+    // default), it's typed and the result goes on. The links of the side that goes away are removed.
+    void flip(int node, const std::string& input);
 };
+
+// Is this destination row flipped (circle on the left, set by a link)? Stored as the node param "flip:<input>".
+bool is_flipped(const Node& node, std::string_view input);
+
+// A block's heading: the name the user gave it (node param "title"), else its type's title. E.g. a Value named
+// "Mod Output Folder". Run messages name blocks this way too.
+std::string block_title(const Node& node);
+void set_block_title(Graph& graph, int node, const std::string& title);  // trimmed; "" = back to the type's title
 
 // JSON graph file, schema_version 0. Example: schemas/graph.v0.example.json
 // Older files are migrated on load (PackageMod's former `screenshot` field becomes an ImportImage -> preview; an
 // output feeding several inputs gets a Split block).
-Graph load_graph(const std::filesystem::path& file);
+// `added_blocks`: set to whether migrating added blocks (they have no considered place yet: front ends tidy up).
+Graph load_graph(const std::filesystem::path& file, bool* added_blocks = nullptr);
 void save_graph(const Graph& graph, const std::filesystem::path& file);
 
 struct RunOptions {
@@ -133,5 +145,19 @@ int texture_target(const Graph& graph, int selected);
 // order.
 std::vector<std::array<float, 2>> tidy_layout(const Graph& graph, const std::vector<std::array<float, 2>>& sizes,
                                               float gap_x, float gap_y);
+
+// Placement that leaves lines room (CLAUDE.md §4, links). Positions (top-left corners) and sizes (width, height) are
+// in `graph.nodes` order (keep_apart: any order); both return a position for every block.
+//
+// A block let go closer than `min_gap` to another moves the least distance that clears them all; the others stay.
+std::vector<std::array<float, 2>> keep_apart(const std::vector<std::array<float, 2>>& positions,
+                                             const std::vector<std::array<float, 2>>& sizes, size_t moved,
+                                             float min_gap);
+// A block just added onto a link or a pin (`id`) goes `gap_x` right of the block feeding it, level with it (or left of
+// the block it feeds, when nothing feeds it); the blocks after it move right as far as they need to keep `gap_x`,
+// with everything after them, so the flow keeps its order; then it keeps `min_gap` from the rest (keep_apart).
+std::vector<std::array<float, 2>> make_room(const Graph& graph, const std::vector<std::array<float, 2>>& positions,
+                                            const std::vector<std::array<float, 2>>& sizes, int id, float gap_x,
+                                            float min_gap);
 
 }  // namespace remod

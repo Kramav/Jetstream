@@ -49,6 +49,26 @@ bool overlap(const std::vector<Pt>& a, const std::vector<Pt>& b) {
     return false;
 }
 
+// How many sides of `b` the path lines, outside it within `reach`, each for over half its length (2+ reads as the
+// block's outline).
+int lined_sides(const std::vector<Pt>& path, const Box& b, float reach) {
+    float lined[4] = {};
+    for (size_t k = 0; k + 1 < path.size(); ++k) {
+        const Pt p = path[k], q = path[k + 1];
+        if (p.y == q.y) {
+            const float along = std::min(std::max(p.x, q.x), b.x1) - std::max(std::min(p.x, q.x), b.x0);
+            if (along > 0 && p.y < b.y0 && b.y0 - p.y <= reach) lined[0] += along;
+            if (along > 0 && p.y > b.y1 && p.y - b.y1 <= reach) lined[1] += along;
+        } else {
+            const float along = std::min(std::max(p.y, q.y), b.y1) - std::max(std::min(p.y, q.y), b.y0);
+            if (along > 0 && p.x < b.x0 && b.x0 - p.x <= reach) lined[2] += along;
+            if (along > 0 && p.x > b.x1 && p.x - b.x1 <= reach) lined[3] += along;
+        }
+    }
+    const float w = (b.x1 - b.x0) / 2, h = (b.y1 - b.y0) / 2;
+    return (lined[0] > w) + (lined[1] > w) + (lined[2] > h) + (lined[3] > h);
+}
+
 }  // namespace
 
 TEST_CASE("route: aligned pins with nothing between are one straight line") {
@@ -99,7 +119,7 @@ TEST_CASE("route: different outputs keep apart on generated layouts (no shared o
     std::mt19937 rng(7);
     auto uni = [&](float a, float b) { return std::uniform_real_distribution<float>(a, b)(rng); };
     auto pick = [&](int n) { return int(rng() % unsigned(n)); };
-    size_t links_total = 0, odd = 0, too_close = 0;
+    size_t links_total = 0, odd = 0, too_close = 0, portals = 0, outlined = 0;
     for (int layout = 0; layout < 60; ++layout) {
         std::vector<Box> blocks;
         std::vector<int> column;
@@ -131,8 +151,13 @@ TEST_CASE("route: different outputs keep apart on generated layouts (no shared o
         }
         const auto r = remod::route_links(blocks, links, gap);
         links_total += links.size();
+        portals += size_t(std::ranges::count(r.portals, 1));
+        for (size_t i = 0; i < links.size(); ++i)
+            for (const Box& b : blocks)
+                if (!r.portals[i] && lined_sides(r.paths[i], b, 1.5f * gap) >= 2) ++outlined;
         // Lines keep clear of every block, but for the first and last segment at the link's own blocks' edges.
         for (size_t i = 0; i < links.size(); ++i) {
+            if (r.portals[i]) continue;  // no line between its stubs
             const auto& p = r.paths[i];
             for (size_t a = 0; a + 1 < p.size(); ++a)
                 for (const Box& b : blocks) {
@@ -147,7 +172,7 @@ TEST_CASE("route: different outputs keep apart on generated layouts (no shared o
         }
         for (size_t i = 0; i < links.size(); ++i)
             for (size_t k = 0; k < i; ++k) {
-                if (links[i].net == links[k].net) continue;
+                if (links[i].net == links[k].net || r.portals[i] || r.portals[k]) continue;
                 const auto& p = r.paths[i];
                 const auto& q = r.paths[k];
                 for (size_t a = 0; a + 1 < p.size(); ++a)
@@ -168,6 +193,8 @@ TEST_CASE("route: different outputs keep apart on generated layouts (no shared o
             }
     }
     REQUIRE(links_total > 100);
+    CHECK(outlined == 0);
+    CHECK(portals * 20 < links_total);  // under 5% have no clean route
     CHECK(odd * 20 < links_total);
     CHECK(too_close == 0);  // under 5% (the previous router: 22%, mostly hugging lines and touching corners)
 }
@@ -199,14 +226,53 @@ TEST_CASE("route: links into one block's inputs take lanes that don't cross when
     CHECK_FALSE(overlap(r.paths[0], r.paths[1]));
 }
 
-TEST_CASE("route: a boxed-in pin falls back to a plain path") {
+TEST_CASE("route: a boxed-in pin is a portal pair: a stub at each pin, no line between") {
     const std::vector<Box> blocks{{0, 0, 100, 50}, {90, -10, 300, 60}, {400, 0, 500, 50}};
     const LinkRoute l{0, {100, 25}, {400, 125}};
     const auto r = remod::route_links(blocks, {l}, kGap);
+    REQUIRE(r.portals == std::vector<char>{1});
+    CHECK(r.paths[0] == std::vector<Pt>{{100, 25}, {140, 25}, {360, 125}, {400, 125}});
+    CHECK(remod::hit_link(r.paths, {120, 25}, 2, r.portals) == 0);    // the out stub
+    CHECK(remod::hit_link(r.paths, {380, 125}, 2, r.portals) == 0);   // the in stub
+    CHECK(remod::hit_link(r.paths, {250, 75}, 2, r.portals) == -1);   // nothing between
+}
+
+TEST_CASE("route: never the block's outline (the user's wrapped Original texture, 2026-10-01)") {
+    // A Split tucked under Original texture's right end, its input left of the texture output feeding it: the only
+    // route at full clearance went right round Original texture, reading as its border.
+    const float gap = 12.8f;
+    const std::vector<Box> blocks{{100, 85, 475, 240}, {482, 237, 608, 378}};
+    const LinkRoute l{0, {475, 218}, {482, 278}};
+    const auto r = remod::route_links(blocks, {l}, gap);
     REQUIRE(r.paths.size() == 1);
-    CHECK(r.paths[0].front() == l.from);
-    CHECK(r.paths[0].back() == l.to);
-    CHECK(r.paths[0].size() == 4);  // from -> middle x -> to
+    for (const Box& b : blocks) CHECK(lined_sides(r.paths[0], b, 1.5f * gap) < 2);
+}
+
+TEST_CASE("route: the long way round is a portal") {
+    // A wall between the blocks: around it is ten times the direct distance.
+    const std::vector<Box> blocks{{0, 0, 100, 50}, {150, -1000, 200, 1000}, {300, 0, 400, 50}};
+    const LinkRoute l{0, {100, 25}, {300, 25}};
+    CHECK(remod::route_links(blocks, {l}, kGap).portals == std::vector<char>{1});
+    // A plain backwards link is no detour: it's routed.
+    const std::vector<Box> back{{300, 0, 400, 50}, {0, 100, 100, 150}};
+    CHECK(remod::route_links(back, {{0, {400, 25}, {0, 125}}}, kGap).portals == std::vector<char>{0});
+}
+
+TEST_CASE("route: lines take the lane a little away from a block when there's room") {
+    // Two blocks far apart vertically, the link coming down past the target's left side: it runs on a lane further
+    // out than the one right beside the side.
+    const std::vector<Box> blocks{{0, 0, 100, 50}, {300, 200, 400, 400}};
+    const LinkRoute l{0, {100, 25}, {300, 380}};
+    const auto r = remod::route_links(blocks, {l}, kGap);
+    check_path(r.paths.at(0), l, blocks);
+    bool passes_beside = false;  // a vertical run alongside the target's left side
+    for (size_t k = 0; k + 1 < r.paths[0].size(); ++k) {
+        const Pt p = r.paths[0][k], q = r.paths[0][k + 1];
+        if (p.x != q.x || std::max(p.y, q.y) < 250 || std::min(p.y, q.y) > 350) continue;
+        passes_beside = true;
+        CHECK(p.x <= 300 - 2 * kGap + 0.01f);  // not on the lane right beside it
+    }
+    CHECK(passes_beside);
 }
 
 TEST_CASE("hit_link finds the path near a point") {
