@@ -127,6 +127,18 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   over 0.25 s, so blocks and lines change smoothly. A user tried both instant switching (too jarring) and keeping
   blocks full size in the overview (wasted space). **Not finished (user, 2026-10-01): "good enough for now";
   open: the final full reroute after the fold can still shift a line once.** Build layout's "Tidy up" arranges blocks in columns by step order (core `tidy_layout`).
+- **Panels per layout (user, 2026-10-01: "we shouldn't show things that won't be in use").** Use layout: Browser,
+  Graph, Pipeline, viewer and Textures; the Pipeline can be closed (its X; a "Pipeline" button above the graph brings
+  it back). Build layout: a **Nodes** panel (every block type, steps then utilities, search; each entry is a preview of
+  the block as it will look, `draw_block_preview`, shrunk to the panel; click adds mid-view; dragging one over the
+  graph shows a see-through copy at the graph's zoom, already spaced from the others as `keep_apart` will place it,
+  and the drop lands exactly there; tooltips show description and coloured pins), Graph, and the Pipeline's building parts only
+  (graph file, game, status, problems; no Noesis, game files or log), always shown. The dock layout is rebuilt when
+  the layout or the Pipeline's visibility changes, so hidden panels leave no gap (split sizes reset then).
+- **Zooming while holding a block keeps it under the cursor (user, 2026-10-01).** imgui-node-editor drags by
+  mouse − click in graph coordinates but re-converts the screen click through the current zoom each frame, so a zoom
+  moved the block. The app pins the click's graph position just before `ed::End()` (after all Suspend/Resume, which
+  re-convert); no library patch.
 - **Outputs are on the right.** A field for where a node writes its output (Export's PNG file) is part of that
   output (`PortSpec::field`), shown on the output side and not linkable. **Destinations too, on every block (user, 2026-10-01):** an input
   that says where a node writes (`InputSpec::result`: Copy/Move destination, Rename's new name, Make folder, Package's
@@ -363,7 +375,7 @@ Fill these in from the manual spike before implementing the affected code:
 - M3: REFramework Lua runtime reading manifests (triggers → actions).
 - M4: C++ REFramework plugin for video playback (in-game "cutscene" videos).
 - Replace ImGui front end with a polished native UI.
-- **Texture and mesh browser: first version built (2026-10-01).** Layout: Browser left (folder tree, search,
+- **Texture and mesh browser: first version built (2026-10-01).** Use layout only. Layout: Browser left (folder tree, search,
   file paths), Graph middle, Pipeline right; along the bottom the viewer (left corner: the selected texture, or the
   picked mesh in 3D until closed; the last mesh stays) and Textures (thumbnails of the picked mesh's or the folder's
   textures, "Use in graph" via `texture_target`).

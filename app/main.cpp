@@ -243,6 +243,13 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value, const 
     return true;
 }
 
+// The graph editor's block style, copied each frame (draw_canvas) so blocks can be drawn outside the editor too.
+struct BlockLook {
+    ImVec4 padding{8, 8, 8, 8};  // x left, y top, z right, w bottom
+    ImU32 bg = IM_COL32(32, 32, 32, 200), border = IM_COL32(255, 255, 255, 96);
+    float rounding = 12;
+};
+
 struct State {
     const std::filesystem::path settings_file = remod::default_settings_path();
     remod::Settings saved = remod::load_settings(settings_file);
@@ -296,6 +303,12 @@ struct State {
     // Placement (core make_room / keep_apart): a block just added, placed once its size is known; blocks being dragged,
     // kept apart from the rest when let go; a load that added blocks (old file), tidied once they're drawn.
     int place_new = 0;
+    std::string add_type;  // from the Nodes panel: a block to add next frame, at `add_at` (graph) or mid-view
+    std::optional<ImVec2> add_at;
+    std::optional<ImVec2> ghost_at;  // where a block dragged from the Nodes panel would land (graph), while over it
+    BlockLook look;
+    ImVec2 click_in_graph;  // where the left button went down, in graph coordinates (zooming while holding a block)
+    bool show_pipeline = true;  // Use layout can close the Pipeline panel; Build layout always shows it
     std::map<int, ImVec2> last_pos;
     std::set<int> dragged;
     bool tidy_after_load = false;
@@ -427,8 +440,10 @@ void open_in_editor(const std::filesystem::path& file) {
         ::ShellExecuteW(nullptr, L"open", file.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+// The Pipeline panel. Use layout: everything, and it can be closed (the button above the graph reopens it). Build
+// layout: only what building uses (graph file, game, status, problems); no run settings or log.
 void draw_side_panel(State& s) {
-    ImGui::Begin("Pipeline");
+    ImGui::Begin("Pipeline", s.build_mode ? nullptr : &s.show_pipeline);
     if (ImGui::Checkbox("Show help", &s.show_help)) remember_paths(s);
 
     if (s.show_help && !s.build_mode) {
@@ -476,34 +491,36 @@ void draw_side_panel(State& s) {
     ImGui::SameLine();
     if (ImGui::Button("Fit view")) s.navigate = true;
 
-    ImGui::InputText("##noesis", &s.noesis_path);
-    ImGui::SameLine();
-    if (ImGui::Button("...##noesis") && browse(remod::PathKind::OpenFile, "exe", s.noesis_path)) remember_paths(s);
-    ImGui::SameLine();
-    ImGui::TextUnformatted("Noesis64.exe");
-    if (s.checked_noesis != s.noesis_path) {  // re-check only when the path changes
-        s.checked_noesis = s.noesis_path;
-        s.noesis_check = remod::check_noesis(unquote(s.noesis_path));
-    }
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(s.noesis_check.ok ? ImVec4(0.4f, 0.85f, 0.4f, 1) : ImVec4(1, 0.45f, 0.35f, 1), "%s",
-                       s.noesis_check.message.c_str());
-    ImGui::PopTextWrapPos();
+    if (!s.build_mode) {  // run settings
+        ImGui::InputText("##noesis", &s.noesis_path);
+        ImGui::SameLine();
+        if (ImGui::Button("...##noesis") && browse(remod::PathKind::OpenFile, "exe", s.noesis_path)) remember_paths(s);
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Noesis64.exe");
+        if (s.checked_noesis != s.noesis_path) {  // re-check only when the path changes
+            s.checked_noesis = s.noesis_path;
+            s.noesis_check = remod::check_noesis(unquote(s.noesis_path));
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(s.noesis_check.ok ? ImVec4(0.4f, 0.85f, 0.4f, 1) : ImVec4(1, 0.45f, 0.35f, 1), "%s",
+                           s.noesis_check.message.c_str());
+        ImGui::PopTextWrapPos();
 
-    // Where the texture picker opens: the REtool folder of extracted game files.
-    std::string shown = game_files_dir(s);
-    if (ImGui::InputTextWithHint("##gamefiles", "extracted game files (REtool) folder", &shown)) s.game_files = shown;
-    ImGui::SameLine();
-    if (ImGui::Button("...##gamefiles") && browse(remod::PathKind::Folder, nullptr, shown)) {
-        s.game_files = shown;
-        remember_paths(s);
+        // Where the texture picker opens: the REtool folder of extracted game files.
+        std::string shown = game_files_dir(s);
+        if (ImGui::InputTextWithHint("##gamefiles", "extracted game files (REtool) folder", &shown)) s.game_files = shown;
+        ImGui::SameLine();
+        if (ImGui::Button("...##gamefiles") && browse(remod::PathKind::Folder, nullptr, shown)) {
+            s.game_files = shown;
+            remember_paths(s);
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Game files");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Your REtool folder, e.g. ...\\REtool\\RE4\\re_chunk_000\\natives\\stm.\n"
+                              "The texture picker opens here. Filled in from the RE plugin's settings if you've set "
+                              "it there.");
     }
-    ImGui::SameLine();
-    ImGui::TextUnformatted("Game files");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Your REtool folder, e.g. ...\\REtool\\RE4\\re_chunk_000\\natives\\stm.\n"
-                          "The texture picker opens here. Filled in from the RE plugin's settings if you've set "
-                          "it there.");
 
     // Which game (profile) the graph targets. Picking a texture sets this automatically.
     const auto current = std::ranges::find(s.profiles, s.graph.profile, &remod::Profile::id);
@@ -535,14 +552,16 @@ void draw_side_panel(State& s) {
         ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "Problems (%d):", int(problems.size()));
         for (const auto& p : problems) ImGui::BulletText("%s", p.c_str());
     }
-    ImGui::Separator();
-    ImGui::TextUnformatted("Log");
-    ImGui::BeginChild("log");
-    {
-        std::lock_guard lock(s.log_mutex);
-        for (const auto& line : s.log) ImGui::TextWrapped("%s", line.c_str());
+    if (!s.build_mode) {
+        ImGui::Separator();
+        ImGui::TextUnformatted("Log");
+        ImGui::BeginChild("log");
+        {
+            std::lock_guard lock(s.log_mutex);
+            for (const auto& line : s.log) ImGui::TextWrapped("%s", line.c_str());
+        }
+        ImGui::EndChild();
     }
-    ImGui::EndChild();
     ImGui::End();
 }
 
@@ -581,6 +600,161 @@ ImU32 port_color(remod::PortType type) {
     case remod::PortType::Any: return IM_COL32(170, 170, 170, 255);    // grey: a Split with nothing linked in yet
     }
     return IM_COL32_WHITE;
+}
+
+// A block type's tooltip: its description, then its inputs and outputs, each in its link colour.
+void spec_tooltip(const remod::NodeSpec& spec) {
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24);
+    ImGui::TextUnformatted(spec.summary);
+    ImGui::PopTextWrapPos();
+    for (const bool outputs : {false, true}) {
+        const size_t count = outputs ? spec.outputs.size() : spec.inputs.size();
+        if (count == 0) continue;
+        ImGui::TextDisabled(outputs ? "out:" : "in:");
+        for (size_t i = 0; i < count; ++i) {
+            const remod::PortType type = outputs ? spec.outputs[i].type : spec.inputs[i].type;
+            ImGui::SameLine();
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(port_color(type)), "%s%s",
+                               outputs ? spec.outputs[i].label : spec.inputs[i].label, i + 1 < count ? "," : "");
+        }
+    }
+    ImGui::EndTooltip();
+}
+
+// What a new block of `spec` looks like in Build layout: its title, then its rows the way draw_canvas lays them out
+// (pins on the edges in their colours, labels, field boxes, destinations beside their output), without the editor.
+// Drawn at `at` (top-left) `scale`d and faded to `alpha`; with no `draw` it only measures. Returns the size. For the
+// Nodes panel and the see-through copy of a block dragged onto the graph. ponytail: mirrors draw_canvas's layout by
+// hand (no descriptions, a fresh block's rows); keep the two in step when the block layout changes.
+ImVec2 draw_block_preview(ImDrawList* draw, ImVec2 at, const remod::NodeSpec& spec, const BlockLook& look, float scale,
+                          float alpha) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float font = ImGui::GetFontSize();
+    const bool utility = spec.utility;
+    const bool fields = std::ranges::any_of(spec.inputs, &remod::InputSpec::editable) ||
+                        std::ranges::any_of(spec.outputs, [](const auto& o) { return o.field != nullptr; });
+    const float label_w = font * (utility ? 4 : 7), field_w = font * (utility ? 8 : 14);
+    const float button_w = ImGui::CalcTextSize("...").x + style.FramePadding.x * 2;
+    const float inner = utility && !fields ? font * 7 : label_w + field_w + style.ItemSpacing.x + button_w;
+    const float x0 = look.padding.x, width = look.padding.x + inner + look.padding.z;
+    const float row = ImGui::GetFrameHeight(), step = row + style.ItemSpacing.y;
+    auto fade = [&](ImU32 c) {
+        return (c & ~IM_COL32_A_MASK) | (ImU32(float((c >> IM_COL32_A_SHIFT) & 0xFF) * alpha) << IM_COL32_A_SHIFT);
+    };
+    auto pos = [&](float x, float y) { return at + ImVec2(x, y) * scale; };
+    const ImU32 text = ImGui::GetColorU32(ImGuiCol_Text), dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const ImU32 frame = ImGui::GetColorU32(ImGuiCol_FrameBg), button = ImGui::GetColorU32(ImGuiCol_Button);
+
+    // The rows, walked twice: once to measure, once to paint.
+    auto rows = [&](bool paint) {
+        auto label = [&](float x, float y, const char* t, ImU32 col, float size = 0) {
+            if (paint) draw->AddText(ImGui::GetFont(), (size ? size : font) * scale, pos(x, y), fade(col), t);
+        };
+        auto box = [&](float x, float y, float w, ImU32 col) {
+            if (paint) draw->AddRectFilled(pos(x, y), pos(x + w, y + row), fade(col), style.FrameRounding * scale);
+        };
+        auto pin = [&](bool right, float y, remod::PortType type) {
+            if (paint) draw->AddCircle(pos(right ? width : 0, y + row / 2), font * 0.3f * scale, fade(port_color(type)), 0, 2 * scale);
+        };
+        auto right_label = [&](float y, const char* t) {
+            label(x0 + inner - ImGui::CalcTextSize(t).x, y + style.FramePadding.y, t, text);
+        };
+        float y = look.padding.y;
+        const float title = font * (utility ? 1.1f : 1.6f);
+        label(x0, y, spec.title, utility ? IM_COL32(191, 191, 191, 255) : IM_COL32(140, 204, 255, 255), title);
+        y += title + style.ItemSpacing.y;
+        if (spec.manual) {
+            label(x0, y, "YOUR STEP", ImGui::GetColorU32(kAmber));
+            y += font + style.ItemSpacing.y;
+        }
+        for (const auto& in : spec.inputs) {  // fixed inputs: pin, label, field
+            if (in.multiple || in.result) continue;
+            pin(false, y, in.type);
+            label(x0, y + style.FramePadding.y, in.required ? (std::string(in.label) + " *").c_str() : in.label, text);
+            if (in.widget == remod::Widget::Checkbox) box(x0 + label_w, y, row, frame);
+            else if (in.editable()) box(x0 + label_w, y, field_w, frame);
+            if (in.widget == remod::Widget::Path) box(x0 + label_w + field_w + style.ItemSpacing.x, y, button_w, button);
+            y += step;
+        }
+        if (spec.manual) {
+            label(x0, y + style.FramePadding.y, "Run first: Export image creates the file to edit.", dim);
+            y += step;
+            box(x0, y, ImGui::CalcTextSize("Done editing").x + style.FramePadding.x * 2, button);
+            label(x0 + style.FramePadding.x, y + style.FramePadding.y, "Done editing", text);
+            y += step;
+        }
+        for (const auto& out : spec.outputs) {
+            const auto dest = std::ranges::find_if(spec.inputs, [&](const auto& in) {
+                return in.result && std::string_view(in.result) == out.name;
+            });
+            const std::string name = out.multiple ? std::string("+ ") + out.label : std::string(out.label);
+            if (out.field || dest != spec.inputs.end()) {  // where it writes: field, "...", then the output
+                const float x =
+                    x0 + inner - (field_w + style.ItemSpacing.x * 2 + button_w + ImGui::CalcTextSize(out.label).x);
+                box(x, y, field_w, frame);
+                label(x + style.FramePadding.x, y + style.FramePadding.y,
+                      dest != spec.inputs.end() ? dest->label : out.field_label, dim);
+                box(x + field_w + style.ItemSpacing.x, y, button_w, button);
+            }
+            right_label(y, name.c_str());
+            pin(true, y, out.type);
+            y += step;
+        }
+        for (const auto& in : spec.inputs) {  // inputs that grow a row per link: the row to connect the first one
+            if (!in.multiple) continue;
+            pin(false, y, in.type);
+            label(x0, y + style.FramePadding.y, (std::string("+ ") + in.label).c_str(), text);
+            y += step;
+        }
+        return y - style.ItemSpacing.y + look.padding.w;
+    };
+    const float height = rows(false);
+    if (draw) {
+        draw->AddRectFilled(at, at + ImVec2(width, height) * scale, fade(look.bg), look.rounding * scale);
+        const ImU32 border = spec.manual ? ImGui::GetColorU32(kAmber) : look.border;  // a manual step: amber, thick
+        draw->AddRect(at, at + ImVec2(width, height) * scale, fade(border), look.rounding * scale, 0,
+                      (spec.manual ? 3.0f : 1.0f) * scale);
+        rows(true);
+    }
+    return ImVec2(width, height) * scale;
+}
+
+// Build layout's node browser: every block type, the main steps then the utilities, with a search box. Click adds
+// one mid-view; drag one onto the graph to add it there (both placed clear of the others by core).
+void draw_nodes_panel(State& s) {
+    ImGui::Begin("Nodes");
+    static std::string filter;
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##filter", "Search blocks", &filter);
+    auto lower = [](std::string t) {
+        std::ranges::transform(t, t.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        return t;
+    };
+    const std::string want = lower(filter);
+    for (const bool utility : {false, true}) {
+        ImGui::SeparatorText(utility ? "Utilities" : "Steps");
+        for (const auto& spec : remod::node_specs()) {
+            if (spec.utility != utility) continue;
+            if (!want.empty() && lower(spec.title).find(want) == std::string::npos &&
+                lower(spec.summary).find(want) == std::string::npos)
+                continue;
+            // The block as it will look, shrunk to the panel's width.
+            const ImVec2 full = draw_block_preview(nullptr, {}, spec, s.look, 1, 1);
+            const float scale = ImMin(1.0f, ImGui::GetContentRegionAvail().x / full.x);
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton(spec.type, full * scale)) s.add_type = spec.type, s.add_at.reset();
+            const bool hovered = ImGui::IsItemHovered();
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {  // the graph shows a copy
+                ImGui::SetDragDropPayload("remod_block", spec.type, std::strlen(spec.type) + 1);
+                ImGui::EndDragDropSource();
+            } else if (hovered) {
+                spec_tooltip(spec);
+            }
+            draw_block_preview(ImGui::GetWindowDrawList(), at, spec, s.look, scale, hovered ? 1.0f : 0.85f);
+        }
+    }
+    ImGui::End();
 }
 
 // Text wrapped to `width`, whatever the position. ImGui's own wrap position is window-local and ignored unless
@@ -711,10 +885,20 @@ void draw_mode_switch(State& s) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.tip);
         ImGui::SameLine();
     }
-    // At the left end: links with no clean route, drawn as numbered ends (portals). Tidy up usually gives them one.
+    // At the left end: reopen the Pipeline panel if it was closed (Use layout; Run is there), then links with no
+    // clean route, drawn as numbered ends (portals). Tidy up usually gives them one.
+    const ImVec2 after_switch = ImGui::GetCursorPos();
+    ImVec2 left = line_start;
+    if (!s.build_mode && !s.show_pipeline) {
+        ImGui::SetCursorPos(left);
+        if (ImGui::Button("Pipeline")) s.show_pipeline = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the Pipeline panel again (Run, paths, log).");
+        left.x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + style.ItemSpacing.x;
+        ImGui::SetCursorPos(after_switch);
+    }
     if (const auto portals = std::ranges::count(s.routes.portals, 1); portals > 0) {
         const ImVec2 after = ImGui::GetCursorPos();
-        ImGui::SetCursorPos(ImVec2(line_start.x, line_start.y + style.FramePadding.y));
+        ImGui::SetCursorPos(ImVec2(left.x, line_start.y + style.FramePadding.y));
         ImGui::TextColored(kAmber, "%d link%s without a clean route", int(portals), portals == 1 ? "" : "s");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Shown as numbered ends instead of a line: the blocks are too close or in the way.\n%s",
@@ -771,6 +955,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     s.pin_pos.clear();
     const float button_width = ImGui::CalcTextSize("...").x + style.FramePadding.x * 2;
     const ImVec4 padding = ed::GetStyle().NodePadding;  // x = left, z = right
+    s.look = {padding, ImGui::GetColorU32(ed::GetStyle().Colors[ed::StyleColor_NodeBg]),
+              ImGui::GetColorU32(ed::GetStyle().Colors[ed::StyleColor_NodeBorder]), ed::GetStyle().NodeRounding};
     std::string hovered_hint;  // tooltip drawn after the nodes, outside the canvas transform
     // Zoomed out: the overview, blocks showing only their (bigger) title, status and linked rows; the rest folds
     // away. `detail` eases between 1 (all) and 0 (overview) over a quarter second, so blocks and their lines change
@@ -1213,6 +1399,29 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             }
         }
     }
+    // A block dragged from the Nodes panel over the graph: a see-through copy where it will land, already spaced from
+    // the others the way it will be once dropped (core keep_apart), at the graph's zoom.
+    s.ghost_at.reset();
+    const ImGuiPayload* drag = ImGui::GetDragDropPayload();
+    const ImVec2 view_lo = ed::ScreenToCanvas(view_center - view_size * 0.5f);
+    const ImVec2 view_hi = ed::ScreenToCanvas(view_center + view_size * 0.5f);
+    const remod::NodeSpec* dragged_spec =
+        drag && drag->IsDataType("remod_block") ? remod::find_spec(static_cast<const char*>(drag->Data)) : nullptr;
+    if (const remod::NodeSpec* spec = dragged_spec;
+        spec && mouse.x > view_lo.x && mouse.x < view_hi.x && mouse.y > view_lo.y && mouse.y < view_hi.y) {
+        const ImVec2 size = draw_block_preview(nullptr, {}, *spec, s.look, 1, 1);
+        std::vector<std::array<float, 2>> positions, sizes;
+        for (const auto& n : s.graph.nodes) {
+            const ImVec2 p = ed::GetNodePosition(n.id), sz = ed::GetNodeSize(n.id);
+            positions.push_back({p.x, p.y});
+            sizes.push_back({sz.x, sz.y});
+        }
+        positions.push_back({mouse.x, mouse.y});
+        sizes.push_back({size.x, size.y});
+        const auto at = remod::keep_apart(positions, sizes, positions.size() - 1, min_gap).back();
+        s.ghost_at = ImVec2(at[0], at[1]);
+        draw_block_preview(draw, *s.ghost_at, *spec, s.look, 1, 0.45f);
+    }
     draw->PopClipRect();
     ImGui::SetCursorScreenPos(cursor);
     ImGui::Dummy(ImVec2(0, 0));  // an item at the cursor, as ImGui requires after moving it
@@ -1308,7 +1517,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     auto node_item = [](const remod::NodeSpec& spec) {
         const std::string label = std::string(spec.manual ? "Your step: " : "") + spec.title;
         const bool picked = ImGui::MenuItem(label.c_str());
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", spec.summary);
+        if (ImGui::IsItemHovered()) spec_tooltip(spec);
         return picked;
     };
     auto place = [&](int id) {  // where the menu was, until core makes room for it (next frame, once it has a size)
@@ -1410,6 +1619,16 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     }
     ed::Resume();
 
+    // A block from the Nodes panel: where it was dropped, else mid-view; core places it clear of the others.
+    if (!s.add_type.empty()) {
+        if (s.build_mode && remod::find_spec(s.add_type)) {
+            const int id = s.graph.add_node(s.add_type).id;
+            ed::SetNodePosition(id, s.add_at.value_or(ed::ScreenToCanvas(view_center)));
+            s.place_new = id;
+        }
+        s.add_type.clear();
+    }
+
     // A texture from the Browser goes into the selected Original texture block, else the only one; in Build layout
     // a new block is added if there's none.
     if (!s.pending_texture.empty()) {
@@ -1449,8 +1668,28 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         }
     }
 
+    // Zooming while holding a block keeps it under the cursor. The editor drags by the mouse's distance from the
+    // click, both in graph coordinates, but converts the screen click through the current zoom every frame, so a
+    // zoom moved the click point (and the block) in the graph. Pinning the click to where it happened fixes that.
+    // Here, just before ed::End (where the drag is processed, after all our Suspend/Resume, which re-convert), the
+    // IO is in graph coordinates; the editor restores the screen values at its end.
+    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        s.click_in_graph = io.MouseClickedPos[ImGuiMouseButton_Left];
+    else if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        io.MouseClickedPos[ImGuiMouseButton_Left] = s.click_in_graph;
     ed::End();
     ed::SetCurrentEditor(nullptr);
+
+    // A block type dragged from the Nodes panel and dropped on the graph: added where its copy was (next frame).
+    const ImVec2 view_min = view_center - view_size * 0.5f;
+    if (ImGui::BeginDragDropTargetCustom(ImRect(view_min, view_min + view_size), ImGui::GetID("graph_drop"))) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("remod_block")) {
+            s.add_type = static_cast<const char*>(payload->Data);
+            s.add_at = s.ghost_at;
+        }
+        ImGui::EndDragDropTarget();
+    }
     ImGui::End();
 }
 
@@ -1530,27 +1769,38 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
         poll_run(state);
         const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
-        static bool layout_done = false;
-        if (!layout_done) {  // Browser left, Graph middle, Pipeline right; along the bottom the viewer, then Textures
-            layout_done = true;
+        // Panels show only where they're used: Use layout has Browser left, Graph middle, Pipeline right (closable)
+        // and along the bottom the viewer, then Textures; Build layout has Nodes left, Graph middle, Pipeline right.
+        // Rebuilt when the mode or the Pipeline's visibility changes, so a hidden panel leaves no empty space.
+        if (state.build_mode) state.show_pipeline = true;
+        static int layout_key = -1;
+        if (const int key = int(state.build_mode) * 2 + int(state.show_pipeline); key != layout_key) {
+            layout_key = key;
             ImGui::DockBuilderRemoveNode(dockspace);
             ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->Size);
-            ImGuiID top = 0, bottom = 0, corner = 0, textures = 0, left = 0, rest = 0, right = 0, middle = 0;
-            ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Down, 0.32f, &bottom, &top);
-            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.25f, &corner, &textures);
-            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.25f, &left, &rest);
-            ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.3f, &right, &middle);
-            ImGui::DockBuilderDockWindow("Browser", left);
+            ImGuiID top = dockspace, bottom = 0, corner = 0, textures = 0, left = 0, rest = 0, right = 0, middle = 0;
+            if (!state.build_mode) ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Down, 0.32f, &bottom, &top);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, state.build_mode ? 0.18f : 0.25f, &left, &rest);
+            middle = rest;
+            if (state.show_pipeline) ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.3f, &right, &middle);
+            ImGui::DockBuilderDockWindow(state.build_mode ? "Nodes" : "Browser", left);
             ImGui::DockBuilderDockWindow("Graph", middle);
-            ImGui::DockBuilderDockWindow("Pipeline", right);
-            ImGui::DockBuilderDockWindow("###viewer", corner);
-            ImGui::DockBuilderDockWindow("Textures", textures);
+            if (state.show_pipeline) ImGui::DockBuilderDockWindow("Pipeline", right);
+            if (!state.build_mode) {
+                ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.25f, &corner, &textures);
+                ImGui::DockBuilderDockWindow("###viewer", corner);
+                ImGui::DockBuilderDockWindow("Textures", textures);
+            }
             ImGui::DockBuilderFinish(dockspace);
         }
-        if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles); !picked.empty())
+        if (state.build_mode) {
+            draw_nodes_panel(state);
+        } else if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles);
+                   !picked.empty()) {
             state.pending_texture = picked;
-        draw_side_panel(state);
+        }
+        if (state.build_mode || state.show_pipeline) draw_side_panel(state);
         draw_canvas(state, editor);
         draw_warnings(state);
 
