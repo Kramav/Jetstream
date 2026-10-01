@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -32,19 +33,44 @@ bool is_kind(const std::string& name, const std::string& kind) {
                        [](char c) { return std::isdigit(static_cast<unsigned char>(c)); });
 }
 
-// The UTF-16 texts in a file that end in ".tex". ponytail: reads the material's strings rather than its layout;
-// every .tex path in RE4R's 6,392 materials resolved this way (2026-10-01). Parse the mdf2 layout if a game
-// stores them differently.
-std::vector<std::string> tex_strings(const fs::path& file) {
+struct Mdf2Material {
+    std::string name;
+    std::vector<std::string> textures;  // paths as written, without the version suffix
+};
+
+// An .mdf2 material file, layout from fmt_RE_MESH's reader for mdf versions > 3 (RE4R's .mdf2.32) [plugin source]:
+// u16 material count @6; per material, 100 bytes from 0x10: u64 name offset @0, u32 texture count @20,
+// u64 texture headers offset @60. Per texture, 0x20 bytes: u64 type-name offset, u64 hash, u64 path offset.
+// Strings are UTF-16. Checked 2026-10-01 on all 6,392 RE4R materials: every name and path parses.
+std::vector<Mdf2Material> read_mdf2(const fs::path& file) {
     std::ifstream in(file, std::ios::binary);
     const std::string b((std::istreambuf_iterator<char>(in)), {});
-    std::vector<std::string> out;
-    for (size_t i = 0; i + 1 < b.size();) {
+    auto need = [&](std::uint64_t at, std::uint64_t n) {
+        if (at > b.size() || n > b.size() - at) throw std::runtime_error(file.string() + " is damaged or not an RE4R material");
+    };
+    auto le = [&](std::uint64_t at, int bytes) {
+        need(at, std::uint64_t(bytes));
+        std::uint64_t v = 0;
+        for (int i = 0; i < bytes; ++i) v |= std::uint64_t(std::uint8_t(b[size_t(at) + i])) << (8 * i);
+        return v;
+    };
+    auto text = [&](std::uint64_t at) {  // ASCII from UTF-16
         std::string s;
-        size_t j = i;
-        for (; j + 1 < b.size() && b[j + 1] == 0 && b[j] >= 0x20 && b[j] < 0x7f; j += 2) s += b[j];
-        if (s.size() >= 4 && lower(s).ends_with(".tex")) out.push_back(s);
-        i = s.empty() ? i + 1 : j;
+        for (; le(at, 2) != 0; at += 2) s += char(le(at, 2) < 0x80 ? le(at, 2) : '?');
+        return s;
+    };
+    std::vector<Mdf2Material> out;
+    const auto count = le(6, 2);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        const std::uint64_t m = 0x10 + i * 100;
+        Mdf2Material mat{text(le(m, 8)), {}};
+        const auto textures = le(m + 20, 4), headers = le(m + 60, 8);
+        for (std::uint64_t t = 0; t < textures; ++t) {
+            std::string path = text(le(headers + t * 0x20 + 16, 8));
+            std::erase(path, '@');  // the plugin drops these too
+            mat.textures.push_back(path);
+        }
+        out.push_back(std::move(mat));
     }
     return out;
 }
@@ -132,16 +158,31 @@ MeshTextures mesh_textures(const fs::path& natives_root, const std::string& mesh
 
     MeshTextures out;
     out.material = mesh.substr(0, mesh.size() - file_name(mesh).size()) + material;
-    for (const std::string& s : tex_strings(dir / material)) {
-        // The material names textures without the version suffix: find "<path>.<digits>" in the sorted index.
-        const std::string key = lower(s) + ".";
-        auto it = std::ranges::lower_bound(textures, key, less_nocase);
-        const bool found = it != textures.end() && is_kind(lower(*it), ".tex.") && lower(*it).starts_with(key) &&
-                           it->find('.', key.size()) == std::string::npos;
-        const std::string name = found ? *it : s;
-        if (std::ranges::find(out.textures, name) != out.textures.end()) continue;
-        out.textures.push_back(name);
-        out.found.push_back(found);
+    for (const Mdf2Material& m : read_mdf2(dir / material)) {
+        MeshMaterial mat{m.name, {}, -1};
+        for (const std::string& s : m.textures) {
+            if (!lower(s).ends_with(".tex")) continue;  // e.g. .rtex render targets
+            // Materials name textures without the version suffix: find "<path>.<digits>" in the sorted index.
+            const std::string key = lower(s) + ".";
+            auto it = std::ranges::lower_bound(textures, key, less_nocase);
+            const bool found = it != textures.end() && is_kind(lower(*it), ".tex.") && lower(*it).starts_with(key) &&
+                               it->find('.', key.size()) == std::string::npos;
+            const std::string name = found ? *it : s;
+            auto known = std::ranges::find(out.textures, name);
+            if (known == out.textures.end()) {
+                out.textures.push_back(name);
+                out.found.push_back(found);
+                known = out.textures.end() - 1;
+            }
+            const size_t index = size_t(known - out.textures.begin());
+            mat.textures.push_back(index);
+            // Colour texture: the plugin's rule, a file name with "_alb", "_albd" preferred [plugin source].
+            const std::string file = lower(file_name(name));
+            if (found && file.find("_alb") != std::string::npos &&
+                (mat.albedo < 0 || file.find("_albd") != std::string::npos))
+                mat.albedo = int(index);
+        }
+        out.materials.push_back(std::move(mat));
     }
     return out;
 }

@@ -15,7 +15,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr unsigned kThumbSide = 128, kPreviewSide = 2048;
+constexpr unsigned kThumbSide = 128, kPreviewSide = 2048, kMeshTextureSide = 1024;
 
 // sRGB formats are shown as their UNORM twins: the app draws into a UNORM back buffer, so the stored bytes are
 // already what the screen wants. RE Engine's format numbers are DXGI's.
@@ -48,7 +48,7 @@ bool looks_like_natives(std::string root) {
 
 }  // namespace
 
-Browser::Browser(ID3D11Device* device) : device_(device) {
+Browser::Browser(ID3D11Device* device) : device_(device), view_(device) {
     D3D11_BLEND_DESC desc{};
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     device_->CreateBlendState(&desc, &opaque_);
@@ -189,7 +189,8 @@ void Browser::select_texture(const std::string& rel, const std::vector<remod::Pr
     }
 }
 
-std::string Browser::draw(const std::string& natives_root, const std::vector<remod::Profile>& profiles) {
+std::string Browser::draw(const std::string& natives_root, const std::string& noesis_exe,
+                          const std::vector<remod::Profile>& profiles) {
     ++frame_;
     load_ms_ = 0;
     release_unused();
@@ -285,6 +286,8 @@ std::string Browser::draw(const std::string& natives_root, const std::vector<rem
                     mesh_ = rel;
                     mesh_error_.clear();
                     mesh_textures_.reset();
+                    model_error_.clear();
+                    view_.clear();  // until the new one is converted
                     try {
                         mesh_textures_ = remod::mesh_textures(root_, rel, index_->assets.textures);
                     } catch (const std::exception& e) {
@@ -311,22 +314,91 @@ std::string Browser::draw(const std::string& natives_root, const std::vector<rem
     }
     ImGui::EndChild();
 
-    // Details: the mesh's textures, then the selected texture.
+    // The selected mesh's shape, converted by Noesis in the background, one at a time: a mesh picked meanwhile is
+    // converted next (waiting on a running conversion would freeze the panel).
+    if (mesh_loading_.valid() && mesh_loading_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        try {
+            const remod::MeshModel model = mesh_loading_.get();
+            if (loading_mesh_ == mesh_) {
+                view_.set_model(model);
+                part_materials_.clear();
+                for (const auto& part : model.parts) part_materials_.push_back(part.material);
+                triangles_ = model.triangles;
+            }
+        } catch (const std::exception& e) {
+            if (loading_mesh_ == mesh_) model_error_ = e.what();
+        }
+        shown_mesh_ = loading_mesh_;
+    }
+    if (!mesh_loading_.valid() && !mesh_.empty() && shown_mesh_ != mesh_) {
+        shown_mesh_ = loading_mesh_ = mesh_;
+        if (!fs::is_regular_file(noesis_exe, ec)) {
+            model_error_ = "Set Noesis64.exe in the Pipeline panel to see meshes in 3D.";
+        } else {
+            mesh_loading_ = std::async(std::launch::async, [exe = fs::path(noesis_exe), file = root_ / mesh_] {
+                return remod::NoesisConverter(exe).load_mesh(file);
+            });
+            shown_mesh_.clear();  // set when it arrives
+        }
+    }
+
+    // Details: the mesh in 3D and its textures, then the selected texture.
     ImGui::BeginChild("details");
-    if (meshes_ && !mesh_.empty()) {
+    const bool mesh_details = meshes_ && !mesh_.empty();
+    if (mesh_details) {
         ImGui::TextUnformatted(remod::file_name(mesh_).c_str());
         if (!mesh_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "%s", mesh_error_.c_str());
+        if (mesh_loading_.valid() && loading_mesh_ == mesh_)
+            ImGui::TextDisabled("Converting with Noesis... (a big mesh takes several seconds)");
+        if (!model_error_.empty()) {
+            ImGui::PushTextWrapPos(0);
+            ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "No 3D view: %s", model_error_.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        // Which texture to highlight: the selected one, if this mesh uses it.
+        static const std::vector<std::string> no_textures;
+        const auto& texs = mesh_textures_ ? mesh_textures_->textures : no_textures;
+        const auto picked = std::ranges::find(texs, texture_);
+        const int highlight = picked == texs.end() ? -1 : int(picked - texs.begin());
+        if (!view_.empty() && shown_mesh_ == mesh_) {
+            std::vector<MeshView::Surface> surfaces;
+            for (const std::string& name : part_materials_) {
+                MeshView::Surface surface;
+                const remod::MeshMaterial* mat = nullptr;
+                if (mesh_textures_)
+                    for (const auto& m : mesh_textures_->materials)
+                        if (m.name == name) mat = &m;
+                if (mat && mat->albedo >= 0) {
+                    const Image& img = image(texs[size_t(mat->albedo)], kMeshTextureSide, true);
+                    surface = {img.srv, img.u, img.v, false};
+                }
+                surface.dim = highlight >= 0 && !(mat && std::ranges::count(mat->textures, size_t(highlight)));
+                surfaces.push_back(surface);
+            }
+            const float w = ImGui::GetContentRegionAvail().x;
+            view_.draw(ImVec2(w, std::max(w * 0.75f, font * 8)), surfaces);
+            ImGui::PushTextWrapPos(0);
+            ImGui::TextDisabled("%zu triangles. Drag to turn, right-drag to move, wheel to zoom, double-click to reset.",
+                                triangles_);
+            ImGui::PopTextWrapPos();
+        }
         if (mesh_textures_) {
             ImGui::TextDisabled("Material: %s", mesh_textures_->material.c_str());
-            ImGui::TextDisabled("%zu texture%s", mesh_textures_->textures.size(), mesh_textures_->textures.size() == 1 ? "" : "s");
+            ImGui::PushTextWrapPos(0);
+            ImGui::TextDisabled("%zu texture%s. Click one to highlight the parts using it, again to show all.",
+                                texs.size(), texs.size() == 1 ? "" : "s");
+            ImGui::PopTextWrapPos();
             const float tile = font * 5;
             const size_t columns = std::max(1, int((ImGui::GetContentRegionAvail().x + style.ItemSpacing.x) / (tile + style.ItemSpacing.x)));
-            for (size_t i = 0; i < mesh_textures_->textures.size(); ++i) {
-                const std::string& rel = mesh_textures_->textures[i];
+            for (size_t i = 0; i < texs.size(); ++i) {
+                const std::string rel = texs[i];
                 if (i % columns) ImGui::SameLine();
                 if (const int click = draw_tile(rel, mesh_textures_->found[i], tile, rel == texture_);
                     click && mesh_textures_->found[i]) {
-                    select_texture(rel, profiles);
+                    if (click == 1 && rel == texture_)
+                        texture_.clear();
+                    else
+                        select_texture(rel, profiles);
                     if (click == 2) chosen = (root_ / rel).string();
                 }
             }
@@ -342,7 +414,8 @@ std::string Browser::draw(const std::string& natives_root, const std::vector<rem
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Puts this texture into the selected Original texture block, or the graph's only one.\n"
                               "In Build layout, adds a block if there's none. Double-clicking a texture does the same.");
-        const Image& big = image(texture_, kPreviewSide, true);
+        static const Image none;
+        const Image& big = mesh_details ? none : image(texture_, kPreviewSide, true);  // a mesh shows the 3D view
         if (!big.error.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "Can't preview: %s", big.error.c_str());
         if (big.srv) {
             const float w = ImGui::GetContentRegionAvail().x;

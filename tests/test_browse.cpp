@@ -41,6 +41,35 @@ std::string utf16(const std::string& s) {
     return out + std::string(2, '\0');
 }
 
+// An .mdf2 in the layout mesh_textures reads (see read_mdf2): materials of 100 bytes from 0x10, then each one's
+// texture headers (0x20 bytes), then the UTF-16 strings.
+std::string mdf2(const std::vector<std::pair<std::string, std::vector<std::string>>>& materials) {
+    std::string b(0x10 + materials.size() * 100, '\0'), strings;
+    size_t headers = 0;
+    for (const auto& m : materials) headers += m.second.size() * 0x20;
+    const size_t text_at = b.size() + headers;
+    auto add = [&](const std::string& s) {
+        const size_t at = text_at + strings.size();
+        strings += utf16(s);
+        return std::uint32_t(at);
+    };
+    test::put_le(b, 6, std::uint32_t(materials.size()), 2);
+    std::string header_bytes;
+    for (size_t i = 0; i < materials.size(); ++i) {
+        const size_t m = 0x10 + i * 100;
+        test::put_le(b, m, add(materials[i].first), 4);
+        test::put_le(b, m + 20, std::uint32_t(materials[i].second.size()), 4);
+        test::put_le(b, m + 60, std::uint32_t(0x10 + materials.size() * 100 + header_bytes.size()), 4);
+        for (const auto& t : materials[i].second) {
+            std::string h(0x20, '\0');
+            test::put_le(h, 0, add("BaseMap"), 4);
+            test::put_le(h, 16, add(t), 4);
+            header_bytes += h;
+        }
+    }
+    return b + header_bytes + strings;
+}
+
 std::string env(const char* name) {
     char* v = nullptr;
     size_t n = 0;
@@ -130,21 +159,33 @@ TEST_CASE("folder_tree and search") {
 TEST_CASE("mesh_textures reads the material next to the mesh") {
     TempDir dir;
     test::write_file(dir.path / "ch/body.mesh.221108797", "x");
-    const std::string junk(7, '\x01');
     test::write_file(dir.path / "ch/body_mat.mdf2.32",
-                     junk + utf16("BaseDphMap") + utf16("CH/Body_ALBM.tex") + junk + utf16("ch/missing_NRM.tex") +
-                         utf16("CH/Body_ALBM.tex"));
-    const std::vector<std::string> textures{"aa.tex.1", "ch/body_albm.tex.143221013", "ch/body_albm2.tex.143221013"};
+                     mdf2({{"Skin_Mat", {"CH/Body_NRMR.tex", "CH/Body_ALBM.tex", "@CH/Body_ALBD.tex"}},
+                           {"Cloth_Mat", {"CH/Body_ALBM.tex", "ch/missing_ALBD.tex", "x/fx_rtt.rtex"}},
+                           {"Bare_Mat", {}}}));
+    const std::vector<std::string> textures{"aa.tex.1", "ch/body_albd.tex.143221013", "ch/body_albm.tex.143221013",
+                                            "ch/body_nrmr.tex.143221013"};
 
     auto m = remod::mesh_textures(dir.path, "ch/body.mesh.221108797", textures);
     CHECK(m.material == "ch/body_mat.mdf2.32");
-    CHECK(m.textures == std::vector<std::string>{"ch/body_albm.tex.143221013", "ch/missing_NRM.tex"});
-    CHECK(m.found == std::vector<bool>{true, false});
+    CHECK(m.textures == std::vector<std::string>{"ch/body_nrmr.tex.143221013", "ch/body_albm.tex.143221013",
+                                                 "ch/body_albd.tex.143221013", "ch/missing_ALBD.tex"});
+    CHECK(m.found == std::vector<bool>{true, true, true, false});
+    REQUIRE(m.materials.size() == 3);
+    CHECK(m.materials[0].name == "Skin_Mat");
+    CHECK(m.materials[0].textures == std::vector<size_t>{0, 1, 2});
+    CHECK(m.materials[0].albedo == 2);  // _albd preferred over _albm
+    CHECK(m.materials[1].textures == std::vector<size_t>{1, 3});  // .rtex left out
+    CHECK(m.materials[1].albedo == 1);  // the _albd one isn't in the files
+    CHECK(m.materials[2].albedo == -1);
 
-    test::write_file(dir.path / "ch/body.mdf2.32", utf16("ch/body_albm2.tex"));  // the exact name wins
+    test::write_file(dir.path / "ch/body.mdf2.32", mdf2({{"Other", {"ch/body_albd.tex"}}}));  // the exact name wins
     m = remod::mesh_textures(dir.path, "ch/body.mesh.221108797", textures);
     CHECK(m.material == "ch/body.mdf2.32");
-    CHECK(m.textures == std::vector<std::string>{"ch/body_albm2.tex.143221013"});
+    CHECK(m.textures == std::vector<std::string>{"ch/body_albd.tex.143221013"});
+
+    test::write_file(dir.path / "ch/body.mdf2.32", mdf2({{"Other", {}}}).substr(0, 30));  // cut short
+    CHECK_THROWS(remod::mesh_textures(dir.path, "ch/body.mesh.221108797", textures));
 
     test::write_file(dir.path / "lone/thing.mesh.221108797", "x");
     CHECK_THROWS(remod::mesh_textures(dir.path, "lone/thing.mesh.221108797", textures));

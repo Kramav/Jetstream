@@ -1,6 +1,7 @@
 #pragma once
 // LoadTex / SaveTex (CLAUDE.md §4). File-based: Noesis converts .tex <-> PNG/TGA/JPG directly, so pixels never
 // pass through this process. ponytail: add in-memory decoding (WIC) when the app needs a texture preview.
+#include "mesh.hpp"
 #include "process.hpp"
 #include "profile.hpp"
 #include "types.hpp"
@@ -78,6 +79,8 @@ public:
                      const Profile& profile) override;
     TexMeta save_tex(const std::filesystem::path& png, const std::filesystem::path& original_tex,
                      const std::filesystem::path& tex_out, const Profile& profile) override;
+    // A game .mesh's shape (highest LOD) for the 3D view, via a temporary OBJ. Throws ConvertError.
+    MeshModel load_mesh(const std::filesystem::path& mesh);
 
 private:
     ProcessResult run(std::vector<std::wstring> args, const std::filesystem::path& log) const;

@@ -2,6 +2,7 @@
 // The texture and mesh browser panel: thin UI over core/browse (index, tree, search, mesh materials) and
 // read_tex_pixels (previews, decoded by the GPU).
 #include "browse.hpp"
+#include "mesh_view.hpp"
 #include "profile.hpp"
 
 #include <d3d11.h>
@@ -21,9 +22,10 @@ public:
     Browser(const Browser&) = delete;
     Browser& operator=(const Browser&) = delete;
 
-    // Draws the "Browser" window over the REtool folder `natives_root`. Returns the texture the user chose to use
-    // in the graph (absolute path), else empty.
-    std::string draw(const std::string& natives_root, const std::vector<remod::Profile>& profiles);
+    // Draws the "Browser" window over the REtool folder `natives_root`; Noesis converts meshes for the 3D view.
+    // Returns the texture the user chose to use in the graph (absolute path), else empty.
+    std::string draw(const std::string& natives_root, const std::string& noesis_exe,
+                     const std::vector<remod::Profile>& profiles);
 
 private:
     struct Index {
@@ -61,6 +63,12 @@ private:
     std::string mesh_;
     std::optional<remod::MeshTextures> mesh_textures_;
     std::string mesh_error_;
+    MeshView view_;
+    std::future<remod::MeshModel> mesh_loading_;
+    std::string loading_mesh_, shown_mesh_;  // being converted; in the view (or failed)
+    std::string model_error_;
+    std::vector<std::string> part_materials_;  // per part of the shown model
+    size_t triangles_ = 0;
     std::map<std::string, Image> images_;  // key: max side + path
     int frame_ = 0;
     double load_ms_ = 0;  // spent loading images this frame

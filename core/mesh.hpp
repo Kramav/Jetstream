@@ -1,0 +1,28 @@
+#pragma once
+// A mesh's shape for the browser's 3D view (CLAUDE.md §10). Noesis exports the game's .mesh to OBJ
+// (NoesisConverter::load_mesh); this reads that OBJ. Textures are applied by the viewer from the material
+// (mesh_textures), not from the OBJ.
+#include <array>
+#include <string>
+#include <vector>
+
+namespace remod {
+
+struct MeshPart {
+    std::string material;          // the OBJ's usemtl name = the .mdf2 material name
+    // Triangles, not indexed. Per vertex: x y z, nx ny nz, u v (v = 0 at the top, as D3D samples).
+    std::vector<float> vertices;
+    static constexpr size_t kStride = 8;
+};
+
+struct MeshModel {
+    std::vector<MeshPart> parts;
+    std::array<float, 3> min{}, max{};  // bounds of every position
+    size_t triangles = 0;
+};
+
+// Reads OBJ text: v, vt, vn, f (any polygon, fanned into triangles; negative indexes), usemtl. Faces without
+// normals get the face's normal. Throws std::runtime_error on a bad face index or no faces at all.
+MeshModel parse_obj(const std::string& text);
+
+}  // namespace remod

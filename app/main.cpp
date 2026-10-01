@@ -1131,7 +1131,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             ImGui::DockBuilderDockWindow("Pipeline", right);
             ImGui::DockBuilderFinish(dockspace);
         }
-        if (const std::string picked = browser->draw(game_files_dir(state), state.profiles); !picked.empty())
+        if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles); !picked.empty())
             state.pending_texture = picked;
         draw_side_panel(state);
         draw_canvas(state, editor);

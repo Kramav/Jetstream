@@ -35,13 +35,20 @@ std::vector<size_t> search(const std::vector<std::string>& paths, const std::str
 // The file name after the last '/'.
 std::string file_name(const std::string& path);
 
-// The textures a mesh's material (.mdf2) names, in order, without duplicates, matched to `textures` (an
-// AssetIndex list). The material is <mesh>.mdf2.*, <mesh>_mat.mdf2.*, <mesh>_00.mdf2.* (fmt_RE_MESH's guesses
-// [plugin source]), else the first .mdf2 in the mesh's folder. Throws if none is found.
+// The materials of a mesh's material file (.mdf2) and the textures they use, matched to `textures` (an
+// AssetIndex list). The file is <mesh>.mdf2.*, <mesh>_mat.mdf2.*, <mesh>_00.mdf2.* (fmt_RE_MESH's guesses
+// [plugin source]), else the first .mdf2 in the mesh's folder. Throws if none is found or it can't be read.
+struct MeshMaterial {
+    std::string name;             // matches the mesh's parts (MeshPart::material)
+    std::vector<size_t> textures;  // into MeshTextures::textures
+    int albedo = -1;              // its colour texture, or -1
+};
 struct MeshTextures {
-    std::string material;                 // relative path
-    std::vector<std::string> textures;    // as listed in `textures`, or the material's own text if not there
+    std::string material;                 // relative path of the .mdf2
+    std::vector<std::string> textures;    // every .tex used, in order, once: as listed in `textures`, or the
+                                          // material's own text if not there
     std::vector<bool> found;              // per texture: in the index
+    std::vector<MeshMaterial> materials;
 };
 MeshTextures mesh_textures(const std::filesystem::path& natives_root, const std::string& mesh,
                            const std::vector<std::string>& textures);

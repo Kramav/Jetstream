@@ -260,6 +260,23 @@ TexMeta NoesisConverter::load_tex(const fs::path& tex, const fs::path& png_out, 
     return meta;
 }
 
+MeshModel NoesisConverter::load_mesh(const fs::path& mesh) {
+    TempDir tmp;
+    const fs::path log = tmp.path / "noesis.log", obj = tmp.path / "mesh.obj";
+    // A copy keeps the extension that selects the plugin's mesh reader, and away from its material files: the viewer
+    // applies textures itself, so Noesis needn't load them. -b clicks the plugin's import window's Load button,
+    // which otherwise waits forever; -noprompt skips its material prompt (spike 2026-10-01: 0.5 s for a small prop,
+    // 5.9 s for a 163k-triangle character).
+    const fs::path src = tmp.path / ("mesh" + mesh.extension().string());
+    fs::copy_file(mesh, src);
+    const auto r = run({L"?cmode", src.wstring(), obj.wstring(), L"-b", L"-noprompt"}, log);
+    if (r.exit_code != 0 || !fs::is_regular_file(obj))
+        throw ConvertError("Noesis couldn't read " + mesh.string() + " (exit " + std::to_string(r.exit_code) + ")." +
+                           noesis_said(log));
+    std::ifstream in(obj, std::ios::binary);
+    return parse_obj(std::string((std::istreambuf_iterator<char>(in)), {}));
+}
+
 TexMeta NoesisConverter::save_tex(const fs::path& png, const fs::path& original_tex, const fs::path& tex_out,
                                   const Profile& profile) {
     if (profile.noesis_export == "TBD")

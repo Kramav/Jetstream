@@ -297,11 +297,19 @@ Fill these in from the manual spike before implementing the affected code:
   - Measured on RE4R (Debug): index 3.4 s for 20,603 textures + 6,051 meshes (streaming/ skipped); thumbnails
     ~0.5 ms each; 20,602 of 20,603 readable (one debug texture holds no images).
   - A mesh's material is `<mesh>.mdf2.*`, `_mat`, `_00` (fmt_RE_MESH's guesses), else the folder's first `.mdf2`:
-    5,972 of 6,051 meshes have one. Its textures are read as the material's UTF-16 strings ending in `.tex`
-    (not its layout); all 87k references resolve to indexed files.
+    5,972 of 6,051 meshes have one. Read with the plugin's mdf2 layout (`read_mdf2`, versions > 3): material
+    names and texture paths, checked on all 6,392 RE4R materials. A material's colour texture is the plugin's rule:
+    file name with `_alb`, `_albd` preferred (20,359 of 21,972 materials have one).
   - The base texture is often a small standalone copy (e.g. 512x512, 2 mips) of a `streaming/` one (2048x2048).
     The preview shows the streaming copy; the open streaming question (§9) still decides what a mod must replace.
-  - Later: a 3D mesh preview (the user chose texture lists only for now).
+  - **3D view** (in the Browser's details, mesh selected; app/mesh_view): Noesis exports the mesh to OBJ
+    (`NoesisConverter::load_mesh`, `parse_obj`), the app draws it with D3D11 into a texture, each part with its
+    material's colour texture (OBJ `usemtl` = mdf2 material name). Clicking a texture dims the parts not using it.
+    Spike 2026-10-01: `?cmode <mesh> out.obj -b -noprompt` runs headless. Without `-b` the plugin's import window
+    waits forever (not a dialog, so only the timeout catches it). 0.3-2.3 s for most meshes, 5.9 s / 20 MB OBJ for
+    a 163k-triangle character; 24 of 26 sampled meshes load (2 hit plugin Python errors, reported). Every sampled
+    part name matched a material. Highest LOD only; the main material file only (costume variants such as
+    `cha000_00b.mdf2` aren't offered yet).
 
 ## 11. References
 
