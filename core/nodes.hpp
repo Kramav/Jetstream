@@ -64,6 +64,11 @@ struct InputSpec {
     bool editable() const { return widget != Widget::None; }
 };
 
+// What kind of step a block is; front ends give each family its own outline (docs/design_handoff_node_graph):
+// Source brings a file in, Transform converts, Manual is the user's own step, Flow passes a value on (Split), File
+// changes files, Output builds the mod, Value computes or holds a value.
+enum class Family { Source, Transform, Manual, Flow, File, Output, Value };
+
 struct NodeSpec {
     const char* type;
     const char* title;
@@ -73,6 +78,7 @@ struct NodeSpec {
     std::vector<const char*> state = {};  // other params the node keeps (e.g. EditImage's "done"); no field shown
     bool manual = false;                  // a step the user does by hand (front ends mark it clearly)
     bool utility = false;  // a simple helper (Split, Text): front ends draw it small and list it after the main steps
+    Family family = Family::Transform;
     void (*run)(NodeRun&) = nullptr;      // what it does in a run; throws to fail the run
 };
 

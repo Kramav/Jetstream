@@ -631,6 +631,12 @@ void NodeRun::warn(const std::string& warning) {
     if (run.options.log) run.options.log("warning: " + run.result.warnings.back());
 }
 
+std::vector<int> step_order(const Graph& g) {
+    std::vector<int> ids;
+    for (const Node* n : topo_order(g)) ids.push_back(n->id);
+    return ids;
+}
+
 void apply_run(Graph& g, const RunResult& result) {
     for (int id : result.reset_edits) set_edit_done(g, id, false);
 }

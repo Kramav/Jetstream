@@ -2,8 +2,8 @@
   "links": [
     {
       "from": [
-        1,
-        "tex"
+        6,
+        "out"
       ],
       "to": [
         2,
@@ -22,8 +22,8 @@
     },
     {
       "from": [
-        3,
-        "image"
+        7,
+        "out"
       ],
       "to": [
         4,
@@ -32,8 +32,8 @@
     },
     {
       "from": [
-        1,
-        "tex"
+        6,
+        "out"
       ],
       "to": [
         4,
@@ -52,12 +52,42 @@
     },
     {
       "from": [
-        3,
-        "image"
+        7,
+        "out"
       ],
       "to": [
         5,
         "preview"
+      ]
+    },
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "image"
+      ],
+      "to": [
+        7,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        8,
+        "value"
+      ],
+      "to": [
+        5,
+        "author"
       ]
     }
   ],
@@ -80,7 +110,7 @@
         "png": "my_texture.png"
       },
       "pos": [
-        450.0,
+        760.0,
         0.0
       ],
       "type": "ExportImage"
@@ -89,8 +119,8 @@
       "id": 3,
       "params": {},
       "pos": [
-        712.0,
-        365.0
+        1264.0,
+        0.0
       ],
       "type": "EditImage"
     },
@@ -98,7 +128,7 @@
       "id": 4,
       "params": {},
       "pos": [
-        900.0,
+        2024.0,
         0.0
       ],
       "type": "SaveTex"
@@ -114,10 +144,39 @@
         "version": "1.0"
       },
       "pos": [
-        1350.0,
+        2528.0,
         0.0
       ],
       "type": "PackageMod"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        504.0,
+        0.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        1768.0,
+        0.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 8,
+      "params": {
+        "value": "cosa"
+      },
+      "pos": [
+        2111.0,
+        -265.0
+      ],
+      "type": "Value"
     }
   ],
   "profile": "re4r",

@@ -821,6 +821,22 @@ TEST_CASE("a Split passes on whatever is linked into it, and types are checked t
     CHECK(std::ranges::count(onto_split, std::string("EditImage"), [](const auto* s) { return std::string(s->type); }) == 0);
 }
 
+TEST_CASE("step_order follows the links; families set each block's outline") {
+    Graph g;
+    g.add_node("SaveTex");  // 1, listed first but fed by 2
+    g.add_node("LoadTex");  // 2
+    REQUIRE(g.connect({2, "tex", 1, "original"}).empty());
+    CHECK(remod::step_order(g) == std::vector<int>{2, 1});
+
+    using remod::Family;
+    CHECK(remod::find_spec("LoadTex")->family == Family::Source);
+    CHECK(remod::find_spec("EditImage")->family == Family::Manual);
+    CHECK(remod::find_spec("Split")->family == Family::Flow);
+    CHECK(remod::find_spec("PackageMod")->family == Family::Output);
+    for (const auto& spec : remod::node_specs())  // manual steps and only they are Manual; utilities draw as values
+        CHECK((spec.family == Family::Manual) == spec.manual);
+}
+
 TEST_CASE("link kinds: paths and folders") {
     using remod::PortType;
     const remod::NodeSpec& copy = *remod::find_spec("CopyFile");

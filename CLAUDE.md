@@ -122,11 +122,43 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   inputs, then outputs; inputs that grow a row per link (`multiple`) always last, at the bottom of the block.
   Descriptions can be hidden ("Descriptions" checkbox above the graph, `Settings::show_descriptions`); the title's
   tooltip shows them then. The type name shows in Build layout only, at the title's right. Linked rows don't name
-  their source (the line shows it; the row's tooltip says "From: ..."). Zoomed out (below 55%, back above 65%):
-  the overview, a bigger title, status and linked rows; the rest folds away (`folding`: fades, then shrinks)
-  over 0.25 s, so blocks and lines change smoothly. A user tried both instant switching (too jarring) and keeping
-  blocks full size in the overview (wasted space). **Not finished (user, 2026-10-01): "good enough for now";
-  open: the final full reroute after the fold can still shift a line once.** Build layout's "Tidy up" arranges blocks in columns by step order (core `tidy_layout`).
+  their source (the line shows it; the row's tooltip says "From: ..."). Build layout's "Tidy up" arranges blocks in
+  columns by step order (core `tidy_layout`).
+- **Graph look = design handoff option 1c, "Schematic" (2026-10-01, `docs/design_handoff_node_graph/README.md`),
+  kept dark.** Palette (`pal::`, `apply_palette`; user, 2026-10-01: the handoff's mono tokens flipped for dark were
+  "horrible", and pins/links must keep a colour per kind): cool dark greys from canvas to raised controls, one blue
+  accent for selection, green / amber / red for done / waiting / failed. **Pins and links are coloured by kind**
+  (`kind_color`): texture orange, image green, text blue, path yellow, folder teal, an open Split grey; reserved
+  script purple, AI call pink. Square corners. Fonts: Segoe UI Semibold titles, Consolas values (Barlow Condensed
+  isn't on Windows). Sizes are the handoff's px times `unit()` (font / 11).
+  - **Families** (`NodeSpec::family`, core): Source, Transform, Manual, Flow (Split), File, Output, Value (utilities).
+    The app paints the outline itself (`paint_block`; the editor's node frame is switched off): notch, hexagon, folded
+    corner, stacked sheet, parallelogram, a manual step's double frame and hatched header; `+` corner marks, larger in
+    the accent when selected. Pins sit on the outline (slanted edges too, `edge_x`); shape and colour say the kind:
+    texture square, image circle, text/path/folder diamond; an unlinked field a small hollow circle; a multiple's empty
+    slot a dashed square. Links are routed from the block box's side (`pin_anchor`), then drawn on to the pin (a pin
+    inside the box, on a slanted edge or a Far Split dot's centre, would fail the router's clear-first-step check).
+    **Far showed no lines (fixed 2026-10-01):** each Far pin was an empty ImGui group, and ImGui sizes an empty group to
+    reach the last item drawn before it, so every Far block's box stretched over the graph and every link became a
+    portal. Each pin now holds a zero-size item. Found by dumping the router's input from the running app.
+  - **View changes run after the blocks are drawn** (fit on load / Tidy up, Far / Near buttons, step list and minimap
+    jumps): the editor's content bounds only count blocks drawn this frame, so a fit before them did nothing (the Far
+    button never worked before this). They also wait until the view's size has held for a frame: when it changes (dock
+    layout settling at startup) the editor restores its previous view, undoing a fit.
+  - **Two zooms.** Near (above 65%): full blocks, the minimap bottom-right (click: centre there, select the block hit).
+    Far (below 55%, or the Far button): every block a 116x40-unit symbol drawn at two units, title inside, key value
+    under it, ports without labels spread down the edges; a Split is a dot. Going Far, blocks first fold
+    (`folding`, 0.25 s) then become symbols. Placement and Tidy up use the blocks' Near sizes even while Far, so the
+    full layout stays clear. Near button: zoom 100% on the selected block. Deviation: selecting a block does **not**
+    re-centre the view (clicking into a field would move it); only the step list and the minimap do.
+  - **Use layout progress path:** links in their kind's colour, styled by their source's state (done solid, into a
+    waiting step dashes moving, failed red dots, not reached faint dashes); blocks tinted and outlined by state (Far the
+    whole block, Near the header band with DONE / YOUR STEP / FAILED), a legend above the graph, and in the Pipeline
+    panel a "YOUR STEP" card plus the numbered step list (core `step_order`). Not done: the Build-layout Inspector.
+  - **Nodes panel (user, 2026-10-01: blocks packed close together were "unacceptable"):** a collapsible folder per
+    family (steps first, Flow and Values last), closed until opened, opened by a search; previews at most 70% with a
+    margin around each.
+  - **Not checked by eye yet** (2026-10-01): built, tests pass, Build layout at Near started without asserts.
 - **Panels per layout (user, 2026-10-01: "we shouldn't show things that won't be in use").** Use layout: Browser,
   Graph, Pipeline, viewer and Textures; the Pipeline can be closed (its X; a "Pipeline" button above the graph brings
   it back). Build layout: a **Nodes** panel (every block type, steps then utilities, search; each entry is a preview of
@@ -178,12 +210,11 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   (`make_room`); Tidy up spaces rows by the same gap; old files that gained blocks on load are tidied
   (`load_graph(..., &added_blocks)`); the line above the graph counts links without a clean route.
 - **Every run reports each node's state** (`RunResult::nodes`, or `RunError::nodes` on failure): done, waiting
-  for the user, failed with its reason, or not reached. The app shows these as coloured node borders and badges.
+  for the user, failed with its reason, or not reached. The app shows these as block fills and link styles (above).
 - **Every input has a pin** (`InputSpec`). Editable inputs can be typed or linked; a link wins.
   `multiple` inputs take any number of links, e.g. PackageMod's textures and previews.
-- **Link kinds and colours (user, 2026-10-01: by what flows, not by file extension).** Pins and lines are coloured
-  by `PortType` (app `port_color`): texture orange, image green, text blue, file path yellow, folder teal, an open
-  Split grey. Reserved for later kinds (not types yet; no AI in M1): script purple, AI call pink. Rules (`accepts`):
+- **Link kinds (by what flows, not by file extension).** Shown by pin shape (see the graph look above). Rules
+  (`accepts`):
   same kind; anything into a Text or Path input (a texture is a file too); Text into any editable field; a Path into a
   texture or image file field; a Folder field takes text or a folder, not a file path.
 - The Text node fills `{1}`, `{2}`… from its linked parts.

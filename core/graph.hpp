@@ -128,6 +128,9 @@ struct RunError : GraphError {
 // Runs nodes in dependency order. Throws GraphError if the graph isn't runnable, RunError if a node fails.
 RunResult run_graph(const Graph& graph, const RunOptions& options);
 
+// Node ids in the order a run takes them (dependency order, ties in file order). Nodes in a loop are left out.
+std::vector<int> step_order(const Graph& graph);
+
 // Applies what a run found to the graph: clears "done" on Edit image steps whose image was re-exported.
 void apply_run(Graph& graph, const RunResult& result);
 

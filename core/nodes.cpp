@@ -90,6 +90,7 @@ NodeSpec load_tex() {
                             "inside a natives\\STM\\... folder: it's worked out automatically. The .tex version "
                             "suffix is added for you."}},
         .outputs = {{"tex", Tex, "texture"}},
+        .family = Family::Source,
         .run = [](NodeRun& r) {
             const fs::path tex = r.resolve(r.text("tex"));
             const TexMeta m = read_tex_meta(tex, r.profile());
@@ -119,6 +120,7 @@ NodeSpec export_image() {
                      .hint = "Where to write the image. Its ending picks the format: .png, .tga (e.g. for GIMP) or "
                              ".jpg. JPG loses some quality and all transparency.",
                      .path = PathKind::SaveFile, .filter = kEditImageFormats}},
+        .family = Family::Transform,
         .run = [](NodeRun& r) {
             const Value tex = r.input("tex");
             const fs::path png = r.resolve(r.text("png"));
@@ -144,6 +146,7 @@ NodeSpec edit_image() {
         .outputs = {{"image", Image, "edited image"}},
         .state = {"done"},
         .manual = true,
+        .family = Family::Manual,
         .run = [](NodeRun& r) {
             const Value png = r.input("png");
             const Graph& g = r.run.graph;
@@ -170,6 +173,7 @@ NodeSpec import_image() {
                     .hint = "A PNG, TGA or JPG. For a texture it must be the same size as the original.",
                     .path = PathKind::OpenFile, .filter = kEditImageFormats}},
         .outputs = {{"image", Image, "image"}},
+        .family = Family::Source,
         .run = [](NodeRun& r) {
             const fs::path png = r.resolve(r.text("png"));
             if (!fs::is_regular_file(png)) throw GraphError("image not found: " + png.string());
@@ -187,6 +191,7 @@ NodeSpec save_tex() {
         .inputs = {{.name = "image", .label = "edited image", .type = Image, .required = true},
                    {.name = "original", .label = "original texture", .type = Tex, .required = true}},
         .outputs = {{"tex", Tex, "new texture"}},
+        .family = Family::Transform,
         .run = [](NodeRun& r) {
             const Value original = r.input("original");
             const fs::path out = r.run.work_dir / (std::to_string(r.node.id) + ".tex." + r.profile().tex_suffix);
@@ -229,6 +234,7 @@ NodeSpec package_mod() {
                     .hint = "Overwrite this mod's previous folder and .zip in the output folder. Only output this tool "
                             "made for the same mod name is replaced."}},
         .outputs = {{"mod", Path, "built mod"}},
+        .family = Family::Output,
         .run = [](NodeRun& r) {
             PackageSpec spec{.mod_name = r.text("name"),
                              .out_dir = r.resolve(r.text("out")),
@@ -276,6 +282,7 @@ NodeSpec text_node() {
                     .hint = "Values for {1}, {2}, ... in connection order. Files give their full path."}},
         .outputs = {{"text", Text, "text"}},
         .utility = true,
+        .family = Family::Value,
         .run = [](NodeRun& r) {
             std::vector<std::string> parts;
             for (const auto& v : r.values("parts")) parts.push_back(v.text);
@@ -364,6 +371,7 @@ NodeSpec copy_file() {
                    if_exists_input(),
                    create_dirs_input()},
         .outputs = {{"path", Path, "copied path"}},
+        .family = Family::File,
         .run = [](NodeRun& r) {
             const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
             transfer(r, source, destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir)),
@@ -387,6 +395,7 @@ NodeSpec move_file() {
                    if_exists_input(),
                    create_dirs_input()},
         .outputs = {{"path", Path, "moved path"}},
+        .family = Family::File,
         .run = [](NodeRun& r) {
             const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
             transfer(r, source, destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir)),
@@ -407,6 +416,7 @@ NodeSpec rename_file() {
                     .result = "path"},
                    if_exists_input()},
         .outputs = {{"path", Path, "renamed path"}},
+        .family = Family::File,
         .run = [](NodeRun& r) {
             const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
             const fs::path name(r.text("name"));
@@ -445,6 +455,7 @@ NodeSpec delete_file() {
                     .hint = "If the file isn't there, carry on (it's already gone). Untick to stop the run instead.",
                     .initial = "true"}},
         .outputs = {},
+        .family = Family::File,
         .run = [](NodeRun& r) {
             const fs::path file = clean_path(r.text("source"), r.run.options.base_dir);
             if (!fs::exists(long_path(file))) {
@@ -474,6 +485,7 @@ NodeSpec make_folder() {
                     .hint = "The folder to make. Already there is fine.",
                     .path = PathKind::Folder, .result = "folder"}},
         .outputs = {{"folder", Folder, "folder"}},
+        .family = Family::File,
         .run = [](NodeRun& r) {
             const fs::path folder = clean_path(r.text("folder"), r.run.options.base_dir);
             const bool existed = fs::exists(long_path(folder));
@@ -501,6 +513,7 @@ NodeSpec value() {
         .outputs = {{.name = "value", .type = Any, .label = "value", .field = "value", .field_label = "Value",
                      .hint = "Kept in the graph file. Its kind follows what it's connected to."}},
         .utility = true,
+        .family = Family::Value,
         .run = [](NodeRun& r) {
             const std::string text = r.node.params.at("value");  // validate(): required
             const PortType kind = r.run.graph.output_type(r.node.id, "value");
@@ -521,6 +534,7 @@ NodeSpec split() {
         .inputs = {{.name = "in", .label = "in", .type = Any, .required = true}},
         .outputs = {{.name = "out", .type = Any, .label = "out", .multiple = true}},
         .utility = true,
+        .family = Family::Flow,
         .run = [](NodeRun& r) {
             r.output("out", r.input("in"));  // as is: a texture keeps its game path
             r.done("passed on to " + std::to_string(r.run.graph.links_from(r.node.id, "out").size()) + " step(s)");
@@ -542,6 +556,7 @@ NodeSpec join_path() {
                     .hint = "A relative path to add, e.g. natives\\STM or MyMod.zip. Not a full path."}},
         .outputs = {{.name = "path", .type = Any, .label = "path"}},
         .utility = true,
+        .family = Family::Value,
         .run = [](NodeRun& r) {
             const fs::path folder = clean_path(r.text("folder"), r.run.options.base_dir);
             const fs::path add(r.text("add"));
@@ -566,6 +581,7 @@ NodeSpec path_parts() {
                     {"stem", Text, "name without extension"},
                     {"extension", Text, "extension"}},
         .utility = true,
+        .family = Family::Value,
         .run = [](NodeRun& r) {
             const fs::path path = clean_path(r.text("path"), r.run.options.base_dir);
             r.output("folder", file_value(path.parent_path()));
@@ -589,6 +605,7 @@ NodeSpec change_extension() {
                             "a.tex.png). Empty removes it."}},
         .outputs = {{"path", Path, "path"}},
         .utility = true,
+        .family = Family::Value,
         .run = [](NodeRun& r) {
             fs::path path = clean_path(r.text("path"), r.run.options.base_dir);
             std::string ext = r.text("ext");
@@ -609,6 +626,7 @@ NodeSpec require_file() {
                     .hint = "The file that must exist.", .path = PathKind::OpenFile}},
         .outputs = {{"file", Path, "file"}},
         .utility = true,
+        .family = Family::Value,
         .run = [](NodeRun& r) {
             const auto linked = r.values("file");
             const fs::path file = clean_path(r.text("file"), r.run.options.base_dir);
