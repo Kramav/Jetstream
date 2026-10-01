@@ -837,8 +837,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         colors.push_back(port_color(fs->outputs[out_slot].type));
     }
     if (blocks != s.route_blocks || requests != s.route_requests) {
-        // ponytail: reroutes every frame while a block moves (~20 ms for 10 blocks in Debug); cache per link or
-        // throttle if layouts get much bigger.
+        // ponytail: reroutes every frame while a block moves (Debug: 7 ms for the 5-block example, ~40 ms for 10
+        // blocks and 20 links); cache per link or throttle if layouts get much bigger.
         s.routes = remod::route_links(blocks, requests, font * 0.8f);
         s.route_blocks = std::move(blocks);
         s.route_requests = std::move(requests);

@@ -423,11 +423,44 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
         const Image& big = texture_.empty() ? none : image(texture_, kPreviewSide, true);
         if (texture_.empty()) ImGui::TextDisabled("Select a texture or a mesh in the Browser.");
         if (!big.error.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "Can't preview: %s", big.error.c_str());
-        if (big.srv) {
-            const ImVec2 box = ImGui::GetContentRegionAvail();
+        if (big.srv && big.width > 0 && big.height > 0) {
+            // Zoom and pan: the wheel zooms about the mouse, any button drags, double-click fits it again.
+            const ImVec2 box(std::max(ImGui::GetContentRegionAvail().x, 1.0f), std::max(ImGui::GetContentRegionAvail().y, 1.0f));
             const ImVec2 at = ImGui::GetCursorScreenPos();
-            ImGui::Dummy(box);
-            put_image(big, at, box);
+            ImGui::InvisibleButton("##preview", box,
+                                   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+                                       ImGuiButtonFlags_MouseButtonMiddle);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the wheel zooms instead of scrolling
+            if (preview_of_ != texture_ || (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))) {
+                preview_of_ = texture_;
+                preview_zoom_ = 1;
+                preview_pan_ = ImVec2(0, 0);
+            }
+            const ImGuiIO& io = ImGui::GetIO();
+            const float fit = std::min(box.x / big.width, box.y / big.height);
+            const ImVec2 middle(at.x + box.x * 0.5f, at.y + box.y * 0.5f);
+            if (ImGui::IsItemHovered() && io.MouseWheel != 0) {
+                const float before = preview_zoom_;  // up to 32 screen pixels per texel
+                preview_zoom_ = std::clamp(preview_zoom_ * std::pow(1.25f, io.MouseWheel), 1.0f, std::max(1.0f, 32 / fit));
+                const float k = 1 - preview_zoom_ / before;  // keeps the texel under the mouse where it is
+                preview_pan_.x += (io.MousePos.x - middle.x - preview_pan_.x) * k;
+                preview_pan_.y += (io.MousePos.y - middle.y - preview_pan_.y) * k;
+            }
+            if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0) ||
+                                          ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0) ||
+                                          ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0))) {
+                preview_pan_.x += io.MouseDelta.x;
+                preview_pan_.y += io.MouseDelta.y;
+            }
+            const float scale = fit * preview_zoom_;
+            const ImVec2 size(big.width * scale, big.height * scale);
+            const ImVec2 corner(middle.x + preview_pan_.x - size.x * 0.5f, middle.y + preview_pan_.y - size.y * 0.5f);
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->PushClipRect(at, ImVec2(at.x + box.x, at.y + box.y), true);
+            put_image(big, corner, size);
+            draw->PopClipRect();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%.0f%%. Wheel to zoom, drag to move, double-click to fit.", scale * 100);
         }
         ImGui::End();
         return;

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 
 using remod::Box;
 using remod::LinkRoute;
@@ -90,6 +91,68 @@ TEST_CASE("route: different outputs don't run along the same line") {
     const auto r = remod::route_links(blocks, links, kGap);
     for (size_t i = 0; i < links.size(); ++i) check_path(r.paths.at(i), links[i], blocks);
     CHECK_FALSE(overlap(r.paths[0], r.paths[1]));
+}
+
+// Layouts shaped like the app's: columns of blocks with pins down their sides, links mostly forwards.
+TEST_CASE("route: different outputs keep apart on generated layouts (no shared or hugging lines, no touching corners)") {
+    const float font = 16, gap = font * 0.8f;
+    std::mt19937 rng(7);
+    auto uni = [&](float a, float b) { return std::uniform_real_distribution<float>(a, b)(rng); };
+    auto pick = [&](int n) { return int(rng() % unsigned(n)); };
+    size_t links_total = 0, odd = 0;
+    for (int layout = 0; layout < 60; ++layout) {
+        std::vector<Box> blocks;
+        std::vector<int> column;
+        for (int c = 0, cols = 3 + pick(4); c < cols; ++c)
+            for (float y = uni(-100, 100), rows = float(1 + pick(3)); rows > 0; --rows) {
+                const float x = c * 420 + uni(-120, 120), w = uni(220, 320), h = font * 8 + uni(20, 120);
+                blocks.push_back({x, y, x + w, y + h});
+                column.push_back(c);
+                y += h + uni(30, 200);
+            }
+        bool crowded = false;  // blocks closer than the gap are what the plain fallback is for
+        for (size_t a = 0; a < blocks.size(); ++a)
+            for (size_t b = a + 1; b < blocks.size(); ++b)
+                crowded = crowded || (blocks[a].x0 < blocks[b].x1 + gap && blocks[b].x0 < blocks[a].x1 + gap &&
+                                      blocks[a].y0 < blocks[b].y1 + gap && blocks[b].y0 < blocks[a].y1 + gap);
+        if (crowded) continue;
+        std::vector<LinkRoute> links;
+        std::vector<std::pair<int, int>> used;
+        for (int k = 0, count = int(blocks.size()) * 2; k < count; ++k) {
+            const int a = pick(int(blocks.size())), b = pick(int(blocks.size())), o = pick(2), in = pick(3);
+            if (a == b || (column[size_t(b)] <= column[size_t(a)] && pick(4) != 0) ||
+                std::ranges::count(used, std::pair{b, in}))
+                continue;
+            used.emplace_back(b, in);
+            links.push_back({a * 2 + o, {blocks[size_t(a)].x1, blocks[size_t(a)].y0 + font * (3 + 1.6f * float(o))},
+                             {blocks[size_t(b)].x0, blocks[size_t(b)].y0 + font * (3 + 1.6f * float(in))}});
+        }
+        const auto r = remod::route_links(blocks, links, gap);
+        links_total += links.size();
+        for (size_t i = 0; i < links.size(); ++i)
+            for (size_t k = 0; k < i; ++k) {
+                if (links[i].net == links[k].net) continue;
+                const auto& p = r.paths[i];
+                const auto& q = r.paths[k];
+                for (size_t a = 0; a + 1 < p.size(); ++a)
+                    for (size_t b = 0; b + 1 < q.size(); ++b) {
+                        const Pt p0 = p[a], p1 = p[a + 1], q0 = q[b], q1 = q[b + 1];
+                        const bool ph = p0.y == p1.y, qh = q0.y == q1.y;
+                        if (ph != qh) continue;
+                        const float d = ph ? std::abs(p0.y - q0.y) : std::abs(p0.x - q0.x);
+                        const float shared = ph ? std::min(std::max(p0.x, p1.x), std::max(q0.x, q1.x)) -
+                                                      std::max(std::min(p0.x, p1.x), std::min(q0.x, q1.x))
+                                                : std::min(std::max(p0.y, p1.y), std::max(q0.y, q1.y)) -
+                                                      std::max(std::min(p0.y, p1.y), std::min(q0.y, q1.y));
+                        if (d < gap * 0.6f && shared > 1) ++odd;  // on, or hugging, the other line
+                    }
+                for (const auto* corners : {&p, &q})  // a corner of one on the other
+                    for (size_t c = 1; c + 1 < corners->size(); ++c)
+                        if (remod::hit_link({corners == &p ? q : p}, (*corners)[c], 0.5f) == 0) ++odd;
+            }
+    }
+    REQUIRE(links_total > 200);
+    CHECK(odd * 20 < links_total);  // under 5% (the previous router: 22%, mostly hugging lines and touching corners)
 }
 
 TEST_CASE("route: a boxed-in pin falls back to a plain path") {

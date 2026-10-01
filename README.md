@@ -120,7 +120,8 @@ Two panels along the bottom show what you pick there:
   selected Original texture block, or the layout's only one. In Build layout a block is added if there's none.
   **Transparency** is off by default: many textures keep other data in the alpha channel (e.g. metalness), which
   would hide the picture.
-- **Texture / 3D view** (bottom left): the selected texture, large. Picking a mesh shows it in 3D there instead,
+- **Texture / 3D view** (bottom left): the selected texture, large: the wheel zooms (about the mouse), drag to move
+  it, double-click to fit it again. Picking a mesh shows it in 3D there instead,
   with its colour textures; close the 3D view to see the texture again, pick the mesh again to reopen it. The last
   mesh stays while you browse other textures. Drag to turn it, right-drag to move, the wheel zooms, double-click
   resets. Click one of its textures to highlight the parts that use it (click it again to show all). The Groups

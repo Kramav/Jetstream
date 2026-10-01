@@ -71,6 +71,9 @@ private:
     std::string mesh_;         // the last mesh picked: the 3D view keeps it while textures are browsed
     bool mesh_focus_ = false;  // the Textures window shows mesh_'s textures (else the Browser's)
     bool view_open_ = false;   // the viewer shows mesh_ in 3D (else the selected texture)
+    std::string preview_of_;   // the texture the zoom and pan below belong to
+    float preview_zoom_ = 1;   // 1: fits the viewer
+    ImVec2 preview_pan_;       // the picture's centre from the viewer's, in screen pixels
     std::optional<remod::MeshTextures> mesh_textures_;
     std::string mesh_error_;
     MeshView view_;

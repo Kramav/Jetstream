@@ -96,7 +96,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   graph. The mode is UI state, remembered in settings.
 - **Links are routed by core** (`core/route.*`, `route_links`): right angles with rounded corners, around blocks,
   leaving outputs rightwards and entering inputs from the left; links from one output share a trunk that branches
-  (junction dots), different outputs avoid sharing a line. The app draws them itself on the editor's top layer
+  (junction dots) and never rejoins it; different outputs avoid sharing a line, running right beside one (closer
+  than 0.6 gap) and turning on each other. Two lanes around each block; spare midlines only where there's room.
+  Measured 2026-10-01 on 143 generated layouts (728 links), old → new: lines beside another 115 → 6, shared lines
+  5 → 0, touching corners 43 → 0; Debug 7 ms for the example graph. The app draws them itself on the editor's top layer
   (imgui-node-editor only draws beziers) and hit-tests them with `hit_link` for the right-click menu.
 - **Every run reports each node's state** (`RunResult::nodes`, or `RunError::nodes` on failure): done, waiting
   for the user, failed with its reason, or not reached. The app shows these as coloured node borders and badges.

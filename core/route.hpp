@@ -24,8 +24,9 @@ struct Routes {
 };
 
 // Routes every link around `blocks`, keeping `gap` away from them. Links of the same net reuse each other's
-// path; links of different nets avoid running along the same line (they may cross). A link with no way around
-// (e.g. overlapping blocks) gets a plain three-segment path instead.
+// path (a branch that leaves its trunk doesn't rejoin it); links of different nets avoid running along the same
+// line or right beside it (closer than 0.6 gap), and avoid turning on each other (they may cross). A link with no
+// way around (e.g. overlapping blocks) gets a plain three-segment path instead.
 Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>& links, float gap);
 
 // Index of the first path passing within `tolerance` of `p`, or -1.
