@@ -310,6 +310,10 @@ Fill these in from the manual spike before implementing the affected code:
     a 163k-triangle character; 24 of 26 sampled meshes load (2 hit plugin Python errors, reported). Every sampled
     part name matched a material. Highest LOD only; the main material file only (costume variants such as
     `cha000_00b.mdf2` aren't offered yet).
+- **Readable names (user wish, long term, 2026-10-01):** let the user give the game's cryptic folder and file names
+  (e.g. `cha000`, `sm84_676_00`, `ui3200`) a human-readable nickname, shown in the Browser in place of or beside
+  the real name, and searchable. Nicknames only label things: real paths stay what's packaged and stored.
+  Open: where nicknames live (a user file, per game profile) and whether a shared, community-made list is wanted.
 
 ## 11. References
 
