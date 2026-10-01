@@ -84,6 +84,7 @@ int run(int argc, char** argv) {
                     .base_dir = std::filesystem::absolute(graph_file).parent_path(),
                     .log = [](const std::string& line) { std::cout << line << "\n"; },
                     .edits_done = args["edited"] == "true"});
+        for (const auto& w : result.warnings) std::cout << "WARNING: " << w << "\n";
         std::cout << result.message << "\n";
         return 0;
     }
@@ -98,8 +99,12 @@ int run(int argc, char** argv) {
     }
     if (cmd->first == "png2tex") {
         remod::NoesisConverter noesis(args["noesis"]);
-        print_meta(noesis.save_tex(args["png"], args["original"], args["out"], profile));
+        const remod::TexMeta made = noesis.save_tex(args["png"], args["original"], args["out"], profile);
+        print_meta(made);
         std::cout << "wrote: " << args["out"] << "\n";
+        if (const auto mips = remod::read_tex_meta(args["original"], profile).mip_count; made.mip_count != mips)
+            std::cout << "WARNING: the original has " << mips << " mip level(s), the new texture " << made.mip_count
+                      << ". It may work in game; if the texture looks wrong, this is the likely cause.\n";
         return 0;
     }
 

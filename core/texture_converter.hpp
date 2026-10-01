@@ -47,8 +47,8 @@ public:
     // Returns the .tex's metadata.
     virtual TexMeta load_tex(const std::filesystem::path& tex, const std::filesystem::path& png_out,
                              const Profile& profile) = 0;
-    // SaveTex: edited image (PNG, TGA or JPG) -> .tex at tex_out (must not exist) with original_tex's size,
-    // format and mips.
+    // SaveTex: edited image (PNG, TGA or JPG) -> .tex at tex_out (must not exist) with original_tex's size and
+    // format. The mip count may differ (Noesis writes mips down to 8x8); compare the result to warn about it.
     // Throws ConvertError if the result doesn't match.
     virtual TexMeta save_tex(const std::filesystem::path& png, const std::filesystem::path& original_tex,
                              const std::filesystem::path& tex_out, const Profile& profile) = 0;

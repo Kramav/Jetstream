@@ -55,9 +55,9 @@ std::string format_name(std::uint32_t dxgi) {
     return it != names.end() ? it->second : "DXGI_FORMAT " + std::to_string(dxgi);
 }
 
+// Mip counts may differ: the plugin always writes mips down to 8x8 (CLAUDE.md §9). Callers warn about that.
 bool same_texture(const TexMeta& a, const TexMeta& b) {
-    return a.width == b.width && a.height == b.height && a.format == b.format && a.mip_count == b.mip_count &&
-           a.array_count == b.array_count;
+    return a.width == b.width && a.height == b.height && a.format == b.format && a.array_count == b.array_count;
 }
 
 std::string describe(const TexMeta& m) {

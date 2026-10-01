@@ -152,6 +152,7 @@ struct RunResult {
     std::string message;
     std::map<int, NodeStatus> nodes;
     std::vector<int> reset_edits;  // Edit image steps whose image was just re-exported: their "done" no longer holds
+    std::vector<std::string> warnings;  // things the user should check in game, e.g. a changed mip count
 };
 
 // A node failed: the message names it, `nodes` says where every node got to.

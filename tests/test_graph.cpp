@@ -23,6 +23,7 @@ const remod::Profile& re4r() {
 // Stands in for Noesis: "PNG" = a PNG header of the right size, "tex" = a copy of the original.
 struct FakeConverter : remod::ITextureConverter {
     int loads = 0, saves = 0;
+    int mips = 0;  // non-zero: the new texture gets this many mips, like Noesis's 8x8 chain
     remod::TexMeta load_tex(const fs::path& tex, const fs::path& png_out, const remod::Profile& p) override {
         ++loads;
         const auto m = remod::read_tex_meta(tex, p);
@@ -33,6 +34,11 @@ struct FakeConverter : remod::ITextureConverter {
                             const remod::Profile& p) override {
         ++saves;
         fs::copy_file(original, out);
+        if (mips) {
+            std::string b = test::read_file(out);
+            b[15] = char(mips * 16);
+            test::write_file(out, b);
+        }
         return remod::read_tex_meta(out, p);
     }
 };
@@ -265,6 +271,23 @@ TEST_CASE("run: failures name the node, and nothing runs on an invalid graph") {
     Graph other = pipeline(tex.string(), "a.png", "out3");
     other.profile = "re2r";
     CHECK_THROWS_WITH(remod::run_graph(other, opt), ContainsSubstring("profile 're2r'"));
+}
+
+TEST_CASE("run: a different mip count builds the mod with a warning") {
+    TempDir tmp;
+    FakeConverter conv;
+    const remod::RunOptions opt{.profile = re4r(), .converter = conv, .base_dir = tmp.path, .edits_done = true};
+    const fs::path tex = tmp.path / "natives/stm/ui/a.tex.143221013";
+    test::write_fake_tex(tex, 143221013, 64, 32, 1, 1, 99);  // one mip, like most UI textures
+    test::write_fake_png(tmp.path / "a.png", 64, 32);
+
+    CHECK(remod::run_graph(pipeline(tex.string(), "a.png", "out"), opt).warnings.empty());  // same mips: quiet
+    conv.mips = 4;
+    const auto r = remod::run_graph(pipeline(tex.string(), "a.png", "out2"), opt);
+    CHECK(fs::is_regular_file(tmp.path / "out2/M.zip"));
+    REQUIRE(r.warnings.size() == 1);
+    CHECK_THAT(r.warnings[0], ContainsSubstring("Convert image to texture (node 4)") &&
+                                  ContainsSubstring("has 1 mip level(s), the new texture has 4"));
 }
 
 TEST_CASE("every input can be linked, with type rules") {

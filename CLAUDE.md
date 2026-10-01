@@ -263,7 +263,10 @@ Fill these in from the manual spike before implementing the affected code:
 - [ ] Text encoding Fluffy expects in `modinfo.ini` for non-ASCII text (ASCII vs UTF-8).
       **Confirmed (spike 2026-09-30):** a `modinfo.ini` written by `remod package` (flat lowercase `key=value`,
       CRLF line endings, ASCII-only values) shows name/version/description/author/screenshot correctly in Fluffy.
-- [ ] **Mip count mismatch (blocks most UI textures).** The plugin's writer always generates mips down to 8x8
+- [ ] **Waiting (user, 2026-09-30): parked until it causes a real problem; no in-game test planned.**
+      SaveTex no longer refuses a different mip count: the run succeeds with a warning (`RunResult::warnings`,
+      a popup in the app, `WARNING:` in the CLI). Checked: a 1-mip 256x256 UI texture converts to 6 mips.
+      **Mip count mismatch (used to block most UI textures).** The plugin's writer always generates mips down to 8x8
       [plugin source]. Found 2026-09-30 in the REtool extraction: 477 of 493 RE4R UI textures have 1 mip, and
       others stop above 8x8 (e.g. 256x256 with 5 mips). SaveTex refuses any mip mismatch, so only textures whose
       chain ends at 8x8 convert today. Open: does the game accept a texture with *more* mips than the original?

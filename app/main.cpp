@@ -275,6 +275,7 @@ struct State {
     std::vector<size_t> routed;
     std::mutex log_mutex;
     std::vector<std::string> log;  // written by the run thread
+    std::vector<std::string> warnings;  // from the last run, until the user closes the popup
 };
 
 // The REtool folder: the one set in the panel, else the one the RE plugin remembers for the graph's game.
@@ -356,12 +357,32 @@ void poll_run(State& s) {
         remod::apply_run(s.graph, r);  // e.g. a re-exported image un-does an earlier "Done editing"
         s.statuses = r.nodes;
         s.status = r.message;
+        s.warnings = r.warnings;  // shown in a popup (draw_warnings)
     } catch (const remod::RunError& e) {
         s.statuses = e.nodes;
         s.status = std::string("Error: ") + e.what();
     } catch (const std::exception& e) {
         s.statuses.clear();
         s.status = std::string("Error: ") + e.what();
+    }
+}
+
+const ImVec4 kAmber(1.0f, 0.7f, 0.2f, 1.0f);
+
+// The last run's warnings, as a popup the user closes.
+void draw_warnings(State& s) {
+    if (s.warnings.empty()) return;
+    if (!ImGui::IsPopupOpen("Check this")) ImGui::OpenPopup("Check this");
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 32, 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Check this", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextColored(kAmber, "The mod was built, with %zu warning%s:", s.warnings.size(),
+                           s.warnings.size() == 1 ? "" : "s");
+        for (const auto& w : s.warnings) ImGui::TextWrapped("- %s", w.c_str());
+        if (ImGui::Button("OK")) {
+            s.warnings.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -490,7 +511,6 @@ void draw_side_panel(State& s) {
     ImGui::End();
 }
 
-const ImVec4 kAmber(1.0f, 0.7f, 0.2f, 1.0f);
 
 // Node border / badge colour for where a node got to in the last run.
 ImVec4 state_color(remod::NodeState state) {
@@ -1020,6 +1040,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
     io.IniFilename = nullptr;  // ponytail: no layout persistence yet (keeps disk writes at zero)
     ImGui::StyleColorsDark();
+    // A scalable font, so text stays sharp at any zoom and DPI (ImGui's default is a 13 px pixel font that turns
+    // blocky when scaled). Segoe UI ships with Windows; ImGui's embedded vector font if it's somehow missing.
+    char windows[MAX_PATH] = {};
+    const std::string segoe = std::string(windows, ::GetWindowsDirectoryA(windows, MAX_PATH)) + "\\Fonts\\segoeui.ttf";
+    if (!std::filesystem::is_regular_file(segoe) || !io.Fonts->AddFontFromFileTTF(segoe.c_str(), 16.0f))
+        io.Fonts->AddFontDefaultVector();
     ImGui::GetStyle().ScaleAllSizes(scale);
     ImGui::GetStyle().FontScaleDpi = scale;
     ImGui_ImplWin32_Init(hwnd);
@@ -1079,6 +1105,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         }
         draw_side_panel(state);
         draw_canvas(state, editor);
+        draw_warnings(state);
 
         ImGui::Render();
         const float clear[4] = {0.1f, 0.1f, 0.1f, 1.0f};

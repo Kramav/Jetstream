@@ -104,9 +104,9 @@ as one line that branches, with a dot where it splits.
 - **Game files (REtool):** set your REtool folder, e.g. `...\REtool\RE4\re_chunk_000\natives\stm`, and the
   texture picker opens there. It's pre-filled from the RE plugin's own setting if you've set it in Noesis.
 
-**Current limit:** a texture converts back only if its mip chain ends at 8×8, because that's what the Noesis
-plugin writes. Most RE4R UI textures have a single mip, so the tool refuses them rather than produce a
-mismatched file. See CLAUDE.md §9.
+**Mip levels:** the Noesis plugin always writes mip levels down to 8×8, while most RE4R UI textures have only
+one. The tool builds the mod anyway and shows a warning (a popup in the app, `WARNING:` from the CLI). It probably
+works in game; if a texture looks wrong, that's the first thing to suspect. See CLAUDE.md §9.
 
 ## Making a texture mod with a graph
 

@@ -683,6 +683,16 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
                 const TexMeta m = opt.converter.save_tex(input("image").path, original.path, out, opt.profile);
                 outputs[{n.id, "tex"}] = file_value(out, original.game_path);
                 done("encoded " + m.format + ", " + std::to_string(m.mip_count) + " mips");
+                // Waiting (CLAUDE.md §9): whether the game minds a different mip count is untested, so say so.
+                const std::uint32_t original_mips = read_tex_meta(original.path, opt.profile).mip_count;
+                if (m.mip_count != original_mips) {
+                    result.warnings.push_back(node_label(n) + ": " + original.path.filename().string() + " has " +
+                                              std::to_string(original_mips) + " mip level(s), the new texture has " +
+                                              std::to_string(m.mip_count) + " (Noesis always writes them down to 8x8). "
+                                              "It may work in game; if the texture looks wrong or the game "
+                                              "misbehaves, this is the likely cause.");
+                    log("warning: " + result.warnings.back());
+                }
             } else if (n.type == "Text") {
                 std::vector<std::string> parts;
                 for (const auto& v : values("parts")) parts.push_back(v.text);
