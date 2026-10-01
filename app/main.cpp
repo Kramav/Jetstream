@@ -1118,17 +1118,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         poll_run(state);
         const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
         static bool layout_done = false;
-        if (!layout_done) {  // Browser on the left, Graph in the middle, Pipeline on the right
+        if (!layout_done) {  // Browser left, Graph middle, Pipeline right; along the bottom the viewer, then Textures
             layout_done = true;
             ImGui::DockBuilderRemoveNode(dockspace);
             ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->Size);
-            ImGuiID left = 0, rest = 0, right = 0, middle = 0;
-            ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Left, 0.25f, &left, &rest);
+            ImGuiID top = 0, bottom = 0, corner = 0, textures = 0, left = 0, rest = 0, right = 0, middle = 0;
+            ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Down, 0.32f, &bottom, &top);
+            ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.25f, &corner, &textures);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.25f, &left, &rest);
             ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.3f, &right, &middle);
             ImGui::DockBuilderDockWindow("Browser", left);
             ImGui::DockBuilderDockWindow("Graph", middle);
             ImGui::DockBuilderDockWindow("Pipeline", right);
+            ImGui::DockBuilderDockWindow("###viewer", corner);
+            ImGui::DockBuilderDockWindow("Textures", textures);
             ImGui::DockBuilderFinish(dockspace);
         }
         if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles); !picked.empty())

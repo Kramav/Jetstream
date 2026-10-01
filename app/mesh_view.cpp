@@ -12,11 +12,15 @@ using namespace DirectX;
 
 namespace {
 
-// Colour texture (or grey) with a light at the camera; both faces lit, since meshes are drawn without culling.
-// The sRGB texture bytes are used as they are, like the 2D previews.
+// Colour texture times the material's colour, with a light at the camera; both faces lit, since meshes are drawn
+// without culling. The sRGB texture bytes are used as they are, like the 2D previews. A cut-out mask discards pixels
+// below 0.05, as Noesis's alpha test for these materials [fmt_RE_MESH: setAlphaTest(0.05)].
 constexpr char kShader[] = R"(
-cbuffer Constants : register(b0) { float4x4 view_proj; float4 tint; float4 uv_scale; float4 eye; };
+cbuffer Constants : register(b0) {
+    float4x4 view_proj; float4 tint; float4 uv_scale; float4 eye; float4 base_color; float4 cut;
+};
 Texture2D colour : register(t0);
+Texture2D opacity : register(t1);
 SamplerState linear_clamp : register(s0);
 struct In { float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
 struct Out { float4 pos : SV_POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; float3 world : TEXCOORD1; };
@@ -30,8 +34,13 @@ Out vs(In i) {
 }
 float4 ps(Out i) : SV_Target {
     // frac then scale: tiling UVs still land inside the texture's visible part when its rows are padded.
-    float3 base = tint.w > 0 ? colour.Sample(linear_clamp, frac(i.uv) * uv_scale.xy).rgb : float3(0.7, 0.7, 0.7);
-    float light = 0.35 + 0.65 * abs(dot(normalize(i.normal), normalize(eye.xyz - i.world)));
+    if (cut.x >= 0) {
+        float4 o = opacity.Sample(linear_clamp, frac(i.uv) * uv_scale.zw);
+        clip((cut.x > 2 ? o.a : o.r) - 0.05);
+    }
+    float3 base = (tint.w > 0 ? colour.Sample(linear_clamp, frac(i.uv) * uv_scale.xy).rgb : 1) * base_color.rgb;
+    // Bright: game albedos are dark (Leon's shirt averages 60/255) and the game's lighting is far stronger.
+    float light = 0.7 + 0.5 * abs(dot(normalize(i.normal), normalize(eye.xyz - i.world)));
     return float4(base * light * tint.rgb, 1);
 }
 )";
@@ -41,6 +50,8 @@ struct Constants {
     float tint[4];
     float uv_scale[4];
     float eye[4];
+    float base_color[4];
+    float cut[4];
 };
 
 template <class T>
@@ -231,7 +242,7 @@ void MeshView::draw(ImVec2 size, const std::vector<Surface>& surfaces) {
     c.eye[2] = eye3.z;
 
     // Drawn now, into the view's own texture; ImGui draws that texture with the rest of the frame.
-    const float background[4] = {0.13f, 0.14f, 0.16f, 1};
+    const float background[4] = {0.42f, 0.43f, 0.45f, 1};  // mid grey: dark textures stand out
     context_->OMSetRenderTargets(1, &rtv_, dsv_);
     context_->ClearRenderTargetView(rtv_, background);
     if (dsv_) context_->ClearDepthStencilView(dsv_, D3D11_CLEAR_DEPTH, 1.0f, 0);
@@ -250,22 +261,28 @@ void MeshView::draw(ImVec2 size, const std::vector<Surface>& surfaces) {
     for (size_t i = 0; i < parts_.size(); ++i) {
         if (!parts_[i].vertices) continue;
         const Surface s = i < surfaces.size() ? surfaces[i] : Surface{};
+        if (s.hidden) continue;
         const float shade = s.dim ? 0.25f : 1.0f;
         c.tint[0] = c.tint[1] = c.tint[2] = shade;
         c.tint[3] = s.texture ? 1.0f : 0.0f;
         c.uv_scale[0] = s.u;
         c.uv_scale[1] = s.v;
+        c.uv_scale[2] = s.opacity_u;
+        c.uv_scale[3] = s.opacity_v;
+        std::memcpy(c.base_color, s.color, sizeof(c.base_color));
+        c.cut[0] = s.opacity ? float(s.opacity_channel) : -1.0f;
         D3D11_MAPPED_SUBRESOURCE mapped;
         if (FAILED(context_->Map(constants_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) continue;
         std::memcpy(mapped.pData, &c, sizeof(c));
         context_->Unmap(constants_, 0);
-        context_->PSSetShaderResources(0, 1, &s.texture);
+        ID3D11ShaderResourceView* const views[2] = {s.texture, s.opacity};
+        context_->PSSetShaderResources(0, 2, views);
         const UINT stride = UINT(remod::MeshPart::kStride * sizeof(float)), offset = 0;
         context_->IASetVertexBuffers(0, 1, &parts_[i].vertices, &stride, &offset);
         context_->Draw(parts_[i].count, 0);
     }
-    ID3D11ShaderResourceView* none = nullptr;
-    context_->PSSetShaderResources(0, 1, &none);
+    ID3D11ShaderResourceView* const none[2] = {};
+    context_->PSSetShaderResources(0, 2, none);
     context_->OMSetRenderTargets(0, nullptr, nullptr);
 
     ImGui::GetWindowDrawList()->AddImage(ImTextureRef(srv_), at, ImVec2(at.x + size.x, at.y + size.y));

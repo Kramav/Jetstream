@@ -1,6 +1,7 @@
 #include "browse.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cstdint>
 #include <fstream>
@@ -35,13 +36,17 @@ bool is_kind(const std::string& name, const std::string& kind) {
 
 struct Mdf2Material {
     std::string name;
-    std::vector<std::string> textures;  // paths as written, without the version suffix
+    std::string master;                    // the master material (.mmtr) path, e.g. ".../Character_Hair"
+    std::array<float, 4> base_color{1, 1, 1, 1};  // the "BaseColor" parameter, white if none
+    std::vector<std::pair<std::string, std::string>> textures;  // (type, path as written without the version suffix)
 };
 
 // An .mdf2 material file, layout from fmt_RE_MESH's reader for mdf versions > 3 (RE4R's .mdf2.32) [plugin source]:
-// u16 material count @6; per material, 100 bytes from 0x10: u64 name offset @0, u32 texture count @20,
-// u64 texture headers offset @60. Per texture, 0x20 bytes: u64 type-name offset, u64 hash, u64 path offset.
-// Strings are UTF-16. Checked 2026-10-01 on all 6,392 RE4R materials: every name and path parses.
+// u16 material count @6; per material, 100 bytes from 0x10: u64 name offset @0, u32 parameter count @16,
+// u32 texture count @20, u64 parameter headers offset @52, u64 texture headers offset @60, u64 parameter values
+// offset @76, u64 master material path offset @84. Per parameter, 0x18 bytes: u64 name offset, u64 type, u32 value
+// offset (from the values offset), u32 float count. Per texture, 0x20 bytes: u64 type-name offset, u64 hash, u64 path
+// offset. Strings are UTF-16. Checked 2026-10-01 on all 6,392 RE4R materials: every name and path parses.
 std::vector<Mdf2Material> read_mdf2(const fs::path& file) {
     std::ifstream in(file, std::ios::binary);
     const std::string b((std::istreambuf_iterator<char>(in)), {});
@@ -63,12 +68,21 @@ std::vector<Mdf2Material> read_mdf2(const fs::path& file) {
     const auto count = le(6, 2);
     for (std::uint64_t i = 0; i < count; ++i) {
         const std::uint64_t m = 0x10 + i * 100;
-        Mdf2Material mat{text(le(m, 8)), {}};
+        Mdf2Material mat{text(le(m, 8)), text(le(m + 84, 8))};
+        const auto params = le(m + 16, 4), param_headers = le(m + 52, 8), values = le(m + 76, 8);
+        for (std::uint64_t p = 0; p < params; ++p) {
+            const std::uint64_t h = param_headers + p * 0x18;
+            if (le(h + 20, 4) == 4 && text(le(h, 8)) == "BaseColor") {  // the first one, as the plugin
+                for (int c = 0; c < 4; ++c)
+                    mat.base_color[size_t(c)] = std::bit_cast<float>(std::uint32_t(le(values + le(h + 16, 4) + 4 * c, 4)));
+                break;
+            }
+        }
         const auto textures = le(m + 20, 4), headers = le(m + 60, 8);
         for (std::uint64_t t = 0; t < textures; ++t) {
             std::string path = text(le(headers + t * 0x20 + 16, 8));
             std::erase(path, '@');  // the plugin drops these too
-            mat.textures.push_back(path);
+            mat.textures.emplace_back(text(le(headers + t * 0x20, 8)), path);
         }
         out.push_back(std::move(mat));
     }
@@ -160,7 +174,18 @@ MeshTextures mesh_textures(const fs::path& natives_root, const std::string& mesh
     out.material = mesh.substr(0, mesh.size() - file_name(mesh).size()) + material;
     for (const Mdf2Material& m : read_mdf2(dir / material)) {
         MeshMaterial mat{m.name, {}, -1};
-        for (const std::string& s : m.textures) {
+        mat.base_color = m.base_color;
+        // The plugin's rules for how Noesis shows a material [plugin source, fmt_RE_MESH.py material loop]: cut-outs
+        // only for these master materials; a few materials not drawn at all.
+        const std::string master = lower(m.master), mat_name = lower(m.name);
+        const bool cutout = master.find("_dirt") != std::string::npos || master.find("_decal") != std::string::npos ||
+                            master.find("_hair") != std::string::npos;
+        mat.hidden = (mat_name.find("eye") != std::string::npos && m.textures.empty()) ||
+                     mat_name.find("tearline") != std::string::npos || mat_name.find("lens") != std::string::npos ||
+                     mat_name.find("destroy") != std::string::npos;
+        bool translucency = false;
+        int base_map = -1;  // the colour texture when there's no "_alb" one
+        for (const auto& [type, s] : m.textures) {
             if (!lower(s).ends_with(".tex")) continue;  // e.g. .rtex render targets
             // Materials name textures without the version suffix: find "<path>.<digits>" in the sorted index.
             const std::string key = lower(s) + ".";
@@ -176,12 +201,24 @@ MeshTextures mesh_textures(const fs::path& natives_root, const std::string& mesh
             }
             const size_t index = size_t(known - out.textures.begin());
             mat.textures.push_back(index);
-            // Colour texture: the plugin's rule, a file name with "_alb", "_albd" preferred [plugin source].
+            // The plugin's chain, in its order: colour texture (a file name with "_alb", "_albd" preferred; its
+            // alpha cuts out when the type says so), normal map, translucency map (red cuts out), alpha map.
             const std::string file = lower(file_name(name));
             if (found && file.find("_alb") != std::string::npos &&
-                (mat.albedo < 0 || file.find("_albd") != std::string::npos))
+                (mat.albedo < 0 || file.find("_albd") != std::string::npos)) {
                 mat.albedo = int(index);
+                if (cutout && type.find("AlphaMap") != std::string::npos) mat.opacity = {int(index), 3};
+            } else if (file.find("_nr") != std::string::npos) {
+            } else if (type.find("AlphaTranslucent") != std::string::npos && !translucency) {
+                translucency = true;
+                if (cutout && found) mat.opacity = {int(index), 0};
+            } else if (type == "AlphaMap") {
+                if (cutout && found) mat.opacity = {int(index), 0};
+            } else if (found && base_map < 0 && type.starts_with("Base") && type.ends_with("Map")) {
+                base_map = int(index);
+            }
         }
+        if (mat.albedo < 0) mat.albedo = base_map;
         out.materials.push_back(std::move(mat));
     }
     return out;

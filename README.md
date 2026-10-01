@@ -110,18 +110,22 @@ works in game; if a texture looks wrong, that's the first thing to suspect. See 
 
 ## Browser
 
-The **Browser** panel on the left browses your Game files (REtool) folder, once it's set in the Pipeline panel:
+The **Browser** panel on the left browses your Game files (REtool) folder, once it's set in the Pipeline panel.
+Two panels along the bottom show what you pick there:
 
-- **Textures / Meshes:** a folder tree, a search box (several words narrow it down, e.g. `wood albd`) and the
-  files. Textures show as thumbnails.
-- **A mesh** shows in 3D with its colour textures, above the list of textures its material uses. Drag to turn it,
-  right-drag to move, the wheel zooms, double-click resets. Click a texture to highlight the parts that use it
-  (click it again to show all). Noesis converts the mesh first: under a second for most, several seconds for a
-  character.
-- **Click a texture** for a larger preview, its size and format. **Use in graph** (or a double-click) puts it into the
+- **Browser:** a folder tree, a search box (several words narrow it down, e.g. `wood albd`) and the folder's file
+  paths, meshes first. Hover a name for its full path.
+- **Textures** (bottom): thumbnails of the picked mesh's textures, or of the textures in the folder (or the search).
+  Above them, the selected texture's size and format. **Use in graph** (or a double-click) puts it into the
   selected Original texture block, or the layout's only one. In Build layout a block is added if there's none.
-- **Transparency** is off by default: many textures keep other data in the alpha channel (e.g. metalness), which
+  **Transparency** is off by default: many textures keep other data in the alpha channel (e.g. metalness), which
   would hide the picture.
+- **Texture / 3D view** (bottom left): the selected texture, large. Picking a mesh shows it in 3D there instead,
+  with its colour textures; close the 3D view to see the texture again, pick the mesh again to reopen it. The last
+  mesh stays while you browse other textures. Drag to turn it, right-drag to move, the wheel zooms, double-click
+  resets. Click one of its textures to highlight the parts that use it (click it again to show all). The Groups
+  checkboxes show or hide the mesh's groups (e.g. a character's bare arms, a weapon). Noesis converts the mesh
+  first: under a second for most, several seconds for a character.
 
 Reading the folder takes a few seconds each time the app starts. Nothing is written to disk, except the
 temporary file Noesis converts a mesh into (deleted straight away). A folder that

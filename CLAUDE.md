@@ -289,8 +289,10 @@ Fill these in from the manual spike before implementing the affected code:
 - M3: REFramework Lua runtime reading manifests (triggers → actions).
 - M4: C++ REFramework plugin for video playback (in-game "cutscene" videos).
 - Replace ImGui front end with a polished native UI.
-- **Texture and mesh browser: first version built (2026-10-01).** The Browser panel (left; Graph middle, Pipeline
-  right) browses the REtool folder: folder tree, search, thumbnails, preview, "Use in graph" (`texture_target`).
+- **Texture and mesh browser: first version built (2026-10-01).** Layout: Browser left (folder tree, search,
+  file paths), Graph middle, Pipeline right; along the bottom the viewer (left corner: the selected texture, or the
+  picked mesh in 3D until closed; the last mesh stays) and Textures (thumbnails of the picked mesh's or the folder's
+  textures, "Use in graph" via `texture_target`).
   - Core: `core/browse.*` (index, tree, search, `mesh_textures`, `preview_file`) and `read_tex_pixels`. The app
     uploads the stored mip to D3D11 as is: RE Engine's format numbers are DXGI's, so the GPU decodes BC1-7 itself.
     sRGB formats are shown as their UNORM twins (the back buffer is UNORM).
@@ -310,6 +312,17 @@ Fill these in from the manual spike before implementing the affected code:
     a 163k-triangle character; 24 of 26 sampled meshes load (2 hit plugin Python errors, reported). Every sampled
     part name matched a material. Highest LOD only; the main material file only (costume variants such as
     `cha000_00b.mdf2` aren't offered yet).
+    Mesh groups: the plugin names OBJ groups `LOD_1_Group_<id>_...` [plugin source]; parts are kept per (group,
+    material) and the view has a checkbox per group (Leon's `cha000_00`: 0 shirt and gloves, 1 pants, 2 bare
+    forearms, 3-4 weapons). Which groups the game shows isn't in the mesh (not read), so all start shown.
+    Noesis's OBJ writes texture v top-down already (D3D style); flipping it again mirrored every texture and put
+    Leon's shirt on the skin above it in his texture sheet (fixed 2026-10-01).
+    Materials follow the plugin's Noesis rules (`mesh_textures`, [plugin source]): colour texture × `BaseColor`
+    parameter (solid `BaseColor` without a texture); no `_alb` texture falls back to the first `Base…Map`; alpha test
+    at 0.05 only for `_hair`/`_decal`/`_dirt` master materials (ALBA alpha, ATOS/ATOC red, or an `AlphaMap`); eye
+    shells without textures, tear lines, lenses and "destroy" parts aren't drawn. Layout checked on all 6,392 RE4R
+    material files (22,113 materials, 20,002 with `BaseColor`, 5,544 cut-out). Not mirrored: Noesis's normal maps,
+    specular and lighting.
 - **Readable names (user wish, long term, 2026-10-01):** let the user give the game's cryptic folder and file names
   (e.g. `cha000`, `sm84_676_00`, `ui3200`) a human-readable nickname, shown in the Browser in place of or beside
   the real name, and searchable. Nicknames only label things: real paths stay what's packaged and stored.

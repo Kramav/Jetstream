@@ -1,6 +1,7 @@
 #pragma once
 // The texture and mesh browser's data (CLAUDE.md §10): an index of an extracted natives folder (REtool), its
 // folder tree, search, and which textures a mesh's material uses. Previews are read with read_tex_pixels.
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <string>
@@ -42,6 +43,16 @@ struct MeshMaterial {
     std::string name;             // matches the mesh's parts (MeshPart::material)
     std::vector<size_t> textures;  // into MeshTextures::textures
     int albedo = -1;              // its colour texture, or -1
+    // As fmt_RE_MESH shows it in Noesis [plugin source]: the colour texture is multiplied by base_color (the colour
+    // on its own without one); `opacity` cuts out (alpha test at 0.05) where that texture's channel (0 red, 3 alpha)
+    // is low, for hair, decal and dirt master materials only; `hidden` materials aren't drawn (eye shells without
+    // textures, tear lines, lenses, "destroy" parts).
+    std::array<float, 4> base_color{1, 1, 1, 1};
+    struct Opacity {
+        int texture = -1;  // into MeshTextures::textures, or -1
+        int channel = 0;
+    } opacity;
+    bool hidden = false;
 };
 struct MeshTextures {
     std::string material;                 // relative path of the .mdf2

@@ -2,7 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-TEST_CASE("parse_obj: parts per material, polygons fanned, v flipped for D3D") {
+TEST_CASE("parse_obj: parts per material, polygons fanned, v kept as Noesis writes it") {
     const auto m = remod::parse_obj(
         "# Noesis .obj export.\n"
         "mtllib unused.mtl\n"
@@ -21,10 +21,21 @@ TEST_CASE("parse_obj: parts per material, polygons fanned, v flipped for D3D") {
     CHECK(m.parts[1].vertices.size() == 2 * 3 * remod::MeshPart::kStride);
     CHECK(m.triangles == 4);
     const float* v = m.parts[0].vertices.data();
-    CHECK((v[6] == 0.25f && v[7] == 0.25f));  // u, 1 - v
+    CHECK((v[6] == 0.25f && v[7] == 0.75f));  // u, v unflipped
     const float* q = m.parts[1].vertices.data();
     CHECK((q[3] == 0 && q[4] == 0 && q[5] == 1));  // face normal of the quad's first triangle
     CHECK((m.min == std::array<float, 3>{0, 0, -2} && m.max == std::array<float, 3>{1, 1, 0}));
+}
+
+TEST_CASE("parse_obj: the plugin's mesh groups stay apart") {
+    const auto m = remod::parse_obj(
+        "v 0 0 0\nv 1 0 0\nv 1 1 0\n"
+        "g LOD_1_Group_0_Sub_5__Skin_Mat\nusemtl Skin_Mat\nf 1 2 3\n"
+        "g LOD_1_Group_2_Sub_1__Skin_Mat\nusemtl Skin_Mat\nf 1 2 3\n"
+        "g LOD_1_Group_0_Sub_1__Skin_Mat\nusemtl Skin_Mat\nf 1 2 3\n");
+    REQUIRE(m.parts.size() == 2);
+    CHECK((m.parts[0].group == 0 && m.parts[0].vertices.size() == 2 * 3 * remod::MeshPart::kStride));
+    CHECK((m.parts[1].group == 2 && m.parts[1].material == "Skin_Mat"));
 }
 
 TEST_CASE("parse_obj refuses broken input") {

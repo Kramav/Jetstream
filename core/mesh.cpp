@@ -24,8 +24,10 @@ MeshModel parse_obj(const std::string& text) {
     std::vector<std::array<float, 3>> pos, nrm;
     std::vector<std::array<float, 2>> uv;
     MeshModel model;
-    std::map<std::string, size_t> parts;  // material -> part
-    size_t part = SIZE_MAX;
+    std::map<std::pair<int, std::string>, size_t> parts;  // (group, material) -> part
+    int group = -1;
+    std::string material;
+    size_t part = SIZE_MAX;  // looked up at the next face after g or usemtl
     model.min = {INFINITY, INFINITY, INFINITY};
     model.max = {-INFINITY, -INFINITY, -INFINITY};
 
@@ -56,12 +58,15 @@ MeshModel parse_obj(const std::string& text) {
             for (float& f : n) f = std::strtof(q, const_cast<char**>(&q));
             nrm.push_back(n);
         } else if (std::strncmp(p, "usemtl", 6) == 0) {
-            std::string name(p + 6, eol);
-            while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
-            name.erase(0, name.find_first_not_of(" \t"));
-            const auto [it, added] = parts.try_emplace(name, model.parts.size());
-            if (added) model.parts.push_back({name, {}});
-            part = it->second;
+            material.assign(p + 6, eol);
+            while (!material.empty() && std::isspace(static_cast<unsigned char>(material.back()))) material.pop_back();
+            material.erase(0, material.find_first_not_of(" \t"));
+            part = SIZE_MAX;
+        } else if (p[0] == 'g' && std::isspace(static_cast<unsigned char>(p[1]))) {
+            const std::string name(p, eol);
+            const size_t at = name.find("_Group_");
+            group = at == std::string::npos ? -1 : std::atoi(name.c_str() + at + 7);
+            part = SIZE_MAX;
         } else if (p[0] == 'f' && (p[1] == ' ' || p[1] == '\t')) {
             face.clear();
             q = p + 1;
@@ -78,9 +83,10 @@ MeshModel parse_obj(const std::string& text) {
                 face.push_back(c);
                 while (q < eol && *q != ' ' && *q != '\t' && *q != '\r') ++q;  // anything unexpected
             }
-            if (part == SIZE_MAX) {  // faces before any usemtl
-                part = model.parts.size();
-                model.parts.push_back({"", {}});
+            if (part == SIZE_MAX) {
+                const auto [it, added] = parts.try_emplace({group, material}, model.parts.size());
+                if (added) model.parts.push_back({material, group, {}});
+                part = it->second;
             }
             std::vector<float>& out = model.parts[part].vertices;
             for (size_t k = 1; k + 1 < face.size(); ++k) {
@@ -97,7 +103,7 @@ MeshModel parse_obj(const std::string& text) {
                 for (int i = 0; i < 3; ++i) {
                     const auto n = tri[i].n ? nrm[resolve(tri[i].n, nrm.size())] : fn;
                     const auto t = tri[i].t ? uv[resolve(tri[i].t, uv.size())] : std::array<float, 2>{};
-                    out.insert(out.end(), {p3[i][0], p3[i][1], p3[i][2], n[0], n[1], n[2], t[0], 1.0f - t[1]});
+                    out.insert(out.end(), {p3[i][0], p3[i][1], p3[i][2], n[0], n[1], n[2], t[0], t[1]});
                     for (int a = 0; a < 3; ++a) {
                         model.min[a] = std::min(model.min[a], p3[i][a]);
                         model.max[a] = std::max(model.max[a], p3[i][a]);

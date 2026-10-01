@@ -17,9 +17,14 @@ public:
 
     // How to draw one part (same order as the model's parts).
     struct Surface {
-        ID3D11ShaderResourceView* texture = nullptr;  // colour texture, or none (grey)
+        ID3D11ShaderResourceView* texture = nullptr;  // colour texture, or none
         float u = 1, v = 1;                           // visible part of the stored texture
+        float color[4] = {0.7f, 0.7f, 0.7f, 1};       // multiplies the texture; the colour on its own without one
+        ID3D11ShaderResourceView* opacity = nullptr;  // cut-out mask, or none
+        float opacity_u = 1, opacity_v = 1;
+        int opacity_channel = 0;                      // 0 red, 3 alpha
         bool dim = false;                             // not highlighted
+        bool hidden = false;                          // not drawn
     };
 
     void set_model(const remod::MeshModel& model);  // uploads it and frames the camera

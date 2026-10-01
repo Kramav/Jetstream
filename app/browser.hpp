@@ -12,6 +12,7 @@
 #include <future>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -22,15 +23,18 @@ public:
     Browser(const Browser&) = delete;
     Browser& operator=(const Browser&) = delete;
 
-    // Draws the "Browser" window over the REtool folder `natives_root`; Noesis converts meshes for the 3D view.
-    // Returns the texture the user chose to use in the graph (absolute path), else empty.
+    // Draws the "Browser" window (the REtool folder `natives_root`'s file paths), the "Textures" window (thumbnails
+    // of the picked mesh's or the folder's textures) and the viewer window: the selected texture, or the picked
+    // mesh in 3D (converted by Noesis) until the user closes it. The viewer's window id is "###viewer". Returns the
+    // texture the user chose to use in the graph (absolute path), else empty.
     std::string draw(const std::string& natives_root, const std::string& noesis_exe,
                      const std::vector<remod::Profile>& profiles);
 
 private:
     struct Index {
         remod::AssetIndex assets;
-        remod::FolderTree texture_tree, mesh_tree;
+        std::vector<std::string> files;  // the meshes, then the textures
+        remod::FolderTree tree;          // over files
     };
     struct Image {
         ID3D11ShaderResourceView* srv = nullptr;
@@ -44,8 +48,12 @@ private:
     void release_unused();
     void draw_tree(const remod::FolderTree& tree, size_t folder);
     int draw_tile(const std::string& rel, bool found, float size, bool selected);  // 1 clicked, 2 double-clicked
+    void draw_files(const std::vector<remod::Profile>& profiles, std::string& chosen);
+    void draw_textures(bool ready, const std::vector<remod::Profile>& profiles, std::string& chosen);
+    void draw_viewer(const std::string& noesis_exe);
     void put_image(const Image& img, ImVec2 at, ImVec2 box);
     void select_texture(const std::string& rel, const std::vector<remod::Profile>& profiles);
+    void select_mesh(const std::string& rel);
 
     ID3D11Device* device_;
     ID3D11BlendState* opaque_ = nullptr;
@@ -54,13 +62,15 @@ private:
     std::future<Index> indexing_;
     std::optional<Index> index_;
     std::string error_;
-    bool meshes_ = false;     // which list: textures or meshes
     bool alpha_ = false;      // draw transparency (off: alpha often holds other data, e.g. metalness)
     std::string query_, searched_ = "\x01";
     std::vector<size_t> hits_;
-    size_t folder_[2] = {0, 0};  // selected folder per list
+    std::vector<size_t> shown_;  // the Browser's files this frame (folder or search), into Index::files
+    size_t folder_ = 0;  // selected folder
     std::string texture_, info_;  // selected texture and its description
-    std::string mesh_;
+    std::string mesh_;         // the last mesh picked: the 3D view keeps it while textures are browsed
+    bool mesh_focus_ = false;  // the Textures window shows mesh_'s textures (else the Browser's)
+    bool view_open_ = false;   // the viewer shows mesh_ in 3D (else the selected texture)
     std::optional<remod::MeshTextures> mesh_textures_;
     std::string mesh_error_;
     MeshView view_;
@@ -68,6 +78,8 @@ private:
     std::string loading_mesh_, shown_mesh_;  // being converted; in the view (or failed)
     std::string model_error_;
     std::vector<std::string> part_materials_;  // per part of the shown model
+    std::vector<int> part_groups_;             // per part: its RE Engine mesh group
+    std::set<int> hidden_groups_;              // groups the user turned off
     size_t triangles_ = 0;
     std::map<std::string, Image> images_;  // key: max side + path
     int frame_ = 0;
