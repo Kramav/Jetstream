@@ -2,6 +2,7 @@
 
 #include "process.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <fstream>
@@ -48,7 +49,7 @@ const char* kEditFormatsText = ".png, .tga, .jpg or .jpeg";
 // DXGI_FORMAT values (official D3D enum) for the formats the plugin's writer handles.
 std::string format_name(std::uint32_t dxgi) {
     static const std::map<std::uint32_t, const char*> names{
-        {10, "R16G16B16A16_FLOAT"}, {28, "R8G8B8A8_UNORM"}, {29, "R8G8B8A8_UNORM_SRGB"}, {61, "R8_UNORM"},
+        {10, "R16G16B16A16_FLOAT"}, {49, "R8G8_UNORM"}, {28, "R8G8B8A8_UNORM"}, {29, "R8G8B8A8_UNORM_SRGB"}, {61, "R8_UNORM"},
         {71, "BC1_UNORM"},          {72, "BC1_UNORM_SRGB"}, {77, "BC3_UNORM"},           {80, "BC4_UNORM"},
         {83, "BC5_UNORM"},          {95, "BC6H_UF16"},      {98, "BC7_UNORM"},           {99, "BC7_UNORM_SRGB"}};
     const auto it = names.find(dxgi);
@@ -116,6 +117,56 @@ TexMeta read_tex_meta(const fs::path& tex, const Profile& profile) {
     m.mip_count = std::uint8_t(b[15]) / 16u;
     m.format = format_name(le32(b, 16));
     return m;
+}
+
+TexPixels read_tex_pixels(const fs::path& tex, std::uint32_t max_side) {
+    // [plugin source] for versions > 27: a 40-byte header, then per image and mip {u64 offset, u32 pitch, u32 size}.
+    // RE3R's 190820018 is the plugin's exception (it reads it as version 10, the older layout).
+    std::string b = read_prefix(tex, 40);
+    if (b.size() < 40 || le32(b, 0) != 0x00584554) throw ConvertError(tex.string() + " is not an RE Engine .tex file");
+    const std::uint32_t version = le32(b, 4);
+    if (version <= 27 || version == 190820018)
+        throw ConvertError("tex version " + std::to_string(version) + " uses an older layout (not supported yet)");
+    const std::uint32_t mips = std::uint8_t(b[15]) / 16u;
+    if (b[14] == 0 || mips == 0) throw ConvertError(tex.string() + " holds no images");
+
+    // Bytes per pixel, or per 4x4 block (block = true), by DXGI_FORMAT [official D3D docs].
+    struct Layout { std::uint32_t bytes; bool block; };
+    static const std::map<std::uint32_t, Layout> layouts{
+        {2, {16, false}}, {10, {8, false}}, {28, {4, false}}, {29, {4, false}}, {49, {2, false}}, {61, {1, false}},
+        {71, {8, true}},  {72, {8, true}},  {77, {16, true}}, {78, {16, true}}, {80, {8, true}},  {83, {16, true}},
+        {87, {4, false}}, {91, {4, false}}, {95, {16, true}}, {96, {16, true}}, {98, {16, true}}, {99, {16, true}}};
+    const auto layout = layouts.find(le32(b, 16));
+    if (layout == layouts.end()) throw ConvertError("can't preview " + format_name(le32(b, 16)));
+    const auto [bytes, block] = layout->second;
+
+    const std::uint32_t width = le16(b, 8), height = le16(b, 10);
+    std::uint32_t mip = 0;
+    while (mip + 1 < mips && std::max(width >> mip, height >> mip) > max_side) ++mip;
+    b = read_prefix(tex, 40 + 16 * (mip + 1));
+    if (b.size() < 40 + 16 * (mip + 1)) throw ConvertError(tex.string() + " is cut short");
+    const size_t entry = 40 + 16 * mip;
+    const std::uint64_t offset = std::uint64_t(le32(b, entry)) | (std::uint64_t(le32(b, entry + 4)) << 32);
+    TexPixels p;
+    p.format = layout->first;
+    p.width = std::max(1u, width >> mip);
+    p.height = std::max(1u, height >> mip);
+    p.row_pitch = le32(b, entry + 8);
+    const std::uint32_t size = le32(b, entry + 12);
+    const std::uint32_t cell = block ? 4 : 1;
+    if (p.row_pitch == 0 || p.row_pitch % bytes || size % p.row_pitch)
+        throw ConvertError(tex.string() + ": unexpected mip layout");
+    p.stored_width = p.row_pitch / bytes * cell;
+    p.stored_height = size / p.row_pitch * cell;
+    if (p.stored_width < p.width || p.stored_height < p.height)
+        throw ConvertError(tex.string() + ": mip smaller than its size");
+
+    std::ifstream in(tex, std::ios::binary);
+    in.seekg(std::streamoff(offset));
+    p.data.resize(size);
+    in.read(reinterpret_cast<char*>(p.data.data()), std::streamsize(size));
+    if (!in) throw ConvertError(tex.string() + " is cut short");
+    return p;
 }
 
 bool is_edit_image(const fs::path& file) {

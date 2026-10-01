@@ -765,4 +765,15 @@ void set_edit_done(Graph& g, int node, bool done) {
         n->params.erase("done");
 }
 
+int texture_target(const Graph& g, int selected) {
+    if (const Node* n = g.find(selected); n && n->type == "LoadTex") return selected;
+    int only = 0;
+    for (const Node& n : g.nodes) {
+        if (n.type != "LoadTex") continue;
+        if (only) return 0;
+        only = n.id;
+    }
+    return only;
+}
+
 }  // namespace remod

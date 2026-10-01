@@ -171,6 +171,10 @@ void apply_run(Graph& graph, const RunResult& result);
 // Marks an Edit image step done (the user finished editing) or not.
 void set_edit_done(Graph& graph, int node, bool done);
 
+// The browser's "Use in graph": the Original texture (LoadTex) block a picked texture goes into. `selected` if it
+// is one, else the graph's only one; 0 if neither.
+int texture_target(const Graph& graph, int selected);
+
 // "<natives root>/<rest>" in `file` (case-insensitive) -> "<rest>", else "". Lets LoadTex infer the game path
 // when the .tex sits inside an extracted natives tree.
 std::string game_path_from(const std::filesystem::path& file, const std::string& natives_root);

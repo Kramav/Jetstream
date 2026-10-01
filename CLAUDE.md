@@ -289,9 +289,19 @@ Fill these in from the manual spike before implementing the affected code:
 - M3: REFramework Lua runtime reading manifests (triggers → actions).
 - M4: C++ REFramework plugin for video playback (in-game "cutscene" videos).
 - Replace ImGui front end with a polished native UI.
-- **Texture browser (user priority, long term):** Noesis-style browsing of the REtool extraction (38k textures
-  for RE4R): folder tree, search, thumbnails and preview, then pick into a graph. For now the texture picker just
-  opens in the REtool folder.
+- **Texture and mesh browser: first version built (2026-10-01).** The Browser panel (left; Graph middle, Pipeline
+  right) browses the REtool folder: folder tree, search, thumbnails, preview, "Use in graph" (`texture_target`).
+  - Core: `core/browse.*` (index, tree, search, `mesh_textures`, `preview_file`) and `read_tex_pixels`. The app
+    uploads the stored mip to D3D11 as is: RE Engine's format numbers are DXGI's, so the GPU decodes BC1-7 itself.
+    sRGB formats are shown as their UNORM twins (the back buffer is UNORM).
+  - Measured on RE4R (Debug): index 3.4 s for 20,603 textures + 6,051 meshes (streaming/ skipped); thumbnails
+    ~0.5 ms each; 20,602 of 20,603 readable (one debug texture holds no images).
+  - A mesh's material is `<mesh>.mdf2.*`, `_mat`, `_00` (fmt_RE_MESH's guesses), else the folder's first `.mdf2`:
+    5,972 of 6,051 meshes have one. Its textures are read as the material's UTF-16 strings ending in `.tex`
+    (not its layout); all 87k references resolve to indexed files.
+  - The base texture is often a small standalone copy (e.g. 512x512, 2 mips) of a `streaming/` one (2048x2048).
+    The preview shows the streaming copy; the open streaming question (§9) still decides what a mod must replace.
+  - Later: a 3D mesh preview (the user chose texture lists only for now).
 
 ## 11. References
 

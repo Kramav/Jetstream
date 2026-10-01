@@ -108,6 +108,21 @@ as one line that branches, with a dot where it splits.
 one. The tool builds the mod anyway and shows a warning (a popup in the app, `WARNING:` from the CLI). It probably
 works in game; if a texture looks wrong, that's the first thing to suspect. See CLAUDE.md §9.
 
+## Browser
+
+The **Browser** panel on the left browses your Game files (REtool) folder, once it's set in the Pipeline panel:
+
+- **Textures / Meshes:** a folder tree, a search box (several words narrow it down, e.g. `wood albd`) and the
+  files. Textures show as thumbnails.
+- **A mesh** lists the textures its material uses, with thumbnails.
+- **Click a texture** for a larger preview, its size and format. **Use in graph** (or a double-click) puts it into the
+  selected Original texture block, or the layout's only one. In Build layout a block is added if there's none.
+- **Transparency** is off by default: many textures keep other data in the alpha channel (e.g. metalness), which
+  would hide the picture.
+
+Reading the folder takes a few seconds each time the app starts. Nothing is written to disk. A folder that
+doesn't end in `natives\stm` is only read after you click **Index it anyway**.
+
 ## Making a texture mod with a graph
 
 A graph chains the steps: **Original texture → Export image → Edit image → Convert image to texture → Package for

@@ -1,6 +1,8 @@
 // remod-app: thin ImGui front end over core/. Draws the graph and forwards edits and runs to core;
 // all graph rules (valid links, validation, running) live in core/graph.
 // Win32 + DX11 setup follows imgui/examples/example_win32_directx11 (v1.92.9-docking).
+#define IMGUI_DEFINE_MATH_OPERATORS  // required by the node editor's internal header; before any imgui.h
+#include "browser.hpp"
 #include "graph.hpp"
 #include "profile.hpp"
 #include "route.hpp"
@@ -10,7 +12,6 @@
 
 #include <nfd.h>
 
-#define IMGUI_DEFINE_MATH_OPERATORS  // required by the node editor's internal header
 #include <imgui.h>
 #include <imgui_internal.h>  // DockBuilder (startup layout), SetFontRasterizerDensity (sharp zoomed text)
 #include <imgui_impl_dx11.h>
@@ -276,6 +277,7 @@ struct State {
     std::mutex log_mutex;
     std::vector<std::string> log;  // written by the run thread
     std::vector<std::string> warnings;  // from the last run, until the user closes the popup
+    std::string pending_texture;  // picked in the Browser, put into a block inside the editor (draw_canvas)
 };
 
 // The REtool folder: the one set in the panel, else the one the RE plugin remembers for the graph's game.
@@ -629,6 +631,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     ImGui::Begin("Graph");
     draw_mode_switch(s);
     const ImVec2 view_size = ImGui::GetContentRegionAvail();
+    const ImVec2 view_center = ImGui::GetCursorScreenPos() + view_size * 0.5f;
     ed::SetCurrentEditor(editor);
     // Use layout: blocks stay where they are. The editor has no per-node lock, so dragging moves to a mouse button
     // that's rarely used. ponytail: the side (X2) button still drags there; patch AcceptDrag if that matters.
@@ -995,6 +998,28 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     }
     ed::Resume();
 
+    // A texture from the Browser goes into the selected Original texture block, else the only one; in Build layout
+    // a new block is added if there's none.
+    if (!s.pending_texture.empty()) {
+        ed::NodeId selected;
+        const int picked = ed::GetSelectedNodes(&selected, 1) ? int(selected.Get()) : 0;
+        int target = remod::texture_target(s.graph, picked);
+        const bool any = std::ranges::any_of(s.graph.nodes, [](const remod::Node& n) { return n.type == "LoadTex"; });
+        if (!target && !any && s.build_mode) {
+            target = s.graph.add_node("LoadTex").id;
+            ed::SetNodePosition(target, ed::ScreenToCanvas(view_center));
+        }
+        if (remod::Node* n = s.graph.find(target)) {
+            n->params["tex"] = s.pending_texture;
+            detect_game(s, s.pending_texture);
+            s.status = "Original texture: " + std::filesystem::path(s.pending_texture).filename().string() + ". " + s.status;
+        } else {
+            s.status = any ? "The layout has several Original texture blocks: click the one to fill, then use the texture again."
+                           : "The layout has no Original texture block. Switch to Build layout to add one.";
+        }
+        s.pending_texture.clear();
+    }
+
     if (s.save_requested) {
         s.save_requested = false;
         for (auto& n : s.graph.nodes) {
@@ -1059,6 +1084,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ed::SetCurrentEditor(nullptr);
     const bool nfd_ok = NFD_Init() == NFD_OKAY;  // pickers just won't open if this fails
     State state;
+    std::optional<Browser> browser(std::in_place, g_device);
     if (std::error_code ec; !state.saved.graph_path.empty() && std::filesystem::is_regular_file(state.graph_path, ec))
         load_graph_file(state);  // reopen the last graph, fitted to the view
     if (!nfd_ok) state.status = std::string("File picker unavailable: ") + NFD_GetError();
@@ -1092,17 +1118,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         poll_run(state);
         const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
         static bool layout_done = false;
-        if (!layout_done) {  // Pipeline on the left, Graph filling the rest
+        if (!layout_done) {  // Browser on the left, Graph in the middle, Pipeline on the right
             layout_done = true;
             ImGui::DockBuilderRemoveNode(dockspace);
             ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->Size);
-            ImGuiID left = 0, right = 0;
-            ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Left, 0.3f, &left, &right);
-            ImGui::DockBuilderDockWindow("Pipeline", left);
-            ImGui::DockBuilderDockWindow("Graph", right);
+            ImGuiID left = 0, rest = 0, right = 0, middle = 0;
+            ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Left, 0.25f, &left, &rest);
+            ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.3f, &right, &middle);
+            ImGui::DockBuilderDockWindow("Browser", left);
+            ImGui::DockBuilderDockWindow("Graph", middle);
+            ImGui::DockBuilderDockWindow("Pipeline", right);
             ImGui::DockBuilderFinish(dockspace);
         }
+        if (const std::string picked = browser->draw(game_files_dir(state), state.profiles); !picked.empty())
+            state.pending_texture = picked;
         draw_side_panel(state);
         draw_canvas(state, editor);
         draw_warnings(state);
@@ -1117,6 +1147,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     if (state.run.valid()) state.run.wait();  // let a running graph finish (every tool call has a timeout)
     remember_paths(state);
+    browser.reset();  // its GPU textures, before the device goes
     if (nfd_ok) NFD_Quit();
     ed::DestroyEditor(editor);
     ImGui_ImplDX11_Shutdown();

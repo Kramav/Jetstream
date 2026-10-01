@@ -30,6 +30,21 @@ const Profile* profile_for_texture(const std::filesystem::path& tex, const std::
 // Layout from fmt_RE_MESH's reader [plugin source], checked against one RE4R texture (CLAUDE.md §9).
 TexMeta read_tex_meta(const std::filesystem::path& tex, const Profile& profile);
 
+// One mip level of a .tex exactly as stored, for previews: the GPU decodes `format` itself (RE Engine uses DXGI's
+// format numbers). Read straight from the file, layout as read_tex_meta [plugin source]; conversions still go
+// through Noesis. Image 0 of an array or cubemap.
+struct TexPixels {
+    std::uint32_t format = 0;                           // DXGI_FORMAT
+    std::uint32_t width = 0, height = 0;                // this mip's visible size
+    std::uint32_t stored_width = 0, stored_height = 0;  // as stored: rows padded to the pitch, BC 4x4 blocks whole
+    std::uint32_t row_pitch = 0;                        // bytes per row (per row of blocks for BC formats)
+    std::vector<std::uint8_t> data;
+};
+
+// The largest mip no bigger than max_side on either side, else the smallest. Throws ConvertError for formats
+// the browser can't show or a damaged file.
+TexPixels read_tex_pixels(const std::filesystem::path& tex, std::uint32_t max_side);
+
 // Image formats for the edit step, by extension: Noesis picks the format from it, both ways. BMP is left out
 // because Noesis writes it without alpha (spike 2026-09-30). JPG works but loses quality and transparency.
 inline constexpr const char* kEditImageFormats = "png,tga,jpg,jpeg";
