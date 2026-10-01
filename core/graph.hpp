@@ -1,6 +1,7 @@
 #pragma once
-// Node graph (CLAUDE.md §3/§4): node types, editing operations, JSON file format, runner.
-// Front ends (CLI, app) only call into this; they hold no graph logic.
+// Node graph (CLAUDE.md §3/§4): editing operations, JSON file format, runner. The node types themselves are in
+// nodes.hpp. Front ends (CLI, app) only call into these; they hold no graph logic.
+#include "nodes.hpp"
 #include "profile.hpp"
 #include "texture_converter.hpp"
 
@@ -10,7 +11,6 @@
 #include <map>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace remod {
@@ -18,64 +18,6 @@ namespace remod {
 struct GraphError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
-
-// What flows along a link: a texture file, an image file, or plain text.
-enum class PortType { Tex, Image, Text };
-
-// Which picker a front end should offer for a path field. OpenTexture: an RE Engine texture of any known game
-// (front ends build the filter from the profiles' tex suffixes).
-enum class PathKind { None, OpenFile, OpenTexture, SaveFile, Folder };
-
-// How an input can be typed in. None = link-only.
-enum class Widget { None, Text, Path, Checkbox };
-
-// `name`s are the stable ids stored in graph files; `title`, `label` and `hint` are what users read.
-// An output may carry a typed field for where the node writes it (e.g. Export's "Image file"): front ends show it
-// on the output side, and it's stored in Node::params under `field`. Such a field is always required.
-struct PortSpec {  // an output
-    const char* name;
-    PortType type;
-    const char* label;
-    const char* field = nullptr;
-    const char* field_label = "";
-    const char* hint = "";
-    PathKind path = PathKind::None;
-    const char* filter = nullptr;
-};
-
-// An input. Every input has a pin. Editable inputs (widget != None) can instead be typed; a link wins over the
-// typed value. `multiple` inputs are link-only and take any number of links, in link order.
-struct InputSpec {
-    const char* name;
-    const char* label;
-    PortType type;
-    Widget widget = Widget::None;
-    bool required = false;  // editable: typed or linked; link-only: at least one link
-    bool multiple = false;
-    const char* hint = "";
-    PathKind path = PathKind::None;
-    const char* filter = nullptr;  // extensions for typed file paths, e.g. "png,jpg"; nullptr = any
-    bool editable() const { return widget != Widget::None; }
-};
-
-struct NodeSpec {
-    const char* type;
-    const char* title;
-    const char* summary;
-    std::vector<InputSpec> inputs;
-    std::vector<PortSpec> outputs;
-    std::vector<const char*> state = {};  // other params the node keeps (e.g. EditImage's "done"); no field shown
-    bool manual = false;                  // a step the user does by hand (front ends mark it clearly)
-};
-
-// LoadTex, ExportImage, EditImage, ImportImage, SaveTex, PackageMod, Text.
-const std::vector<NodeSpec>& node_specs();
-const NodeSpec* find_spec(std::string_view type);
-const InputSpec* find_input(const NodeSpec& spec, std::string_view name);
-
-// Can an output of type `out` feed `in`? Same type; any output into a Text input (as its text/path); or Text
-// into an editable input (a typed value, e.g. a path).
-bool accepts(const InputSpec& in, PortType out);
 
 struct Node {
     int id = 0;
@@ -96,13 +38,20 @@ struct Graph {
     std::vector<Node> nodes;
     std::vector<Link> links;
 
-    Node& add_node(const std::string& type);  // new unique id, every editable input present (empty)
+    Node& add_node(const std::string& type);  // new unique id, every editable input present (its `initial` value)
     void remove_node(int id);                 // and its links
     std::string can_connect(const Link& link) const;  // why the link isn't allowed, or "" if it is
     std::string connect(const Link& link);            // can_connect, then add; returns the error or ""
     void disconnect(size_t link_index);
     bool is_connected(int node, const std::string& port, bool output) const;  // any link on that pin?
     std::vector<size_t> links_into(int node, const std::string& input) const;  // link indices, in order
+    std::vector<size_t> links_from(int node, const std::string& output) const;  // link indices, in order
+    // The type an output gives: its spec's, or for a pass-through (a Split) whatever is linked into it, followed back
+    // through chained Splits. An open output that passes nothing on (a Value) has the kind it feeds (wanted_type).
+    // Any if that's still open.
+    PortType output_type(int node, const std::string& output) const;
+    // The kind the inputs an output feeds want: its first link's input, followed on through Splits. Any if unlinked.
+    PortType wanted_type(int node, const std::string& output) const;
     const Node* find(int id) const;
     Node* find(int id);
     std::vector<std::string> validate() const;  // every problem that would stop a run; empty = runnable
@@ -128,7 +77,8 @@ struct Graph {
 };
 
 // JSON graph file, schema_version 0. Example: schemas/graph.v0.example.json
-// Older files are migrated on load (PackageMod's former `screenshot` field becomes an ImportImage -> preview).
+// Older files are migrated on load (PackageMod's former `screenshot` field becomes an ImportImage -> preview; an
+// output feeding several inputs gets a Split block).
 Graph load_graph(const std::filesystem::path& file);
 void save_graph(const Graph& graph, const std::filesystem::path& file);
 
@@ -183,12 +133,5 @@ int texture_target(const Graph& graph, int selected);
 // order.
 std::vector<std::array<float, 2>> tidy_layout(const Graph& graph, const std::vector<std::array<float, 2>>& sizes,
                                               float gap_x, float gap_y);
-
-// "<natives root>/<rest>" in `file` (case-insensitive) -> "<rest>", else "". Lets LoadTex infer the game path
-// when the .tex sits inside an extracted natives tree.
-std::string game_path_from(const std::filesystem::path& file, const std::string& natives_root);
-
-// Fills "{1}", "{2}", ... in `text` with `parts` (1-based). Throws GraphError if text uses a part that isn't given.
-std::string fill_template(const std::string& text, const std::vector<std::string>& parts);
 
 }  // namespace remod

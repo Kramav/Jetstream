@@ -6,6 +6,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <cstdio>
+#include <share.h>
+
 using Catch::Matchers::ContainsSubstring;
 using remod::Graph;
 using remod::GraphError;
@@ -47,7 +50,8 @@ bool has(const std::vector<std::string>& errors, const std::string& s) {
     return std::ranges::any_of(errors, [&](const std::string& e) { return e.find(s) != std::string::npos; });
 }
 
-// 1 LoadTex -> 2 ExportImage -> 3 EditImage -> 4 SaveTex -> 5 PackageMod, like schemas/graph.v0.example.json.
+// 1 LoadTex -> 6 Split -> 2 ExportImage -> 3 EditImage -> 4 SaveTex -> 5 PackageMod; the Split also feeds
+// SaveTex's original. Like schemas/graph.v0.example.json.
 Graph pipeline(const std::string& tex, const std::string& png, const std::string& out) {
     Graph g;
     g.add_node("LoadTex").params["tex"] = tex;
@@ -57,9 +61,10 @@ Graph pipeline(const std::string& tex, const std::string& png, const std::string
     auto& pkg = g.add_node("PackageMod");
     pkg.params["name"] = "M";
     pkg.params["out"] = out;
-    for (const remod::Link& l : {remod::Link{1, "tex", 2, "tex"}, remod::Link{2, "png", 3, "png"},
-                                 remod::Link{3, "image", 4, "image"}, remod::Link{1, "tex", 4, "original"},
-                                 remod::Link{4, "tex", 5, "tex"}})
+    g.add_node("Split");  // 6: the original texture goes to Export and to SaveTex
+    for (const remod::Link& l : {remod::Link{1, "tex", 6, "in"}, remod::Link{6, "out", 2, "tex"},
+                                 remod::Link{2, "png", 3, "png"}, remod::Link{3, "image", 4, "image"},
+                                 remod::Link{6, "out", 4, "original"}, remod::Link{4, "tex", 5, "tex"}})
         REQUIRE(g.connect(l).empty());
     return g;
 }
@@ -137,13 +142,13 @@ TEST_CASE("validate checks file extensions where a node lists them") {
         CHECK(g.validate().empty());
     }
     g.find(2)->params["png"] = "EDIT.PNG";
-    g.add_node("ImportImage").params["png"] = "shot.gif";  // node 6
-    REQUIRE(g.connect({6, "image", 5, "preview"}).empty());
+    g.add_node("ImportImage").params["png"] = "shot.gif";  // node 7
+    REQUIRE(g.connect({7, "image", 5, "preview"}).empty());
     REQUIRE(g.validate().size() == 1);
     CHECK_THAT(g.validate()[0], ContainsSubstring("Image file must end in .png"));
-    g.find(6)->params["png"] = "";  // linked-in values aren't typed values: a Text link satisfies it
-    g.add_node("Text").params["text"] = "shot.png";  // node 7
-    REQUIRE(g.connect({7, "text", 6, "png"}).empty());
+    g.find(7)->params["png"] = "";  // linked-in values aren't typed values: a Text link satisfies it
+    g.add_node("Text").params["text"] = "shot.png";  // node 8
+    REQUIRE(g.connect({8, "text", 7, "png"}).empty());
     CHECK(g.validate().empty());
 }
 
@@ -157,14 +162,14 @@ TEST_CASE("graph file round-trips") {
     remod::save_graph(g, tmp.path / "g.json");
     const Graph back = remod::load_graph(tmp.path / "g.json");
     CHECK(back.profile == "re4r");
-    REQUIRE(back.nodes.size() == 5);
+    REQUIRE(back.nodes.size() == 6);
     CHECK(back.find(1)->params.at("tex") == "C:/x/a.tex.143221013");
     CHECK(back.find(2)->x == 320.5f);
     CHECK(back.find(2)->y == -40);
     CHECK(back.find(3)->params.at("done") == "true");
-    REQUIRE(back.links.size() == 5);
-    CHECK(back.links[3].from_node == 1);
-    CHECK(back.links[3].to_port == "original");
+    REQUIRE(back.links.size() == 6);
+    CHECK(back.links[4].from_node == 6);
+    CHECK(back.links[4].to_port == "original");
     CHECK(back.validate().empty());
 
     test::write_file(tmp.path / "bad.json", "{ not json");
@@ -178,6 +183,7 @@ TEST_CASE("the example graph file loads and validates") {
     const Graph g = remod::load_graph(REMOD_SCHEMAS_DIR "/graph.v0.example.json");
     CHECK(g.validate().empty());
     CHECK(std::ranges::count(g.nodes, std::string("EditImage"), &remod::Node::type) == 1);
+    CHECK(g.nodes.size() == 7);  // its Splits are in the file, not added by migration
 }
 
 TEST_CASE("game path is inferred from a natives tree") {
@@ -298,12 +304,14 @@ TEST_CASE("every input can be linked, with type rules") {
     g.add_node("Text");         // 4
     g.add_node("ImportImage");  // 5
     g.add_node("Text");         // 6
+    g.add_node("Text");         // 7
+    g.add_node("ImportImage");  // 8
     CHECK(g.connect({4, "text", 3, "name"}).empty());  // text into a text field
-    CHECK(g.connect({4, "text", 1, "tex"}).empty());   // text into an editable path field (a typed path)
+    CHECK(g.connect({7, "text", 1, "tex"}).empty());   // text into an editable path field (a typed path)
     CHECK_THAT(g.connect({4, "text", 2, "original"}), ContainsSubstring("needs a texture"));  // link-only input
     CHECK(g.connect({1, "tex", 6, "parts"}).empty());   // anything into a Text input (its path)
     CHECK(g.connect({5, "image", 6, "parts"}).empty());  // multiple input: a second link
-    CHECK(g.connect({5, "image", 3, "author"}).empty()); // any output into a text field
+    CHECK(g.connect({8, "image", 3, "author"}).empty()); // any output into a text field
     CHECK_THAT(g.connect({5, "image", 3, "tex"}), ContainsSubstring("needs a texture"));
     CHECK_THAT(g.connect({6, "text", 3, "name"}), ContainsSubstring("already has a link"));
     CHECK(g.links_into(6, "parts").size() == 2);
@@ -311,11 +319,11 @@ TEST_CASE("every input can be linked, with type rules") {
 
 TEST_CASE("a multiple input takes any number of links; required means at least one") {
     Graph g = pipeline("a.tex.143221013", "a.png", "out");
-    g.disconnect(4);  // PackageMod's only texture
+    g.disconnect(5);  // PackageMod's only texture
     CHECK(has(g.validate(), "input 'texture' is not connected"));
     REQUIRE(g.connect({4, "tex", 5, "tex"}).empty());
-    g.add_node("SaveTex");  // node 6
-    REQUIRE(g.connect({6, "tex", 5, "tex"}).empty());
+    g.add_node("SaveTex");  // node 7
+    REQUIRE(g.connect({7, "tex", 5, "tex"}).empty());
     CHECK(g.links_into(5, "tex").size() == 2);
 }
 
@@ -355,15 +363,37 @@ TEST_CASE("old graph files are migrated") {
           "links": [{"from": [1, "tex"], "to": [2, "tex"]}, {"from": [2, "image"], "to": [3, "image"]},
                     {"from": [1, "tex"], "to": [3, "original"]}]})");
         const Graph g = remod::load_graph(tmp.path / "old.json");
-        REQUIRE(g.nodes.size() == 4);
-        const remod::Node& edit = g.nodes.back();
+        REQUIRE(g.nodes.size() == 5);  // and a Split: the texture goes to two steps
+        const remod::Node& edit = g.nodes[3];
         CHECK(edit.type == "EditImage");
         CHECK(edit.x == 450);
         CHECK(g.is_connected(2, "png", true));
         CHECK_FALSE(g.is_connected(2, "image", true));
         REQUIRE(g.links_into(3, "image").size() == 1);
         CHECK(g.links[g.links_into(3, "image")[0]].from_node == edit.id);
+        CHECK(g.nodes.back().type == "Split");
         CHECK(g.validate().empty());
+    }
+    SECTION("an output feeding several inputs gets a Split, which feeds them in the same order") {
+        test::write_file(tmp.path / "old.json", R"({"schema_version": 0, "profile": "re4r",
+          "nodes": [{"id": 1, "type": "Text", "params": {"text": "M"}, "pos": [100, 50]},
+                    {"id": 2, "type": "PackageMod", "params": {"name": "", "out": ""}},
+                    {"id": 3, "type": "Text", "params": {"text": ""}}],
+          "links": [{"from": [1, "text"], "to": [3, "parts"]}, {"from": [1, "text"], "to": [2, "name"]},
+                    {"from": [1, "text"], "to": [2, "out"]}]})");
+        const Graph g = remod::load_graph(tmp.path / "old.json");
+        REQUIRE(g.nodes.size() == 4);
+        const remod::Node& split = g.nodes.back();
+        CHECK(split.type == "Split");
+        CHECK(split.x == 500);
+        CHECK(g.links_from(1, "text").size() == 1);
+        CHECK(g.links[g.links_into(split.id, "in")[0]].from_node == 1);
+        const auto out = g.links_from(split.id, "out");
+        REQUIRE(out.size() == 3);
+        CHECK(g.links[out[0]].to_node == 3);
+        CHECK(g.links[out[1]].to_port == "name");
+        CHECK(g.links[out[2]].to_port == "out");
+        CHECK_FALSE(has(g.validate(), "more than one step"));
     }
 }
 
@@ -376,7 +406,7 @@ TEST_CASE("run: two textures, linked text, combined preview, replace on rebuild"
                                 .base_dir = tmp.path,
                                 .log = [&](const std::string& s) { log.push_back(s); }};
     Graph g;
-    for (const char* name : {"a", "b"}) {  // LoadTex -> SaveTex <- ImportImage, per texture
+    for (const char* name : {"a", "b"}) {  // LoadTex -> SaveTex <- Split <- ImportImage, per texture
         const fs::path tex = tmp.path / "natives/STM/ui" / (std::string(name) + ".tex.143221013");
         test::write_fake_tex(tex, 143221013, 64, 32, 1, 5, 99);
         remod::save_png_bgra(tmp.path / (std::string(name) + ".png"), 64, 32, std::vector<std::uint8_t>(64 * 32 * 4, 200));
@@ -384,9 +414,11 @@ TEST_CASE("run: two textures, linked text, combined preview, replace on rebuild"
         g.find(load)->params["tex"] = tex.string();
         const int img = g.add_node("ImportImage").id;
         g.find(img)->params["png"] = std::string(name) + ".png";
+        const int split = g.add_node("Split").id;  // the image also goes to the preview, below
         const int save = g.add_node("SaveTex").id;
         REQUIRE(g.connect({load, "tex", save, "original"}).empty());
-        REQUIRE(g.connect({img, "image", save, "image"}).empty());
+        REQUIRE(g.connect({img, "image", split, "in"}).empty());
+        REQUIRE(g.connect({split, "out", save, "image"}).empty());
     }
     const int pkg = g.add_node("PackageMod").id;
     g.find(pkg)->params["name"] = "typed name, overridden by the link";
@@ -397,8 +429,8 @@ TEST_CASE("run: two textures, linked text, combined preview, replace on rebuild"
     g.find(word)->params["text"] = "Textures";
     REQUIRE(g.connect({word, "text", text, "parts"}).empty());
     REQUIRE(g.connect({text, "text", pkg, "name"}).empty());
-    for (int save : {3, 6}) REQUIRE(g.connect({save, "tex", pkg, "tex"}).empty());
-    for (int img : {2, 5}) REQUIRE(g.connect({img, "image", pkg, "preview"}).empty());
+    for (int save : {4, 8}) REQUIRE(g.connect({save, "tex", pkg, "tex"}).empty());
+    for (int split : {3, 7}) REQUIRE(g.connect({split, "out", pkg, "preview"}).empty());
 
     CHECK_FALSE(remod::run_graph(g, opt).paused);
     const fs::path mod = tmp.path / "out/Two Textures";
@@ -431,10 +463,12 @@ TEST_CASE("run: one run exports every image that needs editing") {
         g.find(exp)->params["png"] = std::string(name) + ".png";
         const int edit = g.add_node("EditImage").id;
         const int save = g.add_node("SaveTex").id;
-        REQUIRE(g.connect({load, "tex", exp, "tex"}).empty());
+        const int split = g.add_node("Split").id;
+        REQUIRE(g.connect({load, "tex", split, "in"}).empty());
+        REQUIRE(g.connect({split, "out", exp, "tex"}).empty());
         REQUIRE(g.connect({exp, "png", edit, "png"}).empty());
         REQUIRE(g.connect({edit, "image", save, "image"}).empty());
-        REQUIRE(g.connect({load, "tex", save, "original"}).empty());
+        REQUIRE(g.connect({split, "out", save, "original"}).empty());
         REQUIRE(g.connect({save, "tex", pkg, "tex"}).empty());
     }
 
@@ -508,10 +542,12 @@ TEST_CASE("editing: nodes that fit a pin, added already connected") {
     CHECK(g.links[g.links_into(4, "image")[0]].from_node == id);
     CHECK_FALSE(g.is_connected(3, "image", true));  // the Edit PNG step's old link made way
 
-    // From an output into a multiple input: added, nothing replaced.
+    // From an output into a multiple input: added, nothing replaced. A used single output refuses a second link.
     const auto pkg = std::ranges::find(from_tex, std::string("PackageMod"), [](const auto& c) { return std::string(c.spec->type); });
-    const int pkg2 = g.add_connected(*pkg, 1, "tex", true);
+    CHECK_THROWS_WITH(g.add_connected(*pkg, 1, "tex", true), ContainsSubstring("put a Split block"));
+    const int pkg2 = g.add_connected(*pkg, 6, "out", true);  // the Split's output takes any number
     CHECK(g.links_into(pkg2, "tex").size() == 1);
+    CHECK(g.links_from(6, "out").size() == 3);
 }
 
 TEST_CASE("editing: insert a node on a link, duplicate, disconnect") {
@@ -521,20 +557,30 @@ TEST_CASE("editing: insert a node on a link, duplicate, disconnect") {
     g.add_node("SaveTex");                                     // 3
     REQUIRE(g.connect({1, "tex", 2, "tex"}).empty());
     REQUIRE(g.connect({2, "png", 3, "image"}).empty());       // export straight into convert: no editing step
-    REQUIRE(g.connect({1, "tex", 3, "original"}).empty());
 
+    // The texture to Convert too: a second link from its output takes a Split, put on the first link.
+    CHECK_THAT(g.connect({1, "tex", 3, "original"}), ContainsSubstring("already goes to a step"));
     std::vector<std::string> fits;
-    for (const auto* s : g.choices_for_link(1)) fits.emplace_back(s->type);
+    for (const auto* s : g.choices_for_link(0)) fits.emplace_back(s->type);
+    CHECK(std::ranges::count(fits, "Split") == 1);  // texture in, texture out
+    const int split = g.insert_node(0, "Split");  // 4
+    REQUIRE(g.connect({split, "out", 3, "original"}).empty());
+    CHECK(g.links_from(split, "out").size() == 2);
+
+    const size_t png_link = g.links_into(3, "image")[0];
+    fits.clear();
+    for (const auto* s : g.choices_for_link(png_link)) fits.emplace_back(s->type);
     CHECK(std::ranges::count(fits, "EditImage") == 1);  // image in, image out
+    CHECK(std::ranges::count(fits, "Split") == 1);
     CHECK(std::ranges::count(fits, "LoadTex") == 0);
 
-    const int edit = g.insert_node(1, "EditImage");
+    const int edit = g.insert_node(png_link, "EditImage");
     CHECK(g.find(edit)->type == "EditImage");
     CHECK(g.links[g.links_into(edit, "png")[0]].from_node == 2);
     CHECK(g.links[g.links_into(3, "image")[0]].from_node == edit);
-    CHECK(g.links.size() == 4);
-    CHECK_THROWS_AS(g.insert_node(0, "PackageMod"), GraphError);  // no texture output to feed Export
-    CHECK(g.links.size() == 4);  // unchanged after the refusal
+    CHECK(g.links.size() == 5);
+    CHECK_THROWS_AS(g.insert_node(0, "PackageMod"), GraphError);  // it has no output to feed the Split
+    CHECK(g.links.size() == 5);  // unchanged after the refusal
 
     remod::set_edit_done(g, edit, true);
     const int copy = g.duplicate_node(edit);
@@ -548,11 +594,292 @@ TEST_CASE("editing: insert a node on a link, duplicate, disconnect") {
     g.disconnect_node(3);
     CHECK_FALSE(g.is_connected(3, "image", false));
     CHECK_FALSE(g.is_connected(3, "original", false));
-    CHECK(g.links.size() == 2);
+    CHECK(g.links.size() == 3);
 }
 
 TEST_CASE("profiles load by id") {
     CHECK(remod::load_profile_by_id(REMOD_PROFILES_DIR, "re4r").name == "Resident Evil 4 (2023)");
     CHECK_THROWS_AS(remod::load_profile_by_id(REMOD_PROFILES_DIR, "../x"), remod::ProfileError);
     CHECK_THROWS_AS(remod::load_profile_by_id(REMOD_PROFILES_DIR, "nope"), remod::ProfileError);
+}
+
+namespace {
+
+// 1 CopyFile -> 2 Text "{1}": the Text block's status shows the path Copy file passed on.
+Graph copy_graph(const std::string& source, const std::string& dest, const char* mode = "fail") {
+    Graph g;
+    auto& copy = g.add_node("CopyFile");
+    copy.params["source"] = source;
+    copy.params["dest"] = dest;
+    copy.params["if_exists"] = mode;
+    g.add_node("Text").params["text"] = "{1}";
+    REQUIRE(g.connect({1, "path", 2, "parts"}).empty());
+    return g;
+}
+
+// Runs `g` with base_dir `dir`; the log goes to `log`.
+remod::RunResult run_copy(const Graph& g, const fs::path& dir, std::vector<std::string>& log) {
+    FakeConverter conv;
+    return remod::run_graph(g, {.profile = re4r(), .converter = conv, .base_dir = dir,
+                                .log = [&](const std::string& s) { log.push_back(s); }});
+}
+
+std::string run_error(const Graph& g, const fs::path& dir) {
+    std::vector<std::string> log;
+    std::string error = "(ran without an error)";
+    try {
+        run_copy(g, dir, log);
+    } catch (const remod::RunError& e) {
+        CHECK(e.nodes.at(1).state == NodeState::Failed);
+        CHECK(e.nodes.at(2).state == NodeState::NotReached);  // nothing downstream sees a path
+        error = e.what();
+    }
+    return error;
+}
+
+fs::path prefixed(const fs::path& p) { return LR"(\\?\)" + p.native(); }  // past MAX_PATH, for the test's own checks
+
+}  // namespace
+
+TEST_CASE("Copy file: new blocks have defaults, and every value survives save and load") {
+    TempDir tmp;
+    Graph g;
+    CHECK(g.add_node("CopyFile").params == std::map<std::string, std::string>{
+                                               {"source", ""}, {"dest", ""}, {"if_exists", "fail"}, {"create_dirs", "true"}});
+    g = copy_graph("C:/in/a.txt", "\"D:\\out\\\"", "skip");
+    g.find(1)->params["create_dirs"] = "";
+    remod::save_graph(g, tmp.path / "g.json");
+    const Graph back = remod::load_graph(tmp.path / "g.json");
+    CHECK(back.find(1)->params == g.find(1)->params);
+    CHECK(back.links.size() == 1);
+    CHECK(back.validate().empty());
+
+    g.find(1)->params["if_exists"] = "bogus";
+    CHECK(has(g.validate(), "Overwrite mode can't be 'bogus'"));
+    g.find(1)->params["source"] = "";
+    CHECK(has(g.validate(), "Source file is required"));
+}
+
+TEST_CASE("run: Copy file copies once and passes on the copy's full path") {
+    TempDir tmp;
+    const fs::path source = tmp.path / "my file.txt";
+    test::write_file(source, "hello");
+    std::vector<std::string> log;
+
+    // Pasted with quotes (Explorer's "Copy as path"), mixed separators, a relative destination in new folders.
+    const auto r = run_copy(copy_graph(" \"" + source.string() + "\" ", "out/sub\\copy.txt"), tmp.path, log);
+    const fs::path target = (tmp.path / "out/sub/copy.txt").lexically_normal();
+    CHECK(test::read_file(target) == "hello");
+    CHECK(r.nodes.at(1).file == target);
+    CHECK(r.nodes.at(2).message == "\"" + target.string() + "\"");
+    CHECK_FALSE(std::ranges::any_of(log, [](const std::string& l) { return l.find("warning") != std::string::npos; }));
+
+    SECTION("into a folder: the copy keeps the source's name") {
+        fs::create_directories(tmp.path / "dir");
+        run_copy(copy_graph(source.string(), (tmp.path / "dir").string()), tmp.path, log);
+        CHECK(test::read_file(tmp.path / "dir/my file.txt") == "hello");
+        run_copy(copy_graph(source.string(), "new/"), tmp.path, log);  // a trailing separator: a folder to create
+        CHECK(test::read_file(tmp.path / "new/my file.txt") == "hello");
+    }
+    SECTION("without Create folders, a missing folder fails") {
+        Graph g = copy_graph(source.string(), "missing/copy.txt");
+        g.find(1)->params["create_dirs"] = "";
+        CHECK_THAT(run_error(g, tmp.path), ContainsSubstring("destination folder doesn't exist"));
+        CHECK_FALSE(fs::exists(tmp.path / "missing"));
+    }
+    SECTION("paths past 260 characters, both ways") {
+        const fs::path deep = tmp.path / std::string(100, 'a') / std::string(100, 'b') / (std::string(100, 'c') + ".txt");
+        REQUIRE(deep.native().size() > 300);
+        run_copy(copy_graph(source.string(), deep.string()), tmp.path, log);
+        CHECK(fs::is_regular_file(prefixed(deep)));
+        const auto back = run_copy(copy_graph(deep.string(), "back.txt"), tmp.path, log);
+        CHECK(test::read_file(tmp.path / "back.txt") == "hello");
+        CHECK(back.nodes.at(1).file == tmp.path / "back.txt");
+        fs::remove_all(prefixed(tmp.path / std::string(100, 'a')));  // TempDir's cleanup can't
+    }
+}
+
+TEST_CASE("run: Copy file's overwrite modes, each logging that the destination exists") {
+    TempDir tmp;
+    const fs::path source = tmp.path / "a.txt", dest = tmp.path / "b.txt";
+    test::write_file(source, "new");
+    test::write_file(dest, "old");
+    std::vector<std::string> log;
+    auto warned = [&](const std::string& action) {
+        return std::ranges::count_if(log, [&](const std::string& l) {
+                   return l.find("Copy file (node 1): warning: destination exists: " + dest.string() + " (" + action + ")") !=
+                          std::string::npos;
+               }) == 1;
+    };
+
+    SECTION("Fail if exists") {
+        try {
+            run_copy(copy_graph(source.string(), dest.string(), "fail"), tmp.path, log);
+            FAIL("expected a RunError");
+        } catch (const remod::RunError& e) {
+            CHECK_THAT(std::string(e.what()), ContainsSubstring("destination exists"));
+            CHECK(e.nodes.at(2).state == NodeState::NotReached);
+        }
+        CHECK(warned("failed"));
+        CHECK(test::read_file(dest) == "old");
+    }
+    SECTION("Overwrite") {
+        const auto r = run_copy(copy_graph(source.string(), dest.string(), "overwrite"), tmp.path, log);
+        CHECK(warned("overwritten"));
+        CHECK(test::read_file(dest) == "new");
+        CHECK(r.nodes.at(2).message == "\"" + dest.string() + "\"");
+    }
+    SECTION("Skip if exists: the existing file is passed on") {
+        const auto r = run_copy(copy_graph(source.string(), dest.string(), "skip"), tmp.path, log);
+        CHECK(warned("skipped"));
+        CHECK(test::read_file(dest) == "old");
+        CHECK_THAT(r.nodes.at(1).message, ContainsSubstring("kept existing"));
+        CHECK(r.nodes.at(2).message == "\"" + dest.string() + "\"");
+    }
+}
+
+TEST_CASE("run: Copy file fails clearly") {
+    TempDir tmp;
+    const fs::path source = tmp.path / "a.txt";
+    test::write_file(source, "x");
+    CHECK_THAT(run_error(copy_graph((tmp.path / "nope.txt").string(), "b.txt"), tmp.path),
+               ContainsSubstring("Copy file (node 1): source file not found"));
+    CHECK_THAT(run_error(copy_graph(tmp.path.string(), "b.txt"), tmp.path), ContainsSubstring("is a folder"));
+    for (const char* mode : {"fail", "overwrite", "skip"}) {
+        CHECK_THAT(run_error(copy_graph(source.string(), "./A.TXT", mode), tmp.path), ContainsSubstring("same file"));
+        CHECK_THAT(run_error(copy_graph(source.string(), tmp.path.string(), mode), tmp.path), ContainsSubstring("same file"));
+    }
+    CHECK(test::read_file(source) == "x");
+
+    // Not writable: open in another program that doesn't share it. (A read-only file doesn't count: MSVC's
+    // copy_file overwrites it.)
+    const fs::path locked = tmp.path / "locked.txt";
+    test::write_file(locked, "keep");
+    std::FILE* holder = _wfsopen(locked.c_str(), L"rb", _SH_DENYRW);
+    REQUIRE(holder);
+    CHECK_THAT(run_error(copy_graph(source.string(), locked.string(), "overwrite"), tmp.path), ContainsSubstring("can't write"));
+    std::fclose(holder);
+    CHECK(test::read_file(locked) == "keep");
+
+    Graph linked_mode = copy_graph(source.string(), "b.txt");  // a linked mode can say anything
+    linked_mode.add_node("Text").params["text"] = "bogus";      // node 3
+    REQUIRE(linked_mode.connect({3, "text", 1, "if_exists"}).empty());
+    CHECK_THAT(run_error(linked_mode, tmp.path), ContainsSubstring("Overwrite mode can't be 'bogus'"));
+}
+
+TEST_CASE("Copy file: the editor's destination-exists warning follows the file") {
+    TempDir tmp;
+    const fs::path source = tmp.path / "a.txt", dest = (tmp.path / "out/a.txt").lexically_normal();
+    test::write_file(source, "x");
+    Graph g = copy_graph(source.string(), "\"" + dest.string() + "\"");
+    CHECK(remod::destination_warnings(g, tmp.path).empty());
+    test::write_file(dest, "y");
+    CHECK(remod::destination_warnings(g, tmp.path) == std::map<int, std::string>{{1, "Destination exists: " + dest.string()}});
+    fs::remove(dest);
+    CHECK(remod::destination_warnings(g, tmp.path).empty());
+
+    test::write_file(dest, "y");
+    g.find(1)->params["dest"] = "out";  // a folder: the source's name is added
+    CHECK(remod::destination_warnings(g, tmp.path).size() == 1);
+    g.find(1)->params["dest"] = "C:\\bad:name?";  // half-typed nonsense: no warning, no exception
+    CHECK(remod::destination_warnings(g, tmp.path).empty());
+
+    // Values only known at run time: no guess.
+    g.find(1)->params["dest"] = "out";
+    g.add_node("Text").params["text"] = source.string();  // node 3
+    REQUIRE(g.connect({3, "text", 1, "source"}).empty());
+    CHECK(remod::destination_warnings(g, tmp.path).empty());  // linked source into a folder: name unknown
+    g.find(1)->params["dest"] = "out/a.txt";
+    CHECK(remod::destination_warnings(g, tmp.path).size() == 1);  // a file path doesn't depend on the source
+    g.disconnect(1);
+    REQUIRE(g.connect({3, "text", 1, "dest"}).empty());
+    CHECK(remod::destination_warnings(g, tmp.path).empty());  // linked destination
+}
+
+TEST_CASE("a Split passes on whatever is linked into it, and types are checked through it") {
+    Graph g;
+    g.add_node("LoadTex");      // 1
+    g.add_node("ImportImage");  // 2
+    g.add_node("Split");        // 3
+    g.add_node("Split");        // 4, after 3
+    g.add_node("SaveTex");      // 5
+    g.add_node("Text");         // 6
+    CHECK(g.output_type(3, "out") == remod::PortType::Any);  // nothing linked in yet
+    REQUIRE(g.connect({3, "out", 4, "in"}).empty());
+    REQUIRE(g.connect({4, "out", 5, "original"}).empty());  // fine while the type is open
+    CHECK(has(g.validate(), "input 'in' is not connected"));  // an open type is no error in itself
+    CHECK_FALSE(has(g.validate(), "needs"));
+    CHECK_THAT(g.connect({2, "image", 3, "in"}), ContainsSubstring("a Split would pass an image on to 'original texture'"));
+    REQUIRE(g.connect({1, "tex", 3, "in"}).empty());
+    CHECK(g.output_type(4, "out") == remod::PortType::Tex);  // followed back through both Splits
+    CHECK_THAT(g.connect({4, "out", 5, "image"}), ContainsSubstring("that input needs an image"));
+    CHECK(g.connect({4, "out", 6, "parts"}).empty());  // a texture into text: its path
+
+    const auto onto_split = g.choices_for_link(1);  // Split -> Split carries a texture: texture steps fit
+    CHECK(std::ranges::count(onto_split, std::string("SaveTex"), [](const auto* s) { return std::string(s->type); }) == 1);
+    CHECK(std::ranges::count(onto_split, std::string("EditImage"), [](const auto* s) { return std::string(s->type); }) == 0);
+}
+
+TEST_CASE("link kinds: paths and folders") {
+    using remod::PortType;
+    const remod::NodeSpec& copy = *remod::find_spec("CopyFile");
+    const remod::InputSpec& source = *remod::find_input(copy, "source");  // a Path
+    for (PortType t : {PortType::Tex, PortType::Image, PortType::Text, PortType::Path, PortType::Folder})
+        CHECK(remod::accepts(source, t));  // any file (a texture is one); a folder fails at run time, clearly
+    const remod::InputSpec& out = *remod::find_input(*remod::find_spec("PackageMod"), "out");  // a Folder
+    CHECK(remod::accepts(out, PortType::Text));
+    CHECK(remod::accepts(out, PortType::Folder));
+    CHECK_FALSE(remod::accepts(out, PortType::Path));  // a file isn't a folder
+    CHECK_FALSE(remod::accepts(out, PortType::Tex));
+    const remod::NodeSpec& load = *remod::find_spec("LoadTex");
+    CHECK(remod::accepts(*remod::find_input(load, "tex"), PortType::Path));  // a typed texture path field
+    CHECK_FALSE(remod::accepts(*remod::find_input(*remod::find_spec("SaveTex"), "original"), PortType::Path));  // link-only
+
+    Graph g;
+    g.add_node("CopyFile");  // 1
+    g.add_node("LoadTex");   // 2
+    CHECK(g.output_type(1, "path") == PortType::Path);
+    CHECK(g.connect({1, "path", 2, "tex"}).empty());  // copy a texture, then use the copy
+}
+
+TEST_CASE("a Value is kept in the graph and becomes the kind of field it feeds") {
+    TempDir tmp;
+    const fs::path tex = tmp.path / "natives/STM/ui/a.tex.143221013";
+    test::write_fake_tex(tex, 143221013, 64, 32, 1, 5, 99);
+    Graph g = pipeline(tex.string(), "a.png", "typed, overridden by the link");
+    remod::set_edit_done(g, 3, true);
+    test::write_fake_png(tmp.path / "a.png", 64, 32);
+    g.add_node("Value").params["value"] = "builds";  // 7: the output folder
+    g.add_node("Value").params["value"] = "2.0";     // 8: one version, to two fields
+    g.add_node("Split");                             // 9
+    using remod::PortType;
+    CHECK(g.output_type(7, "value") == PortType::Any);  // open until connected
+    REQUIRE(g.connect({7, "value", 5, "out"}).empty());
+    CHECK(g.output_type(7, "value") == PortType::Folder);
+    CHECK(remod::picker_for(g.output_type(7, "value")) == remod::PathKind::Folder);
+    REQUIRE(g.connect({8, "value", 9, "in"}).empty());
+    REQUIRE(g.connect({9, "out", 5, "version"}).empty());
+    REQUIRE(g.connect({9, "out", 5, "author"}).empty());
+    CHECK(g.output_type(9, "out") == PortType::Text);  // through the Split, from what it feeds
+    CHECK(remod::picker_for(PortType::Text) == remod::PathKind::None);
+
+    remod::save_graph(g, tmp.path / "g.json");  // the values live in the graph file
+    const Graph back = remod::load_graph(tmp.path / "g.json");
+    CHECK(back.find(7)->params.at("value") == "builds");
+    FakeConverter conv;
+    const auto r = remod::run_graph(back, {.profile = re4r(), .converter = conv, .base_dir = tmp.path});
+    CHECK_FALSE(r.paused);
+    CHECK(fs::is_regular_file(tmp.path / "builds/M.zip"));  // relative to the graph's folder, like a typed one
+    CHECK_THAT(test::read_file(tmp.path / "builds/M/modinfo.ini"), ContainsSubstring("version=2.0") && ContainsSubstring("author=2.0"));
+
+    g.find(7)->params["value"] = "";
+    CHECK(has(g.validate(), "Value is required"));
+    Graph wrong;  // a Value already feeding a folder can't also feed a texture-only input
+    wrong.add_node("Value");    // 1
+    wrong.add_node("Split");    // 2
+    wrong.add_node("PackageMod");  // 3
+    wrong.add_node("SaveTex");  // 4
+    REQUIRE(wrong.connect({1, "value", 2, "in"}).empty());
+    REQUIRE(wrong.connect({2, "out", 3, "out"}).empty());
+    CHECK_THAT(wrong.connect({2, "out", 4, "original"}), ContainsSubstring("needs a texture"));
 }

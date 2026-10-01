@@ -1,0 +1,105 @@
+#pragma once
+// The node types users place in a graph (CLAUDE.md §4): what each one takes and gives (its NodeSpec) and what it does
+// in a run (NodeSpec::run). Adding a node type = adding its spec and run function in nodes.cpp; the graph engine
+// (graph.hpp) and the front ends work from the specs and need no change.
+#include <array>
+#include <filesystem>
+#include <map>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace remod {
+
+struct Graph;
+class NodeRun;  // node_run.hpp: one node's view of a run (core only)
+
+// What flows along a link, by kind (front ends colour links and pins by it): a texture file, an image file, plain
+// text, a path to any file, a folder. Any: a pass-through (Split) carries whatever is linked into it
+// (Graph::output_type works out what). Kinds planned for later milestones, with their colours reserved: script, AI
+// call (CLAUDE.md §4).
+enum class PortType { Tex, Image, Text, Path, Folder, Any };
+
+// Which picker a front end should offer for a path field. OpenTexture: an RE Engine texture of any known game
+// (front ends build the filter from the profiles' tex suffixes).
+enum class PathKind { None, OpenFile, OpenTexture, SaveFile, Folder };
+
+// How an input can be typed in. None = link-only. Choice: one of InputSpec::options.
+enum class Widget { None, Text, Path, Checkbox, Choice };
+
+// `name`s are the stable ids stored in graph files; `title`, `label` and `hint` are what users read.
+// An output may carry a typed field for where the node writes it (e.g. Export's "Image file"): front ends show it
+// on the output side, and it's stored in Node::params under `field`. Such a field is always required.
+struct PortSpec {  // an output
+    const char* name;
+    PortType type;
+    const char* label;
+    const char* field = nullptr;
+    const char* field_label = "";
+    const char* hint = "";
+    PathKind path = PathKind::None;
+    const char* filter = nullptr;
+    bool multiple = false;  // any number of links, one row each (a Split); every other output feeds one input
+};
+
+// An input. Every input has a pin. Editable inputs (widget != None) can instead be typed; a link wins over the
+// typed value. `multiple` inputs are link-only and take any number of links, in link order.
+struct InputSpec {
+    const char* name;
+    const char* label;
+    PortType type;
+    Widget widget = Widget::None;
+    bool required = false;  // editable: typed or linked; link-only: at least one link
+    bool multiple = false;
+    const char* hint = "";
+    PathKind path = PathKind::None;
+    const char* filter = nullptr;  // extensions for typed file paths, e.g. "png,jpg"; nullptr = any
+    const char* initial = "";      // a new node's value, e.g. "true" for a checkbox ticked by default
+    std::vector<std::array<const char*, 2>> options = {};  // Choice: {stored value, what users read}
+    bool editable() const { return widget != Widget::None; }
+};
+
+struct NodeSpec {
+    const char* type;
+    const char* title;
+    const char* summary;
+    std::vector<InputSpec> inputs;
+    std::vector<PortSpec> outputs;
+    std::vector<const char*> state = {};  // other params the node keeps (e.g. EditImage's "done"); no field shown
+    bool manual = false;                  // a step the user does by hand (front ends mark it clearly)
+    bool utility = false;  // a simple helper (Split, Text): front ends draw it small and list it after the main steps
+    void (*run)(NodeRun&) = nullptr;      // what it does in a run; throws to fail the run
+};
+
+// LoadTex, ExportImage, EditImage, ImportImage, SaveTex, PackageMod, CopyFile; utilities Value (a value kept in the
+// graph, of whatever kind it feeds), Text, and Split (one value to several inputs: an output feeds one input, so
+// using it in several places takes a Split).
+const std::vector<NodeSpec>& node_specs();
+const NodeSpec* find_spec(std::string_view type);
+const InputSpec* find_input(const NodeSpec& spec, std::string_view name);
+
+// The picker a typed value of `type` gets (a Value's field takes the kind it feeds); None for text.
+PathKind picker_for(PortType type);
+
+// Can an output of type `out` feed `in`? Same type; anything into a Text or Path input (as its text/path: a texture
+// is a file too); Text into an editable input (a typed value), and a Path into a texture or image file field; anything
+// into a pass-through, and a pass-through with nothing linked in yet into anything (checked once it has a type).
+bool accepts(const InputSpec& in, PortType out);
+
+// ---- Helpers belonging to particular node types ----
+
+// Editor warnings that need no run: "Destination exists: <path>" on each file step (Copy file) whose typed
+// destination is already there. Only checks for existence, but that's the file system: front ends call it when inputs
+// change and every second or two, not every frame. A destination or source fed by a link is unknown until a run, so
+// no warning then, unless the typed destination is a file path. The run checks again and decides.
+std::map<int, std::string> destination_warnings(const Graph& graph, const std::filesystem::path& base_dir);
+
+// "<natives root>/<rest>" in `file` (case-insensitive) -> "<rest>", else "". Lets LoadTex infer the game path
+// when the .tex sits inside an extracted natives tree.
+std::string game_path_from(const std::filesystem::path& file, const std::string& natives_root);
+
+// Text: fills "{1}", "{2}", ... in `text` with `parts` (1-based). Throws GraphError if text uses a part that isn't
+// given.
+std::string fill_template(const std::string& text, const std::vector<std::string>& parts);
+
+}  // namespace remod

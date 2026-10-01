@@ -81,7 +81,26 @@ ExportImage/ImportImage reduce to handing that PNG to the user and checking the 
 Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png2tex` and `package`.
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
-- Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, PackageMod, Text.
+- Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, PackageMod, CopyFile; utilities
+  Value, Text and Split.
+- **Node types live in `core/nodes.*` (user, 2026-10-01: kept apart for cleanliness).** One function per type returns
+  its `NodeSpec`, run code included (`NodeSpec::run`, given a `NodeRun`: inputs, outputs, done/wait/log/warn; core-only
+  `core/node_run.hpp`). `core/graph.*` is the engine (editing, validation, file format, `run_graph`) and has no
+  per-type run code. A new node type = one function in nodes.cpp plus its entry in `node_specs()`.
+- **An output feeds one input (user, 2026-10-01).** Using a value in several places takes an explicit Split block:
+  its output (`PortSpec::multiple`) grows a row per link, like a multiple input. A second link from an ordinary output
+  is refused with a hint to put a Split on its link; older files get Splits on load. **One Split for every kind (user):**
+  its pins are `PortType::Any`, and `Graph::output_type` follows it back to what's linked in, so types are still
+  checked through it (a Split carrying a texture can't feed an image input; linking into a Split that would send the
+  wrong kind onward is refused).
+- **Utilities are small and quiet (user, 2026-10-01): "simple functions" (Split, Text, later path helpers such as Join
+  path) must look less significant than the real steps.** `NodeSpec::utility`: a narrow block, a smaller grey title,
+  the description only as the title's tooltip, no type name; listed after the main steps in menus ("Utilities"
+  submenu on the canvas). CopyFile is a real step, not a utility.
+- **Value (user, 2026-10-01): a variable kept in the graph file**, e.g. the output folder, version or author, outside
+  the Package block. Any kind, like Split: it becomes the kind of field it feeds (`Graph::wanted_type`, first link,
+  through Splits), with that kind's picker (`picker_for`) and colour. One field (an output field, so not linkable);
+  several uses go through a Split. Typed paths resolve against the graph's folder, like typed fields.
 - **Edit format = the file extension:** PNG, TGA or JPG (`kEditImageFormats`). Noesis reads and writes each, both ways
   (spike 2026-09-30, header-identical `.tex` from TGA and JPG). BMP is left out: Noesis writes it 24-bit, without
   alpha. Previews from TGA are read by the tool's own TGA reader (WIC has none); a single TGA preview is converted to PNG.
@@ -104,9 +123,9 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   and Use layout (structure and block positions locked; fill in, run, edit). The switch sits centred above the
   graph. The mode is UI state, remembered in settings.
 - **Links are routed by core** (`core/route.*`, `route_links`): right angles with rounded corners, around blocks,
-  leaving outputs rightwards and entering inputs from the left; links from one output share a trunk that branches
-  (junction dots) and never rejoins it; different outputs avoid sharing a line, running right beside one (closer
-  than 0.6 gap) and turning on each other. Two lanes around each block; spare midlines only where there's room.
+  leaving outputs rightwards and entering inputs from the left; links avoid sharing a line, running right beside one
+  (closer than 0.6 gap) and turning on each other. (route_links can still make links of one "net" share a trunk that
+  branches, with junction dots; since Splits (2026-10-01) the app gives every link its own net, so nothing branches.) Two lanes around each block; spare midlines only where there's room.
   Measured 2026-10-01 on 143 generated layouts (728 links), old → new: lines beside another 115 → 6, shared lines
   5 → 0, touching corners 43 → 0. Crossings cost a little (PCB-like traces) and each link is rerouted against all
   the others (rip-up and reroute, 3 passes): crossings 585 → 424, the user's Export / Convert crossing gone. The
@@ -119,9 +138,16 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   for the user, failed with its reason, or not reached. The app shows these as coloured node borders and badges.
 - **Every input has a pin** (`InputSpec`). Editable inputs can be typed or linked; a link wins.
   `multiple` inputs take any number of links, e.g. PackageMod's textures and previews.
-- Link types are Tex, Image and Text. Any output can go into a Text input; a Text output can go into any
-  editable input.
+- **Link kinds and colours (user, 2026-10-01: by what flows, not by file extension).** Pins and lines are coloured
+  by `PortType` (app `port_color`): texture orange, image green, text blue, file path yellow, folder teal, an open
+  Split grey. Reserved for later kinds (not types yet; no AI in M1): script purple, AI call pink. Rules (`accepts`):
+  same kind; anything into a Text or Path input (a texture is a file too); Text into any editable field; a Path into a
+  texture or image file field; a Folder field takes text or a folder, not a file path.
 - The Text node fills `{1}`, `{2}`… from its linked parts.
+- CopyFile (2026-10-01, first of the file nodes): source → file or folder, Overwrite mode (`Widget::Choice`: fail /
+  overwrite / skip), Create folders. Pasted quotes stripped, paths past 260 characters via `\\?\` (`long_path`).
+  The editor shows "Destination exists" from core `destination_warnings` (rechecked on input change and every 1.5 s;
+  no warning when a link decides the name); the run logs what it did with an existing destination.
 - ExportImage never overwrites an existing PNG (the user's edit). One run exports every PNG that needs editing
   and skips only what depends on a waiting EditImage. So a mod is: Run, edit, Done editing, Run.
 - PackageMod packages every linked texture. Several previews are tiled into one `preview.png`.
