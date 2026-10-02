@@ -51,6 +51,8 @@ struct PackageSpec {
 // An existing folder or zip is an error, unless spec.replace is set and it was built for this mod: a folder
 // whose modinfo.ini says name=<info.name>, a zip holding only <mod_name>/... including its modinfo.ini.
 // Anything else is never deleted.
-fs::path build_package(const Profile& profile, const PackageSpec& spec);
+// `unchanged` (optional): set when the same build is already there (same files, same bytes, same modinfo.ini, its
+// zip present), which is then left as it is: nothing written (user, 2026-10-02: no needless write cycles).
+fs::path build_package(const Profile& profile, const PackageSpec& spec, bool* unchanged = nullptr);
 
 }  // namespace remod

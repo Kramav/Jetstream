@@ -313,11 +313,26 @@ float number(const NodeRun& r, const char* input) {
                      std::to_string(int(in.max)) + ", not '" + t + "'");
 }
 
+// Replace photo's Zoom and Picture X / Y as a Framing (percentages; an empty Zoom, as in older graphs, is 100%).
+Framing framing_from(float zoom, float x, float y) { return {zoom > 0 ? zoom / 100 : 1, x / 100, y / 100}; }
+Framing framing_of(const NodeRun& r) {
+    return framing_from(number(r, "zoom"), number(r, "picture_x"), number(r, "picture_y"));
+}
+
 void write_image(NodeRun& r, const Bgra& image, const std::string& what) {
     const fs::path out = image_out(r);
-    save_png(out, image);
+    // Save to is written only when the result differs from what's there (user, 2026-10-02: no needless write cycles;
+    // reading it back costs no wear).
+    const bool kept = !r.text("save_to").empty();
+    bool same = false;
+    if (std::error_code ec; kept && fs::is_regular_file(out, ec)) try {
+            const Bgra old = load_image(out);
+            same = old.width == image.width && old.height == image.height && old.pixels == image.pixels;
+        } catch (const std::exception&) {  // unreadable: written again
+        }
+    if (!same) save_png(out, image);
     r.output("image", file_value(out));
-    r.done(what + (r.text("save_to").empty() ? "" : ", saved " + out.filename().string()), out);
+    r.done(what + (!kept ? "" : (same ? ", " : ", saved ") + out.filename().string() + (same ? " unchanged" : "")), out);
 }
 
 // Before a run: the result's path is known only when it's kept (Save to).
@@ -473,6 +488,13 @@ NodeSpec replace_photo_node() {
                                 "the frame); negative moves it in (shows more of the old photo).", "0", -40, 40,
                                 "%.0f px"),
                    number_input("feather", "Feather", "Softens the edge, in pixels.", "1", 0, 20, "%.0f px"),
+                   number_input("zoom", "Zoom", "Zooms into the picture: 100 just fills the photo's area end to "
+                                "end, 200 shows half as much of it.", "100", 100, 400, "%.0f%%"),
+                   number_input("picture_x", "Picture X", "Which part of the picture shows across: -100 its left "
+                                "edge, 100 its right edge, 0 the middle. Matters once it's wider than the area (or "
+                                "zoomed).", "0", -100, 100, "%.0f%%"),
+                   number_input("picture_y", "Picture Y", "Which part of the picture shows up and down: -100 its top, "
+                                "100 its bottom, 0 the middle (e.g. -40 keeps heads in).", "0", -100, 100, "%.0f%%"),
                    number_input("tone", "Match tone", "The old photo's brightness, contrast and colour cast.", "100",
                                 0, 100, "%.0f%%"),
                    number_input("shading", "Shading", "The old photo's darkening towards its edges: the frame's "
@@ -493,7 +515,7 @@ NodeSpec replace_photo_node() {
             const PhotoArea area = photo_area(frame, number(r, "frame_width"), number(r, "grow"), number(r, "feather"));
             const Ageing ageing{number(r, "tone") / 100, number(r, "shading") / 100, number(r, "stains") / 100,
                                 number(r, "detail") / 100};
-            write_image(r, replace_photo(frame, picture, area.mask, ageing),
+            write_image(r, replace_photo(frame, picture, area.mask, ageing, 1, framing_of(r)),
                         "photo replaced (frame width " + std::to_string(int(area.frame_width)) + " px)");
         },
         .preview = image_preview,
@@ -552,10 +574,12 @@ NodeSpec package_mod() {
                 tile_images(previews, spec.screenshot);
                 if (previews.size() > 1) r.log("combined " + std::to_string(previews.size()) + " previews");
             }
-            const fs::path root = build_package(r.profile(), spec);
+            bool unchanged = false;
+            const fs::path root = build_package(r.profile(), spec, &unchanged);
             r.output("mod", file_value(fs::path(root) += ".zip"));
-            r.done("packaged " + std::to_string(spec.files.size()) + " texture(s) into " + root.filename().string() +
-                       ".zip",
+            r.done(unchanged ? root.filename().string() + ".zip unchanged (the same build is there)"
+                             : "packaged " + std::to_string(spec.files.size()) + " texture(s) into " +
+                                   root.filename().string() + ".zip",
                    fs::path(root) += ".zip");
         },
         .preview = [](NodeRun& r) {
@@ -1178,13 +1202,16 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
             const auto frame = image("frame"), picture = image("picture");
             const auto fw = number_of("frame_width"), grow = number_of("grow"), feather = number_of("feather"),
                        tone = number_of("tone"), shading = number_of("shading"), stains = number_of("stains"),
-                       detail = number_of("detail");
-            if (!frame || !picture || !fw || !grow || !feather || !tone || !shading || !stains || !detail)
+                       detail = number_of("detail"), zoom = number_of("zoom"), pic_x = number_of("picture_x"),
+                       pic_y = number_of("picture_y");
+            if (!frame || !picture || !fw || !grow || !feather || !tone || !shading || !stains || !detail || !zoom ||
+                !pic_x || !pic_y)
                 return std::nullopt;
             const float k = frame->scale;  // sizes on the thumbnail
             const PhotoArea area = photo_area(frame->image, *fw > 0 ? *fw * k : 0, *grow * k, *feather * k, k);
             ImagePreview out{replace_photo(frame->image, picture->image, area.mask,
-                                           {*tone / 100, *shading / 100, *stains / 100, *detail / 100}, k),
+                                           {*tone / 100, *shading / 100, *stains / 100, *detail / 100}, k,
+                                           framing_from(*zoom, *pic_x, *pic_y)),
                              k};
             if (*fw <= 0) out.found["frame_width"] = area.frame_width / k;  // auto: the edge found
             if (text("show_outline") == "true")  // the edge as found, in cyan

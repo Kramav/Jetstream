@@ -65,9 +65,15 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
 struct Ageing {
     float tone = 1, shading = 1, stains = 1, detail = 0;
 };
-// `picture` covering the masked area end to end (aspect kept, cropped), aged from the old photo underneath, blended
-// into `frame` through the mask. The frame's alpha is kept. `scale` = pixels per real pixel (blur sizes follow it).
+// Which part of the picture shows (user, 2026-10-02: heads near an edge got cut off): `zoom` 1 just covers the area,
+// 2 shows half as much; `x`, `y` from -1 (its left / top edge) to 1 (right / bottom), 0 the middle.
+struct Framing {
+    float zoom = 1, x = 0, y = 0;
+};
+// `picture` covering the masked area end to end (aspect kept, cropped as `framing` says), aged from the old photo
+// underneath, blended into `frame` through the mask. The frame's alpha is kept. `scale` = pixels per real pixel (blur
+// sizes follow it).
 Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std::uint8_t>& mask, const Ageing& ageing,
-                   float scale = 1);
+                   float scale = 1, const Framing& framing = {});
 
 }  // namespace remod

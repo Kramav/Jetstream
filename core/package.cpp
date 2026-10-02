@@ -10,6 +10,7 @@
 #include <array>
 #include <cctype>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <sstream>
 
@@ -132,7 +133,31 @@ std::string write_modinfo(const ModInfo& info) {
     return out;
 }
 
-fs::path build_package(const Profile& profile, const PackageSpec& spec) {
+namespace {
+
+std::string read_all(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// Whether `root` already holds exactly these files (same bytes) and this modinfo.ini, nothing else.
+bool same_build(const fs::path& root, const std::vector<std::pair<fs::path, fs::path>>& copies, const std::string& modinfo) {
+    std::error_code ec;
+    std::set<fs::path> expected{(root / "modinfo.ini").lexically_normal()};
+    for (const auto& [src, dest] : copies) {
+        expected.insert(dest.lexically_normal());
+        if (fs::file_size(src, ec) != fs::file_size(dest, ec) || ec || read_all(src) != read_all(dest)) return false;
+    }
+    if (read_all(root / "modinfo.ini") != modinfo) return false;
+    for (const auto& entry : fs::recursive_directory_iterator(root, ec))
+        if (entry.is_regular_file() && !expected.contains(entry.path().lexically_normal())) return false;
+    return !ec;
+}
+
+}  // namespace
+
+fs::path build_package(const Profile& profile, const PackageSpec& spec, bool* unchanged) {
+    if (unchanged) *unchanged = false;
     if (spec.files.empty()) throw PackageError("nothing to package: no files given");
     check_mod_name(spec.mod_name);
 
@@ -177,6 +202,10 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec) {
             throw PackageError("output path exceeds " + std::to_string(kMaxPath) +
                                " characters; use a shorter output folder: " + dest.string());
 
+    if (old_root && (old_zip || !spec.zip) && same_build(root, copies, modinfo)) {
+        if (unchanged) *unchanged = true;  // the same build: nothing to write
+        return root;
+    }
     if (old_root) fs::remove_all(root);  // checked above: a previous build of this mod
     if (old_zip) fs::remove(zip);
     try {

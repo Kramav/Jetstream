@@ -557,7 +557,7 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
 }
 
 Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std::uint8_t>& mask, const Ageing& ageing,
-                   float scale) {
+                   float scale, const Framing& framing) {
     const unsigned w = frame.width, h = frame.height;
     if (mask.size() != size_t(w) * h) throw std::runtime_error("the mask doesn't match the frame image");
     unsigned x0 = w, y0 = h, x1 = 0, y1 = 0;
@@ -566,7 +566,18 @@ Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std
             if (mask[size_t(y) * w + x]) x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x), y1 = std::max(y1, y);
     if (x0 > x1) return frame;  // no photo area
     const unsigned bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-    const Bgra pic = resize_image(picture, bw, bh, Fit::Fill);  // end to end over the area
+    // End to end over the area: the part of the picture that shows (zoomed in and moved as `framing` says), cut out,
+    // then scaled to the area.
+    if (picture.width == 0 || picture.height == 0) throw std::runtime_error("the picture is empty");
+    const double cover = std::max(double(bw) / picture.width, double(bh) / picture.height) * std::max(1.0f, framing.zoom);
+    const unsigned cw = std::clamp(unsigned(std::lround(bw / cover)), 1u, picture.width),
+                   ch = std::clamp(unsigned(std::lround(bh / cover)), 1u, picture.height);
+    const unsigned cx = unsigned(std::lround((picture.width - cw) * 0.5 * (1 + std::clamp(framing.x, -1.0f, 1.0f)))),
+                   cy = unsigned(std::lround((picture.height - ch) * 0.5 * (1 + std::clamp(framing.y, -1.0f, 1.0f))));
+    Bgra part{cw, ch, std::vector<std::uint8_t>(size_t(cw) * ch * 4)};
+    for (unsigned y = 0; y < ch; ++y)
+        std::copy_n(&picture.pixels[(size_t(cy + y) * picture.width + cx) * 4], size_t(cw) * 4, &part.pixels[size_t(y) * cw * 4]);
+    const Bgra pic = resize_image(part, bw, bh, Fit::Stretch);
     Plane m(mask.size());
     for (size_t i = 0; i < m.size(); ++i) m[i] = mask[i] / 255.0f;
     const Plane old_l = luma(frame);

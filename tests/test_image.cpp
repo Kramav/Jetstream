@@ -287,6 +287,35 @@ TEST_CASE("replace_photo fills the area end to end and carries the old photo's a
     CHECK(t[2] < 120);
 }
 
+TEST_CASE("replace_photo frames the picture: zoom and which part shows") {
+    const remod::Bgra frame = framed(200, 10, 45, 50);  // a 100x100 photo
+    const remod::PhotoArea area = remod::photo_area(frame, 40, 0, 0);
+    // A wide picture: red on the left, blue on the right; a green square in the middle of a tall one.
+    remod::Bgra wide{40, 10, std::vector<std::uint8_t>(40 * 10 * 4, 255)};
+    for (unsigned y = 0; y < 10; ++y)
+        for (unsigned x = 0; x < 40; ++x) {
+            std::uint8_t* p = &wide.pixels[(size_t(y) * 40 + x) * 4];
+            p[0] = x < 20 ? 0 : 255, p[1] = 0, p[2] = x < 20 ? 255 : 0;
+        }
+    auto blue = [&](const remod::Bgra& img, unsigned x, unsigned y) { return img.pixels[(size_t(y) * 200 + x) * 4]; };
+    const remod::Ageing none{0, 0, 0, 0};
+    const remod::Bgra left = remod::replace_photo(frame, wide, area.mask, none, 1, {1, -1, 0});
+    CHECK(blue(left, 55, 100) == 0);   // its left edge: all red
+    CHECK(blue(left, 145, 100) == 0);
+    const remod::Bgra right = remod::replace_photo(frame, wide, area.mask, none, 1, {1, 1, 0});
+    CHECK(blue(right, 55, 100) == 255);  // its right edge: all blue
+    const remod::Bgra middle = remod::replace_photo(frame, wide, area.mask, none, 1, {});
+    CHECK(blue(middle, 60, 100) == 0);  // the middle: red, then blue
+    CHECK(blue(middle, 140, 100) == 255);
+
+    remod::Bgra tall{10, 10, std::vector<std::uint8_t>(10 * 10 * 4, 255)};  // white, a green middle 2x2
+    for (unsigned y = 4; y < 6; ++y)
+        for (unsigned x = 4; x < 6; ++x) tall.pixels[(size_t(y) * 10 + x) * 4 + 0] = tall.pixels[(size_t(y) * 10 + x) * 4 + 2] = 0;
+    const remod::Bgra zoomed = remod::replace_photo(frame, tall, area.mask, none, 1, {5, 0, 0});  // 2x2 of 10 fills it
+    CHECK(blue(zoomed, 60, 60) == 0);  // green reaches the photo's corners
+    CHECK(blue(zoomed, 140, 140) == 0);
+}
+
 TEST_CASE("replace_photo carries the dirt, not the old picture") {
     // A sepia old photo (browner the darker it is) in the 200 px opening at 50-249: a dark disc with a sharp edge, two
     // white specks and a brown stain.

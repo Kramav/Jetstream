@@ -265,7 +265,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   from the texture, never from the file, and a run exports it again only when needed (user: avoid needless write
   cycles): the texture differs from the recorded one, or the file's write time differs from the recorded one (changed
   or deleted outside the tool). An unchanged Run writes nothing for it (it used to cost ~2.5 MB: PNG, Noesis's temp
-  copy and log). Not yet skipped when unchanged: Replace photo / image blocks' Save to, SaveTex's temp .tex, Package.
+  copy and log). **Also skipped when unchanged (user, 2026-10-02):** an image block's Save to (the result is compared
+  with the file, read back; "unchanged" in its message) and Package (`build_package(..., &unchanged)`: the same files
+  with the same bytes, the same modinfo.ini, nothing else in the folder, its zip there: left as it is). Still written
+  every run: the run's temporary folder (SaveTex's .tex, temporary image results), deleted afterwards.
   **A file for editing whose texture changed (user, 2026-10-02: a new frame texture still previewed, and would have packaged,
   the old frame's PNG; overwrite chosen over a backup or a refusal):** each run records the texture the file is from
   (node state `exported_from` / `exported_time`, via `RunResult::state` / `RunError::state` and `apply_run`); a
@@ -282,7 +285,9 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   alpha channel as it is (RE textures often hold other data there). Resize: width / height (one empty keeps the
   shape) or "Match size of" an image or texture (`read_tex_meta`); fit (bars) / fill (crop) / stretch. Numbers are
   `Widget::Number` fields (range, display format, text for 0 such as "auto"; stored as text): a drag field in the
-  app (Ctrl+click types), checked again in the run ("Hue must be a number from -180 to 180").
+  app (Ctrl+click types), checked again in the run ("Hue must be a number from -180 to 180"). **Every such
+  slider has a "back to default" button beside it (user, 2026-10-02):** a drawn arrow, dimmed at the default, sets
+  `InputSpec::initial`; the hover says the default. New sliders get it by being `Widget::Number`.
   **Live thumbnails (user, 2026-10-01):** core `preview_image` works out an image block's (`NodeSpec::thumbnail`)
   result in memory at <= 256 px from its real input (an image block upstream, through Splits, or the file a preview
   or field names), scaling sizes and positions to the shrunk copy (`ImagePreview::scale`). The app recomputes them in a
@@ -304,6 +309,9 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   - Every one zooms and pans like the viewer (app `zoom_area`: wheel, drag, double-click fits).
   - In-app windows, not OS windows: ImGui's multi-viewport mode isn't on. They never dock
     (`ImGuiWindowFlags_NoDocking`): docked into the Graph's slot, dragging the slot moved the graph with them (user).
+  - **Previews follow the files they read (user, 2026-10-02):** each preview job records every file its loader read
+    with its write time (missing ones too); once a second the app checks them, and a change (a picture saved over, an
+    edit saved in GIMP) or a file appearing works the previews out again. Before, only a graph change did.
   - **Preview block (user, 2026-10-02: "place the image preview output onto my graph directly"):** one input of any
     kind (an image, a texture, or a path to one: `preview_image` passes it through), a Size field (px at 100% zoom;
     `NodeSpec::view_size` names it, so the app sizes the block and its picture from it and uses the 1024 px preview).
@@ -351,6 +359,9 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   any; jacket pattern and a few buttons remain faint in Scratches at 100. Test: a sepia photo with a dark disc,
   specks and a stain: no edge where the disc was, specks and a darker stain carried. "Show edge" draws the found
   outline on the thumbnail only.
+  **Framing (user, 2026-10-02: heads near an edge got cut off):** Zoom (100-400%) and Picture X / Y (-100 = its
+  left / top edge, 100 = right / bottom): core `Framing`; the part that shows is cut from the picture, then scaled to
+  the area. An empty Zoom (older graphs) is 100%.
   **Frame width on auto shows what was found (user, 2026-10-02: "a frame of reference"):** "auto (~91 px)", from the
   thumbnail's search (core `ImagePreview::found`, real pixels; ~ because a thumbnail pixel is several real ones), and a
   drag starts there (a click alone stays on auto). Larger moves the edge inwards; past the frame's middle the

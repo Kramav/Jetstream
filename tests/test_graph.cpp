@@ -1429,6 +1429,9 @@ TEST_CASE("run: Replace photo puts the picture in the frame's photo; its preview
     CHECK(out.pixels[(60 * 120 + 31) * 4 + 0] >= 200);  // right up to the photo's edge (at 30), softened inwards
     CHECK(out.pixels[(60 * 120 + 29) * 4 + 0] == 40);   // not onto the frame
     CHECK(out.pixels[(60 * 120 + 15) * 4 + 0] == 40);   // the wood untouched
+    const auto written = fs::last_write_time(tmp.path / "out.png");
+    CHECK_THAT(run_in(g, tmp.path).nodes.at(1).message, ContainsSubstring("out.png unchanged"));  // the same result:
+    CHECK(fs::last_write_time(tmp.path / "out.png") == written);                                // not written again
 
     const remod::ImageLoader load = [](const fs::path& f) -> std::optional<remod::ImagePreview> {
         return remod::ImagePreview{remod::load_image(f), 1};

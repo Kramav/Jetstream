@@ -418,14 +418,23 @@ struct State {
         std::filesystem::file_time_type time;
         remod::ImagePreview image;
     };
+    using FileTimes = std::map<std::string, std::filesystem::file_time_type>;  // missing: file_time_type::min()
+    struct PreviewJob {
+        std::map<int, std::pair<std::optional<remod::ImagePreview>, std::string>> made;  // by block: it, or why not
+        FileTimes read;  // every file it read, with its write time
+    };
     struct PreviewSet {
         unsigned side = 256;  // pixels, the longer side at most
         std::map<int, Thumb> images;
         std::map<int, std::string> none;
-        std::future<std::map<int, std::pair<std::optional<remod::ImagePreview>, std::string>>> job;
+        std::future<PreviewJob> job;
         remod::Graph of;
         std::string of_path = "\x01";
         std::vector<int> of_ids;
+        // The files the last job read: changed on disk (a picture saved over, an edit saved in GIMP) or appearing, the
+        // previews are worked out again (user, 2026-10-02). Checked once a second.
+        FileTimes read;
+        std::chrono::steady_clock::time_point checked;
         // Files shrunk to `side`, by path and write time: only this set's job thread uses it, one job at a time.
         std::shared_ptr<std::map<std::string, ShrunkFile>> shrunk = std::make_shared<std::map<std::string, ShrunkFile>>();
     };
@@ -1803,10 +1812,11 @@ void release(State::PreviewSet& set) {
 void update_previews(State& s, State::PreviewSet& set, std::vector<int> ids) {
     using namespace std::chrono_literals;
     if (set.job.valid() && set.job.wait_for(0s) == std::future_status::ready) {
-        const auto results = set.job.get();
+        State::PreviewJob done = set.job.get();
+        set.read = std::move(done.read);
         release(set);  // gone, or about to be replaced
         set.none.clear();
-        for (const auto& [id, made] : results) {
+        for (const auto& [id, made] : done.made) {
             const auto& [result, why] = made;
             if (!result) {
                 set.none[id] = why;
@@ -1832,8 +1842,16 @@ void update_previews(State& s, State::PreviewSet& set, std::vector<int> ids) {
         }
     }
     if (set.job.valid()) return;  // one job at a time
+    bool files_changed = false;
+    if (const auto now = std::chrono::steady_clock::now(); now - set.checked > 1s) {
+        set.checked = now;
+        for (const auto& [file, time] : set.read) {
+            std::error_code ec;
+            if (std::filesystem::last_write_time(file, ec) != time) files_changed = true;  // min() when missing
+        }
+    }
     remod::Graph shape = shape_of(s.graph);
-    if (shape == set.of && s.graph_path == set.of_path && ids == set.of_ids) return;
+    if (!files_changed && shape == set.of && s.graph_path == set.of_path && ids == set.of_ids) return;
     set.of = std::move(shape);
     set.of_path = s.graph_path;
     set.of_ids = ids;
@@ -1847,9 +1865,11 @@ void update_previews(State& s, State::PreviewSet& set, std::vector<int> ids) {
                                                    profile = p == s.profiles.end() ? std::optional<remod::Profile>()
                                                                                    : std::optional<remod::Profile>(*p),
                                                    base = std::filesystem::absolute(s.graph_path).parent_path()] {
+        State::PreviewJob job;
         const remod::ImageLoader load = [&](const std::filesystem::path& file) -> std::optional<remod::ImagePreview> {
             std::error_code ec;
             const auto time = std::filesystem::last_write_time(file, ec);
+            job.read[file.string()] = time;  // min() when missing: noticed once it appears
             if (ec) return std::nullopt;
             auto& cached = (*shrunk)[file.string()];
             if (cached.time != time || cached.image.image.pixels.empty()) {
@@ -1873,13 +1893,12 @@ void update_previews(State& s, State::PreviewSet& set, std::vector<int> ids) {
             return cached.image;
         };
         const remod::RunValues preview = remod::preview_values(graph, base);
-        std::map<int, std::pair<std::optional<remod::ImagePreview>, std::string>> out;
         for (const int id : ids) {
             std::string why;
             auto made = remod::preview_image(graph, preview, id, base, side, load, profile ? &*profile : nullptr, &why);
-            out[id] = {std::move(made), std::move(why)};
+            job.made[id] = {std::move(made), std::move(why)};
         }
-        return out;
+        return job;
     });
 }
 
@@ -1894,6 +1913,27 @@ void update_thumbs(State& s) {
         }
     update_previews(s, s.thumbs, all);
     update_previews(s, s.big, popped);
+}
+
+// A "back to default" button: a counter-clockwise arrow (the fonts have no arrow glyph), dimmed and inactive when
+// `at_default`. True when clicked.
+bool reset_button(float width, bool at_default) {
+    ImGui::BeginDisabled(at_default);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetFrameHeight();
+    const bool clicked = ImGui::Button("##reset", ImVec2(width, h));
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 c = at + ImVec2(width, h) * 0.5f;
+    const float r = h * 0.26f, a0 = IM_PI * 0.15f, a1 = IM_PI * 1.65f;  // the sweep, clockwise on screen
+    const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    d->PathArcTo(c, r, a0, a1, 16);
+    d->PathStroke(col, 0, ImMax(1.0f, h * 0.08f));
+    const ImVec2 tip_at = c + ImVec2(std::cos(a0), std::sin(a0)) * r;  // the head at the sweep's start, pointing back
+    const ImVec2 back(std::sin(a0), -std::cos(a0)), out(std::cos(a0), std::sin(a0));
+    const float s = h * 0.16f;
+    d->AddTriangleFilled(tip_at + back * s, tip_at + out * s - back * s * 0.3f, tip_at - out * s - back * s * 0.3f, col);
+    ImGui::EndDisabled();
+    return clicked;
 }
 
 // A picture over a checkerboard (its transparency shows), within the clip rect.
@@ -2237,11 +2277,15 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     } else if (in.widget == remod::Widget::Number) {
                         // Drag left / right (about 400 pixels across the range), or Ctrl+click to type. Stored as
                         // text, a whole number when it is one; a typed value core can't read shows as 0 until set.
-                        float v = 0;
-                        try {
-                            v = std::stof(value);
-                        } catch (const std::exception&) {
-                        }
+                        auto read = [](const std::string& t) {
+                            try {
+                                return std::stof(t);
+                            } catch (const std::exception&) {
+                                return 0.0f;
+                            }
+                        };
+                        float v = read(value);
+                        const bool at_default = v == read(in.initial);
                         ImGui::SetNextItemWidth(field_width);
                         const float speed = ImMax(0.1f, (in.max - in.min) / 400);
                         // On "auto", what it came to (e.g. "auto (~91 px)", worked out with the thumbnail, so ~), and
@@ -2263,6 +2307,16 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                         }
                         if (ImGui::IsItemHovered())
                             hovered_hint = std::string(in.hint) + "\nDrag to change, Ctrl+click to type.";
+                        // Every slider: back to its default (user, 2026-10-02), dimmed while it's there.
+                        ImGui::SameLine();
+                        char initial[64];
+                        if (const float d = read(in.initial); d == 0 && in.zero)
+                            std::snprintf(initial, sizeof initial, "%s", in.zero);
+                        else
+                            std::snprintf(initial, sizeof initial, in.format, d);
+                        if (reset_button(button_width, at_default)) value = in.initial;
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                            hovered_hint = (at_default ? "At its default, " : "Back to its default, ") + std::string(initial);
                     } else if (in.widget == remod::Widget::Choice) {
                         // A button that opens the list (drawn with the menus, outside the canvas: a combo's popup
                         // inside a node lands in the wrong place when zoomed).

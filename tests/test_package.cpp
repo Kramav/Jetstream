@@ -130,6 +130,17 @@ TEST_CASE("replace overwrites only a previous build of the same mod") {
     remod::build_package(kProfile, spec);
     CHECK(read_file(tmp.path / "out/M/natives/STM/a.tex.143221013") == "v2");
 
+    SECTION("the same build again writes nothing; a change rebuilds it") {
+        const auto zip_time = fs::last_write_time(tmp.path / "out/M.zip");
+        bool unchanged = false;
+        remod::build_package(kProfile, spec, &unchanged);
+        CHECK(unchanged);
+        CHECK(fs::last_write_time(tmp.path / "out/M.zip") == zip_time);
+        write_file(tmp.path / "in.tex.143221013", "v3");
+        remod::build_package(kProfile, spec, &unchanged);
+        CHECK_FALSE(unchanged);
+        CHECK(read_file(tmp.path / "out/M/natives/STM/a.tex.143221013") == "v3");
+    }
     SECTION("a folder that isn't this mod's build is left alone") {
         fs::remove_all(tmp.path / "out");
         write_file(tmp.path / "out/M/precious.txt", "keep me");
