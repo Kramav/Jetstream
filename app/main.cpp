@@ -1773,6 +1773,13 @@ void draw_minimap(State& s, ImVec2 view_min, ImVec2 view_size) {
 
 constexpr unsigned kThumbSide = 256;
 
+// The graph without block positions: what values, previews and thumbnails depend on (moving a block changes none).
+remod::Graph shape_of(const remod::Graph& g) {
+    remod::Graph out = g;
+    for (auto& n : out.nodes) n.x = n.y = 0;
+    return out;
+}
+
 // Starts working out the image blocks' thumbnails when the graph has changed (in the background), and takes the
 // finished ones onto the GPU.
 void update_thumbs(State& s) {
@@ -1809,8 +1816,7 @@ void update_thumbs(State& s) {
         }
     }
     if (s.thumbs_job.valid()) return;  // one job at a time
-    remod::Graph shape = s.graph;      // what decides the thumbnails: not where blocks stand
-    for (auto& n : shape.nodes) n.x = n.y = 0;
+    remod::Graph shape = shape_of(s.graph);
     if (shape == s.thumbs_of && s.graph_path == s.thumbs_path) return;
     s.thumbs_of = std::move(shape);
     s.thumbs_path = s.graph_path;
@@ -1934,9 +1940,9 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.dest_inputs = std::move(inputs);
         s.dest_checked = ImGui::GetTime();
     }
-    if (s.graph != s.preview_of || s.graph_path != s.preview_path) {
+    if (remod::Graph shape = shape_of(s.graph); shape != s.preview_of || s.graph_path != s.preview_path) {
         s.preview = remod::preview_values(s.graph, std::filesystem::absolute(s.graph_path).parent_path());
-        s.preview_of = s.graph;
+        s.preview_of = std::move(shape);
         s.preview_path = s.graph_path;
     }
     bool open_choice_menu = false, open_rename = false;
@@ -2423,9 +2429,26 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                                                     : LinkState::Done;
         strokes.push_back(stroke_for(state, kind_color(s.graph.output_type(l.from_node, l.from_port))));
     }
-    // While blocks move, one quick pass per frame (Debug: 7 ms for the 5-block example); once they stop, all three
-    // passes (19 ms), which untangle crossings. ponytail: cache per link or throttle if layouts get much bigger.
-    if (blocks != s.route_blocks || requests != s.route_requests) {
+    // While blocks are being dragged: plain elbows between the pins, no routing (it ran every frame and made dragging
+    // lag in a Debug build). Once they're let go: one quick pass, then all three (19 ms in Debug for the 5-block
+    // example), which untangle crossings.
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !s.dragged.empty()) {
+        const float gap = font * 0.8f;
+        s.routes = {};
+        for (const remod::LinkRoute& l : requests) {
+            const remod::Pt a = l.from, b = l.to;
+            if (b.x - a.x >= 2 * gap) {  // forwards: across, down, across
+                const float mx = (a.x + b.x) / 2;
+                s.routes.paths.push_back({a, {mx, a.y}, {mx, b.y}, b});
+            } else {  // backwards: out, over to the middle height, back, in
+                const float my = (a.y + b.y) / 2;
+                s.routes.paths.push_back({a, {a.x + gap, a.y}, {a.x + gap, my}, {b.x - gap, my}, {b.x - gap, b.y}, b});
+            }
+        }
+        s.routes.portals.assign(s.routes.paths.size(), 0);
+        s.route_blocks.clear();  // routes properly once the blocks are let go
+        s.route_requests.clear();
+    } else if (blocks != s.route_blocks || requests != s.route_requests) {
         s.routes = remod::route_links(blocks, requests, font * 0.8f, 1);
         s.routes_settled = false;
         s.route_blocks = std::move(blocks);

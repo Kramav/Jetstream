@@ -228,8 +228,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   Measured 2026-10-01 on 143 generated layouts (728 links), old → new: lines beside another 115 → 6, shared lines
   5 → 0, touching corners 43 → 0. Crossings cost a little (PCB-like traces) and each link is rerouted against all
   the others (rip-up and reroute, 3 passes): crossings 585 → 424, the user's Export / Convert crossing gone. The
-  app routes one quick pass while blocks move (Debug 7 ms for the example graph) and all passes once they stop
-  (19 ms). Lines keep 0.9 gap (the gap = 0.8 font, a pin's stub length) from every block except at their own pins;
+  app doesn't route while blocks are being dragged (user, 2026-10-01: routing every frame made dragging lag in the
+  Debug build): links are plain elbows between their pins until the blocks are let go, then one quick pass and then
+  all passes (19 ms in Debug for the example graph). Value previews and thumbnails ignore block positions
+  (`shape_of`), so moving blocks doesn't recompute them. Lines keep 0.9 gap (the gap = 0.8 font, a pin's stub length) from every block except at their own pins;
   only where blocks stand closer than that does a link squeeze to half the gap. The app draws them itself on the
   editor's top layer
   (imgui-node-editor only draws beziers) and hit-tests them with `hit_link` for the right-click menu.
