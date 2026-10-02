@@ -189,7 +189,11 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   moves the row (user): only the circle changes side**, so a flipped row is drawn at its output's place.
 - **Manual editing is its own step (EditImage, `NodeSpec::manual`).** A run waits there until the user marks it
   done (`done` state param; the CLI's `--edited true`). A freshly re-exported PNG voids an earlier "done"
-  (`RunResult::reset_edits`, applied by `apply_run`).
+  (`RunResult::reset_edits`, applied by `apply_run`). **Open with (user, 2026-10-01; they use GIMP):** an optional
+  field `editor` (a program, `.exe`, picker opens in Program Files) that "Open in editor" uses (block and the YOUR
+  STEP card); empty: Windows' editor for the file type, as before. It can be linked from a Value (one for every Edit
+  image block); core `known_value` reads a field's value before a run (typed, or a Value's through Splits).
+  Starting the program is the app's (`open_in_editor`, ShellExecute); a failure goes to the status line.
 - **App modes:** Build layout (structure editing: add/insert/duplicate/delete/link, via core helpers
   `choices_for_pin`, `add_connected`, `choices_for_link`, `insert_node`, `duplicate_node`, `disconnect_node`)
   and Use layout (structure and block positions locked; fill in, run, edit). The switch sits centred above the

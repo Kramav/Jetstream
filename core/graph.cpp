@@ -384,6 +384,29 @@ void Graph::disconnect_node(int id) {
     std::erase_if(links, [id](const Link& l) { return l.from_node == id || l.to_node == id; });
 }
 
+std::string known_value(const Graph& g, int node, const std::string& input) {
+    std::string port = input;
+    for (int id = node;;) {
+        const auto into = g.links_into(id, port);
+        if (into.empty()) {  // typed here (a Split with nothing linked in has no value)
+            const Node* n = g.find(id);
+            if (id != node || !n) return "";
+            const auto it = n->params.find(input);
+            return it == n->params.end() ? std::string() : it->second;
+        }
+        const Link& l = g.links[into[0]];
+        const Node* from = g.find(l.from_node);
+        if (!from) return "";
+        if (from->type == "Value") {  // its typed value
+            const auto it = from->params.find("value");
+            return it == from->params.end() ? std::string() : it->second;
+        }
+        if (from->type != "Split") return "";  // a step's result: known only in a run
+        id = from->id;  // a Split passes on what comes into it
+        port = "in";
+    }
+}
+
 bool is_flipped(const Node& node, std::string_view input) {
     const auto it = node.params.find("flip:" + std::string(input));
     return it != node.params.end() && it->second == "true";

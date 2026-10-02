@@ -79,6 +79,11 @@ struct Graph {
     void flip(int node, const std::string& input);
 };
 
+// An input's value as known without running: typed, or from a linked Value block (followed back through Splits);
+// "" if a step's result decides it (known only in a run). For front ends acting before a run, e.g. Edit image's
+// "Open with".
+std::string known_value(const Graph& graph, int node, const std::string& input);
+
 // Is this destination row flipped (circle on the left, set by a link)? Stored as the node param "flip:<input>".
 bool is_flipped(const Node& node, std::string_view input);
 

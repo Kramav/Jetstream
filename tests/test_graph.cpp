@@ -85,7 +85,8 @@ TEST_CASE("add_node assigns ids and empty params") {
     CHECK(g.add_node("SaveTex").id == 2);
     CHECK(g.find(1)->params == std::map<std::string, std::string>{{"tex", ""}, {"game_path", ""}});
     CHECK(g.add_node("ExportImage").params == std::map<std::string, std::string>{{"png", ""}});  // output field
-    CHECK(g.add_node("EditImage").params.empty());  // "done" is state, absent until set
+    // Its Open with field; "done" is state, absent until set.
+    CHECK(g.add_node("EditImage").params == std::map<std::string, std::string>{{"editor", ""}});
     CHECK_THROWS_AS(g.add_node("Nope"), GraphError);
     g.remove_node(1);
     CHECK(g.add_node("SaveTex").id == 5);
@@ -835,6 +836,30 @@ TEST_CASE("step_order follows the links; families set each block's outline") {
     CHECK(remod::find_spec("PackageMod")->family == Family::Output);
     for (const auto& spec : remod::node_specs())  // manual steps and only they are Manual; utilities draw as values
         CHECK((spec.family == Family::Manual) == spec.manual);
+}
+
+TEST_CASE("known_value: typed, or from a Value through Splits; a step's result is unknown before a run") {
+    Graph g;
+    g.add_node("EditImage");  // 1
+    g.add_node("Value");      // 2
+    g.add_node("Split");      // 3
+    g.add_node("EditImage");  // 4
+    g.add_node("Text");       // 5
+    g.find(1)->params["editor"] = "C:/Tools/gimp.exe";
+    CHECK(remod::known_value(g, 1, "editor") == "C:/Tools/gimp.exe");
+    CHECK(remod::known_value(g, 4, "editor").empty());  // nothing typed
+
+    g.find(2)->params["value"] = "D:/GIMP/gimp-2.10.exe";
+    REQUIRE(g.connect({2, "value", 3, "in"}).empty());
+    REQUIRE(g.connect({3, "out", 1, "editor"}).empty());
+    REQUIRE(g.connect({3, "out", 4, "editor"}).empty());
+    CHECK(remod::known_value(g, 1, "editor") == "D:/GIMP/gimp-2.10.exe");  // the link wins over the typed value
+    CHECK(remod::known_value(g, 4, "editor") == "D:/GIMP/gimp-2.10.exe");
+
+    g.disconnect(0);  // Value -> Split: the Split has nothing to pass on
+    CHECK(remod::known_value(g, 4, "editor").empty());
+    REQUIRE(g.connect({5, "text", 3, "in"}).empty());  // a step's result: only a run knows it
+    CHECK(remod::known_value(g, 4, "editor").empty());
 }
 
 TEST_CASE("path_fit: which dropped paths a field takes") {

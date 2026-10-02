@@ -89,6 +89,56 @@
         5,
         "author"
       ]
+    },
+    {
+      "from": [
+        9,
+        "value"
+      ],
+      "to": [
+        3,
+        "editor"
+      ]
+    },
+    {
+      "from": [
+        11,
+        "value"
+      ],
+      "to": [
+        10,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "file"
+      ],
+      "to": [
+        12,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        12,
+        "out"
+      ],
+      "to": [
+        1,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        12,
+        "out"
+      ],
+      "to": [
+        1,
+        "game_path"
+      ]
     }
   ],
   "nodes": [
@@ -99,8 +149,8 @@
         "tex": "C:/work/natives/STM/_chainsaw/ui/ui3200/tex/my_texture.tex.143221013"
       },
       "pos": [
-        0.0,
-        0.0
+        64.0,
+        147.0
       ],
       "type": "LoadTex"
     },
@@ -117,7 +167,9 @@
     },
     {
       "id": 3,
-      "params": {},
+      "params": {
+        "editor": ""
+      },
       "pos": [
         1264.0,
         0.0
@@ -153,8 +205,8 @@
       "id": 6,
       "params": {},
       "pos": [
-        504.0,
-        0.0
+        501.0,
+        -1.0
       ],
       "type": "Split"
     },
@@ -177,6 +229,48 @@
         -265.0
       ],
       "type": "Value"
+    },
+    {
+      "id": 9,
+      "params": {
+        "value": "\"C:\\Program Files\\GIMP 3\\bin\\gimp-3.exe\""
+      },
+      "pos": [
+        959.0,
+        -153.0
+      ],
+      "type": "Value"
+    },
+    {
+      "id": 10,
+      "params": {
+        "file": ""
+      },
+      "pos": [
+        -343.0,
+        -3.0
+      ],
+      "type": "RequireFile"
+    },
+    {
+      "id": 11,
+      "params": {
+        "value": "D:\\Modding\\Resident Evil\\REtool\\RE4\\re_chunk_000\\natives\\stm\\_chainsaw\\ui\\ui3200\\tex\\cs_ui3210_file_008_00_iam.tex.143221013"
+      },
+      "pos": [
+        -385.0,
+        -169.0
+      ],
+      "type": "Value"
+    },
+    {
+      "id": 12,
+      "params": {},
+      "pos": [
+        -194.0,
+        173.0
+      ],
+      "type": "Split"
     }
   ],
   "profile": "re4r",

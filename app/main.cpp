@@ -574,10 +574,39 @@ void draw_warnings(State& s) {
     }
 }
 
-// Opens a file in the user's image editor (the "edit" verb, e.g. Paint), else whatever opens it.
-void open_in_editor(const std::filesystem::path& file) {
-    if (reinterpret_cast<INT_PTR>(::ShellExecuteW(nullptr, L"edit", file.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-        ::ShellExecuteW(nullptr, L"open", file.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+// The program an Edit image block opens its image with (its "Open with", typed or from a linked Value; core
+// known_value), a relative path taken from the graph's folder; empty: Windows' default.
+std::filesystem::path editor_of(const State& s, int node) {
+    const std::filesystem::path p(unquote(remod::known_value(s.graph, node, "editor")));
+    return p.empty() || p.is_absolute() ? p : std::filesystem::absolute(s.graph_path).parent_path() / p;
+}
+
+// Opens a file in `editor` (a program, e.g. GIMP) if one is given, else in Windows' editor for its type (the "edit"
+// verb, e.g. Paint), else whatever opens it. Returns why it couldn't, or "".
+std::string open_in_editor(const std::filesystem::path& file, const std::filesystem::path& editor = {}) {
+    auto ok = [](HINSTANCE h) { return reinterpret_cast<INT_PTR>(h) > 32; };
+    if (!editor.empty()) {
+        const std::wstring args = L"\"" + file.wstring() + L"\"";
+        return ok(::ShellExecuteW(nullptr, L"open", editor.c_str(), args.c_str(), nullptr, SW_SHOWNORMAL))
+                   ? ""
+                   : "Couldn't start " + editor.string() + ". Check the Edit image block's Open with.";
+    }
+    if (!ok(::ShellExecuteW(nullptr, L"edit", file.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) &&
+        !ok(::ShellExecuteW(nullptr, L"open", file.c_str(), nullptr, nullptr, SW_SHOWNORMAL)))
+        return "Windows has no program to open " + file.filename().string() + " with. Set the block's Open with.";
+    return "";
+}
+
+// "Open in editor" for an Edit image block: its program, else Windows'; a problem goes to the status line.
+void open_edit(State& s, int node, const std::filesystem::path& file) {
+    if (const std::string problem = open_in_editor(file, editor_of(s, node)); !problem.empty()) s.status = problem;
+}
+
+// The button's tooltip: which program it opens.
+std::string open_edit_hint(const State& s, int node) {
+    const std::filesystem::path editor = editor_of(s, node);
+    return editor.empty() ? "Opens the image in Windows' editor for its file type. Set Open with to pick a program."
+                          : "Opens the image in " + editor.filename().string() + " (Open with).";
 }
 
 std::optional<remod::NodeState> run_state(const State& s, int id);
@@ -618,7 +647,8 @@ void draw_steps(State& s) {
         ImGui::TextUnformatted(remod::block_title(*s.graph.find(st.id)).c_str());
         ImGui::TextWrapped("%s", status->second.message.c_str());
         if (!status->second.file.empty()) {
-            if (ImGui::Button("Open in editor")) open_in_editor(status->second.file);
+            if (ImGui::Button("Open in editor")) open_edit(s, st.id, status->second.file);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", open_edit_hint(s, st.id).c_str());
             ImGui::SameLine();
         }
         ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(pal::accent));
@@ -1855,7 +1885,9 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                             const bool texture = in.path == remod::PathKind::OpenTexture;
                             if (ImGui::SmallButton("...") &&
                                 browse(in.path, texture ? s.texture_filter.c_str() : in.filter, value,
-                                       texture ? game_files_dir(s) : std::string()) &&
+                                       texture                                         ? game_files_dir(s)
+                                       : in.filter && std::string_view(in.filter) == "exe" ? env("ProgramFiles")
+                                                                                          : std::string()) &&
                                 texture)
                                 detect_game(s, value);
                             if (ImGui::IsItemHovered()) hovered_hint = "Browse...";
@@ -1878,8 +1910,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 if (file.empty()) {
                     folding(detail, [] { ImGui::TextDisabled("Run first: Export image creates the file to edit."); });
                 } else {
-                    if (ImGui::Button("Open in editor")) open_in_editor(file);
-                    if (ImGui::IsItemHovered()) hovered_hint = "Opens the image in your image editor (whatever opens that file type).";
+                    if (ImGui::Button("Open in editor")) open_edit(s, n.id, file);
+                    if (ImGui::IsItemHovered()) hovered_hint = open_edit_hint(s, n.id);
                     ImGui::SameLine();
                 }
                 if (!edit_done) {

@@ -140,9 +140,14 @@ NodeSpec edit_image() {
     return {
         .type = "EditImage",
         .title = "Edit image",
-        .summary = "YOUR STEP: open the image in any image editor, change it, save it (same size and format), then "
+        .summary = "YOUR STEP: open the image in your image editor, change it, save it (same size and format), then "
                    "click Done editing. The run waits here until you do.",
-        .inputs = {{.name = "png", .label = "image to edit", .type = Image, .required = true}},
+        .inputs = {{.name = "png", .label = "image to edit", .type = Image, .required = true},
+                   {.name = "editor", .label = "Open with", .type = Path, .widget = Widget::Path,
+                    .hint = "The program Open in editor uses, e.g. C:\\Program Files\\GIMP 3\\bin\\gimp.exe. "
+                            "Empty: Windows' editor for the image's file type. Link a Value to use one for every "
+                            "Edit image block.",
+                    .path = PathKind::OpenFile, .filter = "exe"}},
         .outputs = {{"image", Image, "edited image"}},
         .state = {"done"},
         .manual = true,
