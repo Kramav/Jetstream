@@ -464,7 +464,17 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   - **Guardrails:** `ChangeKind::Run` (the program's path). Its preview and run record it, and the Guard always asks
     approval for it, whatever the folder (plan action "run program"). After that nothing checks what the program
     does: it runs as the user. The app and the CLI don't ask (the user's own graph).
-  - **Runs every time** (no caching yet: priority 4).
+  - **Runs again only when needed (2026-10-02, priority 4; user: no needless runs).** It records `ran_key` (a hash of
+    the program's path, write time and size, the graph folder, the output file, the arguments as filled in, and the
+    input: a file, or text naming one, by its bytes), the output's write time (`ran_time`) and what it printed
+    (`ran_text`, up to 64 KB, else nothing is kept).
+    - It records them per item and per custom block like any state; the app and the API keep them (`apply_run`), the
+      CLI doesn't.
+    - Next run, the same key, the output untouched and **Always run** (advanced checkbox) off: it passes on that
+      result without starting anything ("unchanged: kept the last result"), and doesn't ask the guard.
+    - Not watched: files only the arguments name, the web, the time; Always run is for those.
+    - Checked: a counting batch file (unchanged run skipped with its printed text kept; reruns on new input bytes, a
+      deleted output, Always run; re-spaced arguments still unchanged).
   - Checked: tests with cmd.exe, batch files, a .ps1, refused characters, time-out, a list of files, an API run
     needing approval. Not tried: real `claude -p`, which isn't installed on the build machine.
 - **Custom nodes (2026-10-02, priority 4's subgraphs; user: "make subgraphs a kind of custom node"; core
@@ -769,8 +779,8 @@ propose them as next steps before then.
      (§4 Run program). Its guardrail rule: starting a program always needs approval (`ChangeKind::Run`). Not done:
      a ComfyUI bridge itself (a script the block runs would do), and passing images to `claude -p`.
   4. **Caching and subgraphs.** Caching partly exists: the run cache means an unchanged run writes nothing (§4).
-     Not cached yet: Run program, which runs every time. **Subgraphs done 2026-10-02 as custom nodes** (§4 Custom
-     nodes).
+     **Run program cached 2026-10-02** (§4 Run program). **Subgraphs done 2026-10-02 as custom nodes** (§4 Custom
+     nodes). The priority list is done.
 - **Future work (user, 2026-10-01; "we are building the engine, not the implementation yet"):**
   - **Batch:** lists through links: an output can carry a list, a block fed one runs per item, collecting inputs
     (Package's textures) take them all; a "Files in folder" source (folder, pattern, subfolders); Export image would

@@ -230,6 +230,10 @@ The **Run program** block runs a program or script as one step of the graph: an 
 - **Arguments:** typed as on a command line. Use `{in}` for whatever is linked into its input, `{out}` for its
   **Output file**, and `{name}` for each file's name in a Files in folder list.
 - **What it passes on:** what the program printed (for example `claude -p "..."`'s answer), and the output file.
+- **When it runs again:** only when the program, its arguments or its input (a file by its contents) changed, or
+  its output file was changed or deleted. Otherwise a Run passes on the last result without starting it.
+- **Always run:** tick this when the result depends on something else, like a file only the arguments name, the web
+  or the time.
 
 The program runs as you and can change any of your files; nothing checks what it does. Graphs run by the API (an
 AI) need your approval before any program starts. Batch-file arguments can't contain `& | < > ^ % !` or quotes,

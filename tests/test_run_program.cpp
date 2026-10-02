@@ -129,3 +129,49 @@ TEST_CASE("Run program: an API run needs the user's approval to start a program"
     CHECK_THAT(api.call(R"({"op":"run","plan":")" + id + R"("})"), ContainsSubstring("need the user's approval"));
     CHECK_THAT(api.call(R"({"op":"run","plan":")" + id + R"(","approve":true})"), ContainsSubstring(R"("message":"Done.")"));
 }
+
+TEST_CASE("Run program: runs again only when what it gets changed, or its output did; Always run always") {
+    TempDir tmp;
+    // Counts its runs, prints, copies its input to its output.
+    test::write_file(tmp.path / "copy_it.bat",
+                     "@echo ran>>count.txt\r\n@echo copied %~nx1\r\n@copy /y \"%~1\" \"%~2\" >nul\r\n");
+    test::write_file(tmp.path / "a.txt", "A");
+    Graph g = program("copy_it.bat", "{in} {out}", "out/a copy.txt");
+    const int value = g.add_node("Value").id;
+    g.find(value)->params["value"] = "a.txt";
+    REQUIRE(g.connect({value, "value", 1, "in"}).empty());
+    auto runs = [&] {
+        const std::string count = test::read_file(tmp.path / "count.txt");
+        return std::ranges::count(count, '\n');
+    };
+    auto again = [&] {
+        const auto result = run(g, tmp.path);
+        remod::apply_run(g, result);  // the app and the API keep what a run recorded
+        return result;
+    };
+
+    again();
+    CHECK(runs() == 1);
+    const auto kept = again();
+    CHECK(runs() == 1);
+    CHECK_THAT(kept.nodes.at(1).message, ContainsSubstring("unchanged"));
+    CHECK(kept.values.at({1, "text"}) == "copied a.txt");  // what it printed, kept
+    CHECK(fs::path(kept.values.at({1, "file"})) == tmp.path / "out" / "a copy.txt");
+
+    test::write_file(tmp.path / "a.txt", "B");  // the input's contents
+    again();
+    CHECK(runs() == 2);
+    CHECK(test::read_file(tmp.path / "out/a copy.txt") == "B");
+
+    fs::remove(tmp.path / "out/a copy.txt");  // its output gone
+    again();
+    CHECK(runs() == 3);
+
+    g.find(1)->params["arguments"] = "{in}  {out}";  // the same arguments, split the same: still unchanged
+    again();
+    CHECK(runs() == 3);
+
+    g.find(1)->params["always"] = "true";
+    again();
+    CHECK(runs() == 4);
+}

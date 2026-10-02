@@ -1365,18 +1365,20 @@ NodeSpec run_program() {
                     .path = PathKind::SaveFile, .result = "file"},
                    {.name = "timeout", .label = "Time limit", .type = Text, .widget = Widget::Number,
                     .hint = "Seconds before the program is stopped.", .initial = "600", .min = 1, .max = 86400,
-                    .format = "%.0f s", .advanced = true}},
+                    .format = "%.0f s", .advanced = true},
+                   {.name = "always", .label = "Always run", .type = Text, .widget = Widget::Checkbox,
+                    .hint = "Run it every time. Off, it runs again only when the program, the arguments, the input "
+                            "(a file by its contents) or the output file changed; otherwise it passes on its last "
+                            "result. Tick it when the result depends on anything else: a file only the arguments "
+                            "name, the web, the time.",
+                    .advanced = true}},
         .outputs = {{"text", Text, "what it printed"}, {"file", Path, "output file"}},
+        .state = {"ran_key", "ran_time", "ran_text"},  // what decided its last result, and that result (below)
         .family = Family::Transform,
         .run = [](NodeRun& r) {
             const fs::path& base = r.run.options.base_dir;
             const fs::path program = find_program(r.text("program"), base);
-            r.change(ChangeKind::Run, program);
             const fs::path out = clean_path(r.text("out_file"), base);
-            if (!out.empty()) {
-                r.change(ChangeKind::Write, out);
-                if (out.has_parent_path()) fs::create_directories(long_path(out.parent_path()));
-            }
             const std::vector<Value> in = r.values("in");
             std::vector<std::wstring> args;
             for (std::wstring arg : split_arguments(r.text("arguments"))) {
@@ -1390,6 +1392,35 @@ NodeSpec run_program() {
                         arg.replace(at, std::wcslen(mark), value);
                     }
                 args.push_back(std::move(arg));
+            }
+
+            // Ran before with the same program, arguments, input and output, and the output is as it left it: its
+            // last result again, nothing run (user, 2026-10-02: no needless runs; claude -p costs time and money).
+            // The input counts by its bytes when it's a file. A file only the arguments name isn't watched: Always
+            // run is for that, and for programs that give something new each time (the web, the time, a seed).
+            std::error_code ec;
+            std::string key = program.string() + '\0' + write_time(program) + '\0' +
+                              std::to_string(fs::file_size(program, ec)) + '\0' + base.string() + '\0' + out.string();
+            for (const std::wstring& a : args) key += '\0' + fs::path(a).string();
+            if (!in.empty()) {  // a file by its bytes (also text naming one: the input takes any kind)
+                const fs::path file = in[0].path.empty() ? r.resolve(in[0].text) : in[0].path;
+                key += '\0' + (fs::is_regular_file(file, ec) ? file_bytes(file) : in[0].text);
+            }
+            key = hash_hex(key);
+            const std::string *ran_key = r.state("ran_key"), *ran_time = r.state("ran_time"),
+                              *ran_text = r.state("ran_text");
+            if (r.text("always") != "true" && ran_key && *ran_key == key && ran_text &&
+                (out.empty() || (ran_time && *ran_time == write_time(out)))) {
+                if (!out.empty()) r.claim(out);  // each item its own file
+                r.output("text", {*ran_text, {}, {}});
+                if (!out.empty()) r.output("file", file_value(out, in.empty() ? "" : in[0].game_path));
+                r.done("unchanged: kept the last result (tick Always run to run it anyway)", out);
+                return;
+            }
+            r.change(ChangeKind::Run, program);
+            if (!out.empty()) {
+                r.change(ChangeKind::Write, out);
+                if (out.has_parent_path()) fs::create_directories(long_path(out.parent_path()));
             }
 
             // Scripts go through their interpreter. cmd.exe reparses its line (& | < > ^ run commands, %x% expands),
@@ -1430,13 +1461,18 @@ NodeSpec run_program() {
             if (result.exit_code != 0)
                 throw GraphError(program.filename().string() + " failed (exit code " + std::to_string(result.exit_code) +
                                  ")" + (result.output.empty() ? "" : ":\n" + tail_of(result.output)));
-            std::error_code ec;
             if (!out.empty() && !fs::is_regular_file(long_path(out), ec))
                 throw GraphError(program.filename().string() + " finished but didn't write " + out.string());
 
             std::string text = result.output;  // what it printed (its errors too: one pipe)
             while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) text.pop_back();
             if (!text.empty()) r.log("printed: " + tail_of(text, 500));
+            // Remembered in the graph for the next run (above). ponytail: up to 64 KB of printed text; more, and it
+            // simply runs again next time.
+            const bool keep = text.size() <= 64 * 1024;
+            r.set_state("ran_key", keep ? key : "");
+            r.set_state("ran_time", keep && !out.empty() ? write_time(out) : "");
+            r.set_state("ran_text", keep ? text : "");
             r.output("text", {text, {}, {}});
             if (!out.empty()) r.output("file", file_value(out, in.empty() ? "" : in[0].game_path));
             const auto took = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
