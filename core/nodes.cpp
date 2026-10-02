@@ -112,28 +112,62 @@ NodeSpec load_tex() {
     };
 }
 
+// Whether an Export image's file is for the user to edit: it goes (through Splits) to an Edit image step. Otherwise it's
+// a working file (e.g. for Replace photo; user, 2026-10-02) that nobody edits: exported again every run.
+// A file's last write time as text ("" if it isn't there), to notice a file changed outside the tool.
+std::string write_time(const fs::path& file) {
+    std::error_code ec;
+    const auto t = fs::last_write_time(file, ec);
+    return ec ? std::string() : std::to_string(t.time_since_epoch().count());
+}
+
+bool for_editing(const Graph& g, int id) {
+    for (const Link& l : g.links) {
+        if (l.from_node != id) continue;
+        const Node* to = g.find(l.to_node);
+        if (to && (to->type == "EditImage" || (to->type == "Split" && for_editing(g, to->id)))) return true;
+    }
+    return false;
+}
+
 NodeSpec export_image() {
     return {
         .type = "ExportImage",
         .title = "Export image",
-        .summary = "Converts the texture to an image file to edit: PNG, TGA or JPG, whichever the file name ends in. "
-                   "If the file is already there (your edited version), it's kept, never overwritten.",
+        .summary = "Converts the texture to an image file: PNG, TGA or JPG, whichever the file name ends in. Going to "
+                   "an Edit image step, a file already there (your edited version) is kept, unless the texture has "
+                   "changed since; otherwise it's a working file, exported again every run.",
         .inputs = {{.name = "tex", .label = "texture", .type = Tex, .required = true}},
         .outputs = {{.name = "png", .type = Image, .label = "image", .field = "png", .field_label = "Image file",
                      .hint = "Where to write the image. Its ending picks the format: .png, .tga (e.g. for GIMP) or "
                              ".jpg. JPG loses some quality and all transparency.",
                      .path = PathKind::SaveFile, .filter = kEditImageFormats}},
+        .state = {"exported_from", "exported_time"},  // the texture its file is from, the file's write time
         .family = Family::Transform,
         .run = [](NodeRun& r) {
             const Value tex = r.input("tex");
             const fs::path png = r.resolve(r.text("png"));
+            // A file for editing is kept, unless it's from another texture (user, 2026-10-02: overwrite it; the old
+            // one would go into the mod). No record (older graphs, the CLI): it's taken to be from this texture.
+            // A working file is kept only while it's the one exported last from this texture (user: no needless
+            // writes): same texture, the file's write time unchanged.
+            const auto from = r.node.params.find("exported_from"), at = r.node.params.find("exported_time");
+            const bool editing = for_editing(r.run.graph, r.node.id);
+            const bool stale = from != r.node.params.end() && from->second != tex.path.string();
+            const bool untouched = from != r.node.params.end() && !stale && at != r.node.params.end() &&
+                                   at->second == write_time(png);
+            if (fs::exists(png) && (editing ? stale : !untouched)) {
+                if (editing) r.log(png.filename().string() + " is from another texture (" + from->second + "): exporting again");
+                fs::remove(png);
+            }
             if (!fs::exists(png)) {
                 r.run.options.converter.load_tex(tex.path, png, r.profile());
                 r.run.fresh_exports.insert(r.node.id);
                 r.done("exported " + png.filename().string(), png);
             } else {
-                r.done("kept your " + png.filename().string(), png);
+                r.done((editing ? "kept your " : "kept ") + png.filename().string(), png);
             }
+            r.run.result.state[r.node.id] = {{"exported_from", tex.path.string()}, {"exported_time", write_time(png)}};
             r.output("png", file_value(png, tex.game_path));
         },
         .preview = [](NodeRun& r) {
@@ -417,12 +451,12 @@ NodeSpec replace_photo_node() {
                    number_input("feather", "Feather", "Softens the edge, in pixels.", "1", 0, 20, "%.0f px"),
                    number_input("tone", "Match tone", "The old photo's brightness, contrast and colour cast.", "100",
                                 0, 100, "%.0f%%"),
-                   number_input("shading", "Shading", "The old photo's shading near its edges: the frame's shadow, "
-                                "fading.", "100", 0, 100, "%.0f%%"),
-                   number_input("stains", "Stains", "The old photo's colour damage (clean on old grey photos).", "100",
-                                0, 100, "%.0f%%"),
-                   number_input("detail", "Scratches", "The old photo's fine detail: scratches and specks. The old "
-                                "picture shows through when strong; try 10-30.", "0", 0, 100, "%.0f%%"),
+                   number_input("shading", "Shading", "The old photo's darkening towards its edges: the frame's "
+                                "shadow.", "100", 0, 100, "%.0f%%"),
+                   number_input("stains", "Stains", "The old photo's stains: colour its toning doesn't explain, "
+                                "darkening the new picture.", "100", 0, 100, "%.0f%%"),
+                   number_input("detail", "Scratches", "The old photo's scratches and specks (thin marks only, not "
+                                "its picture's outlines).", "0", 0, 100, "%.0f%%"),
                    {.name = "show_outline", .label = "Show edge", .type = Text, .widget = Widget::Checkbox,
                     .hint = "Draws the photo's edge as found on the preview (not in the result)."},
                    save_to_input()},
@@ -1064,7 +1098,11 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
         // Steps that hand an image on, so a preview can start at the texture itself, before anything is exported.
         if (n->type == "ExportImage") {  // its image file once it's there (it may hold an edit), else the texture
             std::error_code ec;
-            if (const auto png = text("png"); png && !png->empty() && fs::is_regular_file(clean_path(*png, base_dir), ec))
+            // Only a file for editing (a run replaces a working file, and one from another texture).
+            const auto from = n->params.find("exported_from");
+            const bool stale = from != n->params.end() && from->second != text("tex").value_or(from->second);
+            if (const auto png = text("png"); for_editing(g, id) && !stale && png && !png->empty() &&
+                                              fs::is_regular_file(clean_path(*png, base_dir), ec))
                 return load(clean_path(*png, base_dir));
             return image("tex");
         }

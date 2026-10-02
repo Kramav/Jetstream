@@ -187,6 +187,18 @@ TEST_CASE("the example graph file loads and validates") {
     CHECK(g.nodes.size() == 7);  // its Splits are in the file, not added by migration
 }
 
+TEST_CASE("the Replace photo example graph loads and validates") {
+    bool added = false;
+    const Graph g = remod::load_graph(REMOD_SCHEMAS_DIR "/replace_photo.example.json", &added);
+    CHECK(g.validate().empty());
+    CHECK_FALSE(added);  // its Splits are in the file
+    CHECK(std::ranges::count(g.nodes, std::string("ReplacePhoto"), &remod::Node::type) == 1);
+    // Before any run: the replaced image's path (its Save to) is known all the way to Convert and Package.
+    const auto preview = remod::preview_values(g, REMOD_SCHEMAS_DIR);
+    CHECK_FALSE(preview.at({4, "image"}).empty());  // its Save to, known before a run
+    CHECK(preview.at({5, "out"}) == preview.at({4, "image"}));
+}
+
 TEST_CASE("game path is inferred from a natives tree") {
     CHECK(remod::game_path_from("D:/mods/natives/stm/_chainsaw/ui/a.tex.1", "natives/STM") == "_chainsaw/ui/a.tex.1");
     CHECK(remod::game_path_from("D:\\x\\NATIVES\\STM\\a.tex.1", "natives/STM") == "a.tex.1");
@@ -250,6 +262,48 @@ TEST_CASE("run: the Edit image step waits until marked done, and reports where e
         CHECK(again.reset_edits == std::vector<int>{3});
         remod::apply_run(g, again);
         CHECK_FALSE(g.find(3)->params.contains("done"));
+    }
+    SECTION("another texture: the kept PNG is from the old one, so previews skip it and a run exports over it") {
+        remod::apply_run(g, built);
+        CHECK(fs::path(g.find(2)->params.at("exported_from")) == tex);
+        const fs::path other = tmp.path / "natives/STM/_chainsaw/ui/b.tex.143221013";
+        test::write_fake_tex(other, 143221013, 64, 32, 1, 5, 99);
+        g.find(1)->params["tex"] = other.string();
+
+        fs::path loaded;
+        const remod::ImageLoader load = [&](const fs::path& p) -> std::optional<remod::ImagePreview> {
+            loaded = p;
+            return remod::ImagePreview{{1, 1, {0, 0, 0, 255}}, 1};
+        };
+        remod::preview_image(g, remod::preview_values(g, tmp.path), 2, tmp.path, 256, load);
+        CHECK(loaded == other);  // the new texture, not a.png
+
+        const auto again = remod::run_graph(g, opt);
+        CHECK(conv.loads == 2);
+        CHECK(std::ranges::any_of(log, [](const std::string& l) { return l.find("from another texture") != std::string::npos; }));
+        CHECK(again.reset_edits == std::vector<int>{3});  // a new image to edit
+        remod::apply_run(g, again);
+        CHECK(fs::path(g.find(2)->params.at("exported_from")) == other);
+    }
+    SECTION("without an Edit image the file is a working file: every run exports it, previews use the texture") {
+        g.remove_node(3);
+        REQUIRE(g.connect({2, "png", 4, "image"}).empty());
+        g.find(5)->params["replace"] = "true";
+        remod::apply_run(g, remod::run_graph(g, opt));
+        CHECK(conv.loads == 2);  // a.png was there, with no record of it: exported again
+        remod::apply_run(g, remod::run_graph(g, opt));
+        CHECK(conv.loads == 2);  // nothing changed: no needless write
+        fs::last_write_time(tmp.path / "a.png", fs::last_write_time(tmp.path / "a.png") + std::chrono::seconds(5));
+        remod::run_graph(g, opt);
+        CHECK(conv.loads == 3);  // changed outside the tool: exported again
+
+        fs::path loaded;
+        const remod::ImageLoader load = [&](const fs::path& p) -> std::optional<remod::ImagePreview> {
+            loaded = p;
+            return remod::ImagePreview{{1, 1, {0, 0, 0, 255}}, 1};
+        };
+        remod::preview_image(g, remod::preview_values(g, tmp.path), 2, tmp.path, 256, load);
+        CHECK(loaded == tex);
     }
 }
 
@@ -1302,7 +1356,7 @@ TEST_CASE("preview_image: an image block's result in memory, at thumbnail size, 
     CHECK_FALSE(remod::preview_image(g, none, 1, tmp.path, 16, load));  // load_image throws: caught, nothing
 }
 
-TEST_CASE("preview_image starts at the texture when nothing is exported yet, and uses the export once it exists") {
+TEST_CASE("preview_image starts at the texture when nothing is exported yet, and uses an export for editing once it exists") {
     TempDir tmp;
     // A 2x1 R8G8B8A8 texture (format 28), both pixels dark red.
     std::string tex(40 + 16, '\0');
@@ -1323,8 +1377,10 @@ TEST_CASE("preview_image starts at the texture when nothing is exported yet, and
     g.add_node("LoadTex").params["tex"] = "frame.tex.143221013";  // 1
     g.add_node("ExportImage").params["png"] = "work/frame.png";    // 2: not exported yet
     g.add_node("AdjustColour").params["brightness"] = "50";        // 3
+    g.add_node("EditImage");                                        // 4: the export is for editing
     REQUIRE(g.connect({1, "tex", 2, "tex"}).empty());
-    REQUIRE(g.connect({2, "png", 3, "image"}).empty());
+    REQUIRE(g.connect({2, "png", 4, "png"}).empty());
+    REQUIRE(g.connect({4, "image", 3, "image"}).empty());
     const remod::ImageLoader load = [](const fs::path& f) -> std::optional<remod::ImagePreview> {
         if (f.filename().string().find(".tex") != std::string::npos) {
             unsigned w = 0;

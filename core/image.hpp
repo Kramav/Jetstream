@@ -58,8 +58,9 @@ struct PhotoArea {
 PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float feather);
 
 // How much of the old photo's ageing goes onto the new picture, 0-1 each: its tone (brightness, contrast, colour
-// cast), its large-scale shading (the frame's shadow, fading), its colour damage (stains: colour away from its own
-// cast, clean on old grey photos), its fine detail (scratches, specks; the old picture shows through when strong).
+// cast), its darkening towards its edge (the frame's shadow), its colour damage (stains: colour its toning doesn't
+// explain, applied as a darkening tint), its fine detail (scratches, specks: what a median filter removes, so not the
+// old picture's outlines).
 struct Ageing {
     float tone = 1, shading = 1, stains = 1, detail = 0;
 };

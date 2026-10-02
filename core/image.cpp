@@ -291,6 +291,39 @@ Plane weighted_blur(const Plane& v, const Plane& weight, unsigned w, unsigned h,
     return out;
 }
 
+// The median of `v` over a square `r` pixels each way, counting only `inside` pixels, for the inside pixels of the box
+// x0-x1, y0-y1 (others keep their value). A median keeps step edges and drops what's thinner than its window, so
+// `v - median` is specks and scratches without a picture's outlines. Sliding 256-level histogram along each row.
+Plane median_inside(const Plane& v, const std::vector<bool>& inside, unsigned w, unsigned x0, unsigned y0, unsigned x1,
+                    unsigned y1, int r) {
+    Plane out(v);
+    for (unsigned y = y0; y <= y1; ++y) {
+        int hist[256] = {}, n = 0, m = 0, below = 0;  // m: the median's level; below: values under it
+        auto column = [&](int x, int d) {
+            if (x < int(x0) || x > int(x1)) return;
+            for (int yy = std::max(int(y0), int(y) - r); yy <= std::min(int(y1), int(y) + r); ++yy)
+                if (const size_t i = size_t(yy) * w + size_t(x); inside[i]) {
+                    const int q = std::clamp(int(v[i] * 255 + 0.5f), 0, 255);
+                    hist[q] += d;
+                    n += d;
+                    if (q < m) below += d;
+                }
+        };
+        for (int x = int(x0) - r; x < int(x0) + r; ++x) column(x, 1);
+        for (unsigned x = x0; x <= x1; ++x) {
+            column(int(x) + r, 1);
+            column(int(x) - r - 1, -1);
+            const size_t i = size_t(y) * w + x;
+            if (!inside[i] || n == 0) continue;
+            const int half = (n - 1) / 2;
+            while (below > half) below -= hist[--m];
+            while (below + hist[m] <= half) below += hist[m++];
+            out[i] = float(m) / 255;
+        }
+    }
+    return out;
+}
+
 // Squared distances along one line (Felzenszwalb & Huttenlocher): `f` is 0 at the sources, huge elsewhere.
 void distance_line(const std::vector<double>& f, std::vector<double>& d, int n, std::vector<int>& v,
                    std::vector<double>& z) {
@@ -527,7 +560,7 @@ Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std
 
     // The old photo and the picture over the area: brightness mean and spread, colour cast, how colourful.
     struct Stats {
-        double weight = 0, l = 0, l2 = 0, colourful = 0, rgb[3] = {0, 0, 0};
+        double weight = 0, l = 0, l2 = 0, colourful = 0;
     } old_s, new_s;
     auto add = [](Stats& st, const std::uint8_t* p, float wt) {
         const double r = p[2] / 255.0, g = p[1] / 255.0, b = p[0] / 255.0, l = 0.299 * r + 0.587 * g + 0.114 * b;
@@ -535,9 +568,6 @@ Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std
         st.l += wt * l;
         st.l2 += wt * l * l;
         st.colourful += wt * (std::abs(r - l) + std::abs(g - l) + std::abs(b - l)) / 3;
-        st.rgb[0] += wt * r;
-        st.rgb[1] += wt * g;
-        st.rgb[2] += wt * b;
     };
     for (unsigned y = y0; y <= y1; ++y)
         for (unsigned x = x0; x <= x1; ++x)
@@ -551,8 +581,45 @@ Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std
     const float k_tone = spread(new_s) > 1e-4f ? spread(old_s) / spread(new_s) : 1;
     const float colourful_new = float(new_s.colourful / new_s.weight), colourful_old = float(old_s.colourful / old_s.weight);
     const float k_colour = colourful_new > 1e-4f ? std::min(1.0f, colourful_old / colourful_new) : 0;
-    float cast[3];
-    for (int k = 0; k < 3; ++k) cast[k] = float(old_s.rgb[k] / old_s.weight) - mu_old;
+
+    // The old photo's toning: its colour away from grey as a straight line over brightness (sepia is browner in the
+    // shadows), fitted twice, the second time without the pixels far off the first line (stains), so stains don't
+    // bend it and the toning that follows the old picture's content isn't taken for stains.
+    float tone_a[3] = {0, 0, 0}, tone_b[3] = {0, 0, 0};
+    auto cast = [&](int k, float l) { return tone_a[k] + tone_b[k] * l; };
+    auto off_line = [&](size_t i) {
+        const std::uint8_t* p = &frame.pixels[i * 4];
+        float e = 0;
+        for (int k = 0; k < 3; ++k) e += std::abs(p[2 - k] / 255.0f - old_l[i] - cast(k, old_l[i]));
+        return e;
+    };
+    float limit = 1e9f;
+    for (int pass = 0; pass < 2; ++pass) {
+        double sw = 0, sl = 0, sll = 0, sc[3] = {0, 0, 0}, slc[3] = {0, 0, 0};
+        for (unsigned y = y0; y <= y1; ++y)
+            for (unsigned x = x0; x <= x1; ++x)
+                if (const size_t i = size_t(y) * w + x; m[i] > 0 && off_line(i) <= limit) {
+                    const double wt = m[i], l = old_l[i];
+                    sw += wt, sl += wt * l, sll += wt * l * l;
+                    for (int k = 0; k < 3; ++k) {
+                        const double c = frame.pixels[i * 4 + 2 - k] / 255.0 - l;
+                        sc[k] += wt * c, slc[k] += wt * l * c;
+                    }
+                }
+        if (sw <= 0) break;
+        const double var = sll / sw - (sl / sw) * (sl / sw);
+        for (int k = 0; k < 3; ++k) {
+            tone_b[k] = var > 1e-6 ? float((slc[k] / sw - (sl / sw) * (sc[k] / sw)) / var) : 0;
+            tone_a[k] = float(sc[k] / sw - tone_b[k] * sl / sw);
+        }
+        std::vector<float> errors;
+        for (unsigned y = y0; y <= y1; ++y)
+            for (unsigned x = x0; x <= x1; ++x)
+                if (const size_t i = size_t(y) * w + x; m[i] > 0) errors.push_back(off_line(i));
+        const auto mid = errors.begin() + std::ptrdiff_t(errors.size() / 2);
+        std::nth_element(errors.begin(), mid, errors.end());
+        limit = 2.5f * *mid + 2.0f / 255;
+    }
 
     // The old photo's shading: its brightness averaged by distance from the photo's edge (up to a quarter of its size)
     // and direction round it, relative to its mean. That keeps the frame's shadow along an edge and the fading at the
@@ -580,7 +647,9 @@ Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std
                 sum[size_t(ring) * sectors + sector] += old_l[i];
                 count[size_t(ring) * sectors + sector] += 1;
             }
-    std::vector<float> ratio(sum.size(), 1);  // smoothed over +-3 sectors (30 degrees) and +-1 ring
+    // Smoothed over +-3 sectors (30 degrees) and +-1 ring, then relative to the innermost ring in the same direction:
+    // only how the photo darkens towards its edge carries over, not the old picture's light and dark sides.
+    std::vector<float> level(sum.size(), 0), ratio(sum.size(), 1);
     for (int ring = 0; ring < rings; ++ring)
         for (int sector = 0; sector < sectors; ++sector) {
             double total = 0, n = 0;
@@ -591,9 +660,56 @@ Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std
                     total += sum[size_t(r2) * sectors + s2];
                     n += count[size_t(r2) * sectors + s2];
                 }
-            if (n > 0 && mu_old > 1e-3f) ratio[size_t(ring) * sectors + sector] = float(total / n) / mu_old;
+            if (n > 0) level[size_t(ring) * sectors + sector] = float(total / n);
         }
-    const Plane fine = weighted_blur(old_l, m, w, h, std::max(1, int(std::lround(2 * scale))));
+    for (int ring = 0; ring < rings; ++ring)
+        for (int sector = 0; sector < sectors; ++sector)
+            if (const float inner = level[size_t(rings - 1) * sectors + sector]; inner > 1e-3f)
+                // Only darker: a frame casts shadow; a lighter edge is the old picture (a dark coat further in).
+                ratio[size_t(ring) * sectors + sector] = std::min(1.0f, level[size_t(ring) * sectors + sector] / inner);
+    // Scratches and specks: what a median removes (thinner than its window), minus the old picture's own fine texture
+    // (residuals under twice their typical size are dropped), and only where the old picture is plain: eyes, buttons
+    // and patterns sit among the picture's own edges (the median keeps those), specks on a plain area don't.
+    Plane detail(mask.size(), 0);
+    if (ageing.detail > 0) {
+        const Plane med = median_inside(old_l, inside, w, x0, y0, x1, y1, std::max(1, int(std::lround(2 * scale))));
+        auto typical = [](std::vector<float> v) {
+            if (v.empty()) return 0.0f;
+            const auto mid = v.begin() + std::ptrdiff_t(v.size() / 2);
+            std::nth_element(v.begin(), mid, v.end());
+            return *mid;
+        };
+        Plane busy(mask.size(), 0);  // the median's edge strength, spread a little
+        std::vector<float> sizes, busies;
+        for (unsigned y = y0; y <= y1; ++y)
+            for (unsigned x = x0; x <= x1; ++x)
+                if (const size_t i = size_t(y) * w + x; inside[i]) {
+                    sizes.push_back(std::abs(detail[i] = old_l[i] - med[i]));
+                    if (x > 0 && y > 0 && x + 1 < w && y + 1 < h)
+                        busy[i] = std::abs(med[i + 1] - med[i - 1]) + std::abs(med[i + w] - med[i - w]);
+                }
+        busy = box_blur(std::move(busy), w, h, std::max(1, int(std::lround(3 * scale))));
+        for (size_t i = 0; i < busy.size(); ++i)
+            if (inside[i]) busies.push_back(busy[i]);
+        const float core = std::max(1.5f / 255, 2 * typical(std::move(sizes)));
+        const float plain = std::max(1e-3f, 2 * typical(std::move(busies)));
+        for (size_t i = 0; i < detail.size(); ++i) {
+            const float d = detail[i], b = busy[i] / plain;
+            detail[i] = (d > 0 ? std::max(0.0f, d - core) : std::min(0.0f, d + core)) / (1 + b * b);
+        }
+    }
+    // Stains: colour the toning doesn't explain, softened (blotches, not the old picture's fine colour), as a tint
+    // that only takes light away (a stain is dye): (brightness + its colour) / its strongest channel.
+    std::array<Plane, 3> stain;
+    for (int k = 0; k < 3; ++k) {
+        stain[size_t(k)].assign(mask.size(), 0);
+        for (unsigned y = y0; y <= y1; ++y)
+            for (unsigned x = x0; x <= x1; ++x)
+                if (const size_t i = size_t(y) * w + x; m[i] > 0)
+                    stain[size_t(k)][i] = frame.pixels[i * 4 + 2 - size_t(k)] / 255.0f - old_l[i] - cast(k, old_l[i]);
+        stain[size_t(k)] = weighted_blur(stain[size_t(k)], m, w, h, std::max(1, int(std::lround(3 * scale))));
+    }
+    const Plane soft_l = weighted_blur(old_l, m, w, h, std::max(1, int(std::lround(3 * scale))));
 
     Bgra out = frame;
     for (unsigned y = y0; y <= y1; ++y)
@@ -622,13 +738,16 @@ Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std
                 const float fade = t * t * (3 - 2 * t);  // eases out over the whole reach: no inner edge shows
                 shading = 1 + (v - 1) * fade;
             }
-            const float detail = old_l[i] - fine[i];
+            float tint[3];
+            const float base = std::max(0.1f, soft_l[i]);
+            for (int k = 0; k < 3; ++k) tint[k] = std::max(0.0f, 1 + stain[size_t(k)][i] / base);
+            const float strongest = std::max({tint[0], tint[1], tint[2], 1e-4f});
             for (int k = 0; k < 3; ++k) {
-                const float toned = toned_l + (rgb[k] - l) * k_colour + cast[k];  // and its colour cast
+                const float toned = toned_l + (rgb[k] - l) * k_colour + cast(k, toned_l);  // and its toning
                 float c = rgb[k] + (toned - rgb[k]) * ageing.tone;
                 c *= 1 + (shading - 1) * ageing.shading;
-                c += ageing.stains * ((old[k] - old_l[i]) - cast[k]);  // its colour away from its cast
-                c += ageing.detail * detail;
+                c *= 1 + (tint[k] / strongest - 1) * ageing.stains;
+                c += ageing.detail * detail[i];
                 op[2 - k] = std::uint8_t(std::lround(std::clamp(old[k] + (c - old[k]) * a, 0.0f, 1.0f) * 255));
             }
         }

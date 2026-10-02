@@ -258,8 +258,19 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   overwrite / skip), Create folders. Pasted quotes stripped, paths past 260 characters via `\\?\` (`long_path`).
   The editor shows "Destination exists" from core `destination_warnings` (rechecked on input change and every 1.5 s;
   no warning when a link decides the name); the run logs what it did with an existing destination.
-- ExportImage never overwrites an existing PNG (the user's edit). One run exports every PNG that needs editing
-  and skips only what depends on a waiting EditImage. So a mod is: Run, edit, Done editing, Run.
+- ExportImage never overwrites an existing PNG **that goes to an Edit image step** (through Splits, `for_editing`):
+  the user's edit. One run exports every PNG that needs editing and skips only what depends on a waiting EditImage.
+  So a mod is: Run, edit, Done editing, Run. **Not going to an Edit image, the file is a working file (user,
+  2026-10-02: "an intermediary image", e.g. Replace photo's frame; deleting it by hand was bad UI):** previews start
+  from the texture, never from the file, and a run exports it again only when needed (user: avoid needless write
+  cycles): the texture differs from the recorded one, or the file's write time differs from the recorded one (changed
+  or deleted outside the tool). An unchanged Run writes nothing for it (it used to cost ~2.5 MB: PNG, Noesis's temp
+  copy and log). Not yet skipped when unchanged: Replace photo / image blocks' Save to, SaveTex's temp .tex, Package.
+  **A file for editing whose texture changed (user, 2026-10-02: a new frame texture still previewed, and would have packaged,
+  the old frame's PNG; overwrite chosen over a backup or a refusal):** each run records the texture the file is from
+  (node state `exported_from` / `exported_time`, via `RunResult::state` / `RunError::state` and `apply_run`); a
+  different texture re-exports over the file (logged; the Edit image's "done" resets), and previews skip the stale
+  file and start from the texture. No record (graphs from before, the CLI, which doesn't save): the file is trusted.
 - PackageMod packages every linked texture. Several previews are tiled into one `preview.png`.
   "Replace existing" overwrites only a previous build of the same mod.
 - Old graph files are migrated on load: PackageMod's typed `screenshot` becomes ImportImage → preview.
@@ -292,11 +303,25 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   An unsigned average failed on the real texture (the grimy photo had as much edge as the rings: it picked 164 px
   inside the photo); the signed one found 91 px, on the edge, at full size and on the 256 px thumbnail. Grow (default
   2 px, slides under the lip; at 0 a 1-2 px line of the old photo showed) and Feather. Core `replace_photo`: the
-  picture covers the area (Fill), then the old photo's ageing at slider strengths: tone (brightness mean / spread,
-  colour cast, colourfulness), shading (brightness by distance from the photo's edge and direction round it, 36
-  sectors x 24 rings up to a quarter of its size, interpolated, eased out; a plain blur ghosted the old faces),
-  stains (colour away from its cast: clean on grey photos), scratches (high-pass, default 0: the old picture ghosts
-  through). "Show edge" draws the found outline on the thumbnail only. Checked on the real texture (images saved and
+  picture covers the area (Fill), then the old photo's ageing at slider strengths. **None of them may carry the old
+  picture over (user, 2026-10-02: Scratches overlaid the old image; the see-through look was everywhere):**
+  - tone: brightness mean / spread, colourfulness, and the old toning as a line over brightness (sepia is browner in
+    the shadows; fitted twice, the second time without the pixels far off the first line, i.e. stains);
+  - shading: brightness by distance from the photo's edge and direction round it (36 sectors x 24 rings up to a
+    quarter of its size, interpolated, eased out), relative to the innermost ring in the same direction and only
+    darker (a frame casts shadow). Relative to the photo's mean it copied the old composition (light wall, dark floor);
+    allowing lighter brightened the edge beside the old man's dark coat;
+  - stains: the colour the toning line doesn't explain, blurred 3 px, applied as a multiplied tint
+    ((brightness + colour) / its strongest channel), so stains darken (user: stains were too light). Colour away from
+    one flat cast had followed the old picture's content;
+  - scratches: the old brightness minus its median (5x5 at full size, inside the photo only; a median keeps step
+    edges, so outlines don't pass, specks and thin scratches do), small residuals dropped (under 2x the typical one),
+    and faded where the median image is busy (eyes, buttons, patterns sit among the picture's own edges). A box
+    high-pass drew every outline of the old picture. Default 0.
+  Checked on the real texture with a flat grey picture, each term alone (images saved and looked at): no faces in
+  any; jacket pattern and a few buttons remain faint in Scratches at 100. Test: a sepia photo with a dark disc,
+  specks and a stain: no edge where the disc was, specks and a darker stain carried. "Show edge" draws the found
+  outline on the thumbnail only. Checked on the real texture (images saved and
   looked at, not screenshots). Thumbnails shrink one-mip textures (most RE4R UI textures) to 256 px.
 - **Cut text (CutText, user 2026-10-01: "truncate text based on the character content"):** keeps the part of a text
   or path after / before / from / up to a marker, at its first or last occurrence (core `cut_text`), ignoring case and

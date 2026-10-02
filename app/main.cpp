@@ -669,6 +669,7 @@ void poll_run(State& s) {
         s.status = r.message;
         s.warnings = r.warnings;  // shown in a popup (draw_warnings)
     } catch (const remod::RunError& e) {
+        remod::apply_run(s.graph, {.state = e.state});
         s.statuses = e.nodes;
         s.values = e.values;
         s.status = std::string("Error: ") + e.what();

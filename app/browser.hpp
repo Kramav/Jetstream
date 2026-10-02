@@ -96,6 +96,7 @@ private:
     std::string listing_error_;
     std::map<std::string, std::vector<std::string>> subfolders_;  // the disk tree: folder -> its subfolders' names
     std::string query_;
+    float tree_share_ = 0.45f;  // the folder tree's share of the panel's height (the bar under it drags it)
     std::vector<Entry> entries_;      // the file list (and the Textures window's tiles) for the place and search
     std::string entries_for_ = "\x01";  // what entries_ was made for
     int version_ = 0;                 // bumped when the index, a listing or a nickname changes

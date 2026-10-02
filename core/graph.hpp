@@ -127,6 +127,7 @@ struct RunResult {
     std::string message;
     std::map<int, NodeStatus> nodes;
     std::vector<int> reset_edits;  // Edit image steps whose image was just re-exported: their "done" no longer holds
+    std::map<int, std::map<std::string, std::string>> state;  // node state params a run records (apply_run sets them)
     std::vector<std::string> warnings;  // things the user should check in game, e.g. a changed mip count
     RunValues values;                   // what every output gave (front ends show what a link held)
 };
@@ -135,6 +136,7 @@ struct RunResult {
 struct RunError : GraphError {
     std::map<int, NodeStatus> nodes;
     RunValues values;  // what the outputs that ran gave
+    std::map<int, std::map<std::string, std::string>> state;  // as RunResult's: steps done before the failure count
     RunError(const std::string& message, std::map<int, NodeStatus> statuses)
         : GraphError(message), nodes(std::move(statuses)) {}
 };
@@ -190,7 +192,8 @@ private:
 // Node ids in the order a run takes them (dependency order, ties in file order). Nodes in a loop are left out.
 std::vector<int> step_order(const Graph& graph);
 
-// Applies what a run found to the graph: clears "done" on Edit image steps whose image was re-exported.
+// Applies what a run found to the graph: clears "done" on Edit image steps whose image was re-exported, and records
+// the state params steps recorded (Export image: which texture its file is from and the file's write time).
 void apply_run(Graph& graph, const RunResult& result);
 
 // Marks an Edit image step done (the user finished editing) or not.

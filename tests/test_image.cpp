@@ -280,3 +280,43 @@ TEST_CASE("replace_photo fills the area end to end and carries the old photo's a
     CHECK(std::abs(t[2] - t[1]) < 30);
     CHECK(t[2] < 120);
 }
+
+TEST_CASE("replace_photo carries the dirt, not the old picture") {
+    // A sepia old photo (browner the darker it is) in the 200 px opening at 50-249: a dark disc with a sharp edge, two
+    // white specks and a brown stain.
+    remod::Bgra frame = framed(300, 10, 45, 50);
+    auto put = [&](unsigned x, unsigned y, float r, float g, float b) {
+        std::uint8_t* p = &frame.pixels[(size_t(y) * 300 + x) * 4];
+        p[0] = std::uint8_t(std::lround(b * 255)), p[1] = std::uint8_t(std::lround(g * 255)), p[2] = std::uint8_t(std::lround(r * 255));
+    };
+    auto sepia = [&](unsigned x, unsigned y, float l) { put(x, y, l + 0.08f * (1 - l), l - 0.01f * (1 - l), l - 0.12f * (1 - l)); };
+    for (unsigned y = 50; y < 250; ++y)
+        for (unsigned x = 50; x < 250; ++x) {
+            const int dx = int(x) - 150, dy = int(y) - 150;
+            sepia(x, y, dx * dx + dy * dy < 30 * 30 ? 0.2f : 0.6f);
+        }
+    for (unsigned y = 105; y < 120; ++y)
+        for (unsigned x = 110; x < 125; ++x) put(x, y, 0.55f, 0.43f, 0.25f);  // the stain
+    for (unsigned d = 0; d < 4; ++d) sepia(200 + d % 2, 200 + d / 2, 1), sepia(190 + d % 2, 110 + d / 2, 1);  // specks
+
+    const remod::PhotoArea area = remod::photo_area(frame, 40, 0, 0);
+    const remod::Bgra grey{1, 1, {128, 128, 128, 255}};
+    const remod::Bgra out = remod::replace_photo(frame, grey, area.mask, {1, 1, 1, 1});
+    auto px = [&](const remod::Bgra& img, unsigned x, unsigned y) {
+        const std::uint8_t* p = &img.pixels[(size_t(y) * 300 + x) * 4];
+        return std::array<int, 3>{p[0], p[1], p[2]};
+    };
+    auto luma = [&](const remod::Bgra& img, unsigned x, unsigned y) {
+        const auto p = px(img, x, y);
+        return 0.114 * p[0] + 0.587 * p[1] + 0.299 * p[2];
+    };
+    const auto ref = px(out, 150, 150);
+    for (unsigned x = 160; x < 192; ++x)  // across the disc's edge (at 180): no outline, no colour
+        for (int k = 0; k < 3; ++k) CHECK(std::abs(px(out, x, 150)[size_t(k)] - ref[size_t(k)]) < 4);
+    CHECK(luma(out, 200, 200) > luma(out, 205, 205) + 20);  // a speck still shows
+    const auto s = px(out, 117, 112), clean = px(out, 140, 100);
+    CHECK(s[2] - s[0] > clean[2] - clean[0] + 20);  // the stain's brown
+
+    const remod::Bgra stains_only = remod::replace_photo(frame, grey, area.mask, {0, 0, 1, 0});
+    CHECK(luma(stains_only, 117, 112) < luma(stains_only, 140, 100) - 10);  // and it darkens
+}

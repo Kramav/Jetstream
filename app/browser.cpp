@@ -545,10 +545,17 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
                              &query_);
     const bool searching = query_.find_first_not_of(' ') != std::string::npos;
     if (!searching) {
-        ImGui::BeginChild("tree", ImVec2(0, ImGui::GetContentRegionAvail().y * 0.45f),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeY);
+        // A share of the panel, not ImGui's ResizeY: that keeps the first frame's height, taken before the dock
+        // layout gives the panel its size, so the tree started as a sliver.
+        const float avail = ImGui::GetContentRegionAvail().y;
+        ImGui::BeginChild("tree", ImVec2(0, std::max(3 * ImGui::GetFrameHeight(), avail * tree_share_)),
+                          ImGuiChildFlags_Borders);
         draw_places(indexed_root_);
         ImGui::EndChild();
+        ImGui::InvisibleButton("##tree_split", ImVec2(-FLT_MIN, style.ItemSpacing.y + 2));
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (ImGui::IsItemActive() && avail > 0)
+            tree_share_ = std::clamp(tree_share_ + ImGui::GetIO().MouseDelta.y / avail, 0.1f, 0.9f);
     }
 
     // The place's files (a disk folder's folders first) or the search hits: names only, the Textures window shows them.

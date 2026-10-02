@@ -610,6 +610,7 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
             for (const auto& other : g.nodes) result.nodes.try_emplace(other.id);  // the rest: not reached
             RunError error(node_label(n) + ": " + e.what(), std::move(result.nodes));
             for (const auto& [key, value] : run.outputs) error.values[key] = value.text;
+            error.state = result.state;
             throw error;
         }
     }
@@ -749,6 +750,9 @@ std::vector<int> step_order(const Graph& g) {
 
 void apply_run(Graph& g, const RunResult& result) {
     for (int id : result.reset_edits) set_edit_done(g, id, false);
+    for (const auto& [id, params] : result.state)
+        if (Node* n = g.find(id))
+            for (const auto& [key, value] : params) n->params[key] = value;
 }
 
 void set_edit_done(Graph& g, int node, bool done) {
