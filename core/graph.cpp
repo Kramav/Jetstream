@@ -946,7 +946,7 @@ PreviewPass preview_pass(const Graph& g, const fs::path& base_dir, std::vector<F
 bool may_change_files(const Graph& g, const Node& n) {
     const NodeSpec* spec = find_spec(n.type);
     if (!spec || spec->pure) return false;
-    if (spec->family == Family::File || spec->family == Family::Output) return true;
+    if (spec->family == Family::File || spec->family == Family::Output || n.type == "RunProgram") return true;
     if (std::ranges::any_of(spec->outputs, [](const PortSpec& o) { return o.field != nullptr; })) return true;
     return std::ranges::any_of(spec->inputs, [&](const InputSpec& in) {
         if (!in.result) return false;
@@ -984,15 +984,22 @@ Guard::Verdict Guard::judge(const FileChange& c, std::string* why) const {
     auto say = [&](std::string text) {
         if (why) *why = std::move(text);
     };
+    const auto approved_change = [&] {
+        return std::ranges::any_of(approved, [&](const FileChange& a) {
+            return a.kind == c.kind && inside(c.path, a.path) && inside(a.path, c.path);
+        });
+    };
+    if (c.kind == ChangeKind::Run) {  // the program isn't changed; what it changes can't be checked
+        if (approved_change()) return Verdict::Ok;
+        say("runs " + c.path.string() + ", which may change any of your files: needs the user's approval");
+        return Verdict::NeedsApproval;
+    }
     for (const fs::path& dir : read_only)
         if (inside(c.path, dir)) {
             say(c.path.string() + " is in the game files (" + dir.string() + "), which are never changed");
             return Verdict::Refused;
         }
-    if (std::ranges::any_of(approved, [&](const FileChange& a) {
-            return a.kind == c.kind && inside(c.path, a.path) && inside(a.path, c.path);
-        }))
-        return Verdict::Ok;
+    if (approved_change()) return Verdict::Ok;
     if (c.kind == ChangeKind::Remove) {
         say("removes " + c.path.string() + ": needs the user's approval");
         return Verdict::NeedsApproval;

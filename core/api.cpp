@@ -74,7 +74,10 @@ Link link_of(const json& r) {
 }
 
 const char* action(ChangeKind k) {
-    return k == ChangeKind::Write ? "write" : k == ChangeKind::Remove ? "remove" : "make folder";
+    return k == ChangeKind::Write    ? "write"
+           : k == ChangeKind::Remove ? "remove"
+           : k == ChangeKind::Run    ? "run program"
+                                     : "make folder";
 }
 
 const char* state_name(NodeState s) {

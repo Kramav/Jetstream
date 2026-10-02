@@ -107,8 +107,9 @@ Graph load_graph(const std::filesystem::path& file, bool* added_blocks = nullptr
 void save_graph(const Graph& graph, const std::filesystem::path& file);
 
 // A change a step makes to files: not counting the run's temporary folder and run cache (CLAUDE.md §10 M2,
-// guardrails). Remove: deleted, or moved away from there.
-enum class ChangeKind { Write, Remove, MakeFolder };
+// guardrails). Remove: deleted, or moved away from there. Run: starts a program (`path`), which may change any file
+// the user can; what it changes isn't known in advance.
+enum class ChangeKind { Write, Remove, MakeFolder, Run };
 struct FileChange {
     int node = 0;
     ChangeKind kind = ChangeKind::Write;
@@ -137,8 +138,9 @@ struct ChangePlan {
 ChangePlan plan_changes(const Graph& graph, const std::filesystem::path& base_dir);
 
 // Guardrails for runs a program (an AI) starts. Never inside `read_only` (the game files): refused, no approval
-// lifts it. Removing a file, or writing outside `graph_dir`, needs the user's approval: allowed only if `approved`
-// holds that change (kind and path). Writing and making folders inside `graph_dir` is fine.
+// lifts it. Removing a file, writing outside `graph_dir`, or running a program (Run program; nothing checks what it
+// does) needs the user's approval: allowed only if `approved` holds that change (kind and path). Writing and making
+// folders inside `graph_dir` is fine.
 struct Guard {
     std::vector<std::filesystem::path> read_only;
     std::filesystem::path graph_dir;

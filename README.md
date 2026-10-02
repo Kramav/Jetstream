@@ -197,6 +197,19 @@ Start the graph with a **Files in folder** block instead of picking one texture:
 - **If a file fails:** the block's **If a file fails** setting stops the run (the default) or skips that file and
   goes on with the rest.
 
+## Running other programs
+
+The **Run program** block runs a program or script as one step of the graph: an `.exe`, `.bat` / `.cmd`, `.ps1` or
+`.py`.
+- **Program:** a full path, a script next to the graph, or just a name found on PATH (`claude`, `python`).
+- **Arguments:** typed as on a command line. Use `{in}` for whatever is linked into its input, `{out}` for its
+  **Output file**, and `{name}` for each file's name in a Files in folder list.
+- **What it passes on:** what the program printed (for example `claude -p "..."`'s answer), and the output file.
+
+The program runs as you and can change any of your files; nothing checks what it does. Graphs run by the API (an
+AI) need your approval before any program starts. Batch-file arguments can't contain `& | < > ^ % !` or quotes,
+because Windows would run them as commands; use the program's `.exe`, or a `.ps1` / `.py` script.
+
 ## Single steps with the CLI
 
 The same steps are also available as individual commands:

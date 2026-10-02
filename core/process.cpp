@@ -121,7 +121,16 @@ std::wstring environment_block(const std::vector<std::pair<std::wstring, std::ws
 
 ProcessResult run_process(const std::filesystem::path& exe, const std::vector<std::wstring>& args,
                           std::chrono::milliseconds timeout, bool private_desktop,
-                          const std::vector<std::pair<std::wstring, std::wstring>>& env) {
+                          const std::vector<std::pair<std::wstring, std::wstring>>& env,
+                          const std::filesystem::path& cwd) {
+    std::wstring cmd = quote_arg(exe.wstring());
+    for (const auto& a : args) cmd += L" " + quote_arg(a);
+    return run_process_line(exe, std::move(cmd), timeout, private_desktop, env, cwd);
+}
+
+ProcessResult run_process_line(const std::filesystem::path& exe, std::wstring cmd, std::chrono::milliseconds timeout,
+                               bool private_desktop, const std::vector<std::pair<std::wstring, std::wstring>>& env,
+                               const std::filesystem::path& cwd) {
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE read_raw = nullptr, write_raw = nullptr;
     if (!CreatePipe(&read_raw, &write_raw, &sa, 0)) throw ProcessError("CreatePipe: " + win_error(GetLastError()));
@@ -141,9 +150,6 @@ ProcessResult run_process(const std::filesystem::path& exe, const std::vector<st
     si.hStdInput = nul.h;
     si.hStdOutput = write.h;
     si.hStdError = write.h;
-
-    std::wstring cmd = quote_arg(exe.wstring());
-    for (const auto& a : args) cmd += L" " + quote_arg(a);
 
     // A desktop of our own: the child's windows (error MessageBoxes included) never reach the user's screen,
     // and can be found and read.
@@ -167,7 +173,7 @@ ProcessResult run_process(const std::filesystem::path& exe, const std::vector<st
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE,
                         CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
-                        env.empty() ? nullptr : env_block.data(), nullptr, &si, &pi))
+                        env.empty() ? nullptr : env_block.data(), cwd.empty() ? nullptr : cwd.c_str(), &si, &pi))
         throw ProcessError("failed to start " + exe.string() + ": " + win_error(GetLastError()));
     Handle process(pi.hProcess), thread(pi.hThread);
     AssignProcessToJobObject(job.h, process.h);  // while suspended, so its children land in the job too

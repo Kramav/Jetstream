@@ -28,8 +28,16 @@ std::wstring quote_arg(const std::wstring& arg);
 // if it opens a dialog (e.g. an error MessageBox that would wait forever), it is killed at once and the
 // ProcessError carries the dialog's text.
 // env: variables to set (or override) for the child only, on top of this process's environment.
+// cwd: the child's working folder (empty: this process's).
 ProcessResult run_process(const std::filesystem::path& exe, const std::vector<std::wstring>& args,
                           std::chrono::milliseconds timeout, bool private_desktop = false,
-                          const std::vector<std::pair<std::wstring, std::wstring>>& env = {});
+                          const std::vector<std::pair<std::wstring, std::wstring>>& env = {},
+                          const std::filesystem::path& cwd = {});
+
+// The same with the whole command line given as is (e.g. cmd.exe's own quoting); `line` starts with the program.
+ProcessResult run_process_line(const std::filesystem::path& exe, std::wstring line, std::chrono::milliseconds timeout,
+                               bool private_desktop = false,
+                               const std::vector<std::pair<std::wstring, std::wstring>>& env = {},
+                               const std::filesystem::path& cwd = {});
 
 }  // namespace remod

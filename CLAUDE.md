@@ -440,6 +440,33 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   - **Not done:** see §10 Batch.
   - Checked: tests (a 3-texture pipeline with per-item edits, one file name for all, stop / skip on a bad texture,
     plan and validate, an API copy of two files). **Not checked by eye** (the YOUR STEP list, the block buttons).
+- **Run program (2026-10-02, priority 3, §10; user: "claude -p, scripts, a possible ComfyUI bridge"):** `RunProgram`,
+  a Transform step.
+  - **Program:** a path (relative to the graph's folder), or a bare name looked up there, then on PATH, trying .exe,
+    .cmd, .bat, .ps1 and .py (`find_program`; `claude` finds claude.exe or npm's claude.cmd). No picker filter, so
+    bare names pass validation.
+  - **Arguments:** split like a command line (`CommandLineToArgvW`), then `{in}` (the single input, any kind),
+    `{out}` (Output file) and `{name}` (repeated for a list) are filled in. Filling after splitting keeps a path with
+    spaces one argument. Using `{in}` or `{out}` with nothing there fails the run. A Text block can feed the
+    Arguments field to build them from several values.
+  - **Output file** (`result` row, flippable like other destinations): must exist after the run, then it's passed on
+    with the input's game path.
+  - **Time limit:** advanced, 600 s.
+  - **Outputs:** "what it printed" (stdout and stderr, one pipe, trailing space trimmed) and the file.
+  - **How it runs:**
+    - `run_process` on a private desktop (a dialog kills it and reports its text), in the graph's folder (new `cwd`).
+    - .ps1 through System32's PowerShell `-NoProfile -ExecutionPolicy Bypass -File`; .py through py.exe, else
+      python.exe.
+    - .bat / .cmd through System32's `cmd.exe /d /s /c` (new `run_process_line`, the line as is). cmd reparses its
+      line and nothing escapes that safely, so arguments holding `& | < > ^ % !`, quotes or line breaks are refused,
+      never passed.
+    - A non-zero exit fails with the output's tail.
+  - **Guardrails:** `ChangeKind::Run` (the program's path). Its preview and run record it, and the Guard always asks
+    approval for it, whatever the folder (plan action "run program"). After that nothing checks what the program
+    does: it runs as the user. The app and the CLI don't ask (the user's own graph).
+  - **Runs every time** (no caching yet: priority 4).
+  - Checked: tests with cmd.exe, batch files, a .ps1, refused characters, time-out, a list of files, an API run
+    needing approval. Not tried: real `claude -p`, which isn't installed on the build machine.
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> [--noesis <exe>]` and from the app's Run button. Programs edit graphs through
   `remod api` (core `ApiSession`, §10 M2).
@@ -688,8 +715,9 @@ propose them as next steps before then.
 - **Priority order (user, 2026-10-02). See also the M2 "Order" below.**
   1. **Fan-out over many textures:** Batch, below. **First version done 2026-10-02** (§4 Fan-out).
   2. **Native TEX handling** to remove the Noesis requirement for textures. **Done 2026-10-02** (§4).
-  3. **A generic external-process node:** `claude -p`, scripts, a possible ComfyUI bridge. Its file changes are
-     invisible to the guardrails' plan (§10 M2), so it needs its own rule there.
+  3. **A generic external-process node:** `claude -p`, scripts, a possible ComfyUI bridge. **Done 2026-10-02**
+     (§4 Run program). Its guardrail rule: starting a program always needs approval (`ChangeKind::Run`). Not done:
+     a ComfyUI bridge itself (a script the block runs would do), and passing images to `claude -p`.
   4. **Caching and subgraphs.** Caching partly exists: the run cache means an unchanged run writes nothing (§4).
      Subgraphs aren't started.
 - **Future work (user, 2026-10-01; "we are building the engine, not the implementation yet"):**
@@ -774,7 +802,8 @@ propose them as next steps before then.
        - **The rules (core `Guard`):**
          - Refused, with no approval possible: the game files (the RE plugin's NativesPath folder) and Noesis's
            folder.
-         - Needs approval: removing any file, and writing outside the graph's folder.
+         - Needs approval: removing any file, writing outside the graph's folder, and starting a program (Run
+           program, `ChangeKind::Run`: nothing checks what it does).
          - Fine: everything else inside the graph's folder.
        - **Checked during the run too:** a run with `RunOptions::check_change` set asks the guard before every
          change, and the step fails with the reason. So a path decided only in the run can't get around the plan.

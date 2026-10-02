@@ -2,6 +2,7 @@
 
 #include "image.hpp"
 #include "package.hpp"
+#include "process.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -10,13 +11,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
+#include <cwchar>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <optional>
 #include <regex>
 #include <sstream>
+#include <tuple>
 
 namespace remod {
 
@@ -1240,6 +1244,171 @@ NodeSpec require_file() {
     };
 }
 
+// ---- Run program (user, 2026-10-02: "claude -p, scripts, a possible ComfyUI bridge") ----
+
+fs::path system_program(const wchar_t* relative) {  // from System32, never from PATH
+    wchar_t dir[MAX_PATH];
+    const UINT n = GetSystemDirectoryW(dir, MAX_PATH);
+    return n > 0 && n < MAX_PATH ? fs::path(dir) / relative : fs::path();
+}
+
+fs::path search_path(const std::wstring& name, const wchar_t* extension) {
+    wchar_t found[MAX_PATH];
+    const DWORD n = SearchPathW(nullptr, name.c_str(), extension, MAX_PATH, found, nullptr);
+    return n > 0 && n < MAX_PATH ? fs::path(found) : fs::path();
+}
+
+// The program a Run program field names: a path (relative to the graph's folder), else a name looked up there, then
+// on PATH, trying .exe, .cmd, .bat, .ps1 and .py (claude -> claude.exe or claude.cmd). Throws if there's none.
+fs::path find_program(const std::string& text, const fs::path& base_dir) {
+    const fs::path given = clean_path(text, base_dir);
+    if (given.empty()) throw GraphError("no program given");
+    std::error_code ec;
+    if (fs::is_regular_file(given, ec)) return given;
+    const fs::path name = fs::path(text).filename();
+    if (fs::path(text).has_parent_path() || name.empty()) throw GraphError("no program " + given.string());
+    for (const wchar_t* ext : {L"", L".exe", L".cmd", L".bat", L".ps1", L".py"}) {
+        if (fs::is_regular_file(base_dir / (name.wstring() + ext), ec)) return base_dir / (name.wstring() + ext);
+        if (const fs::path p = search_path(name.wstring() + ext, nullptr); !p.empty()) return p;
+    }
+    throw GraphError("no program called " + text + " here or on PATH");
+}
+
+// The arguments as typed, split the way a command line is (quotes keep spaces together).
+// ponytail: the text goes through the ANSI code page like the tool's other paths; switch the tool to wide strings if
+// non-ASCII arguments ever matter.
+std::vector<std::wstring> split_arguments(const std::string& text) {
+    std::vector<std::wstring> args;
+    if (text.find_first_not_of(" \t") == std::string::npos) return args;
+    int count = 0;
+    // A dummy program name first: CommandLineToArgvW reads the first word by other rules.
+    LPWSTR* argv = CommandLineToArgvW((L"x " + fs::path(text).wstring()).c_str(), &count);
+    if (!argv) throw GraphError("can't read the arguments: " + text);
+    for (int i = 1; i < count; ++i) args.emplace_back(argv[i]);
+    LocalFree(argv);
+    return args;
+}
+
+// The last part of what a program printed, for an error or the log.
+std::string tail_of(const std::string& output, size_t keep = 1500) {
+    std::string t = output.size() > keep ? "..." + output.substr(output.size() - keep) : output;
+    while (!t.empty() && std::isspace(static_cast<unsigned char>(t.back()))) t.pop_back();
+    return t;
+}
+
+NodeSpec run_program() {
+    return {
+        .type = "RunProgram",
+        .title = "Run program",
+        .summary = "Runs a program or script (.exe, .bat / .cmd, .ps1, .py), e.g. claude -p or your own Python, "
+                   "with your arguments, and passes on what it printed and the file it wrote. It runs as you: "
+                   "nothing checks what it changes.",
+        .inputs = {{.name = "program", .label = "Program", .type = Path, .widget = Widget::Path, .required = true,
+                    .hint = "A program or script, or just its name to look it up on PATH: claude, python, "
+                            "C:\\tools\\upscale.exe, my_script.py (next to the graph).",
+                    .path = PathKind::OpenFile},  // no filter: a bare name (claude) is fine
+                   {.name = "arguments", .label = "Arguments", .type = Text, .widget = Widget::Text,
+                    .hint = "As on a command line; quotes keep spaces together. {in}: what's linked into the input, "
+                            "{out}: the output file, {name}: the file's name when repeated for a list. Link a Text "
+                            "block to build them from several values."},
+                   {.name = "in", .label = "input", .type = Any},
+                   {.name = "out_file", .label = "Output file", .type = Path, .widget = Widget::Path,
+                    .hint = "Where the program writes its result, if it writes one: put {out} in the arguments. "
+                            "After the run it must be there; it's then passed on.",
+                    .path = PathKind::SaveFile, .result = "file"},
+                   {.name = "timeout", .label = "Time limit", .type = Text, .widget = Widget::Number,
+                    .hint = "Seconds before the program is stopped.", .initial = "600", .min = 1, .max = 86400,
+                    .format = "%.0f s", .advanced = true}},
+        .outputs = {{"text", Text, "what it printed"}, {"file", Path, "output file"}},
+        .family = Family::Transform,
+        .run = [](NodeRun& r) {
+            const fs::path& base = r.run.options.base_dir;
+            const fs::path program = find_program(r.text("program"), base);
+            r.change(ChangeKind::Run, program);
+            const fs::path out = clean_path(r.text("out_file"), base);
+            if (!out.empty()) {
+                r.change(ChangeKind::Write, out);
+                if (out.has_parent_path()) fs::create_directories(long_path(out.parent_path()));
+            }
+            const std::vector<Value> in = r.values("in");
+            std::vector<std::wstring> args;
+            for (std::wstring arg : split_arguments(r.text("arguments"))) {
+                for (const auto& [mark, value, missing] :
+                     {std::tuple{L"{in}", in.empty() ? std::wstring() : fs::path(in[0].text).wstring(),
+                                 "nothing is linked into its input"},
+                      std::tuple{L"{out}", out.wstring(), "Output file is empty"}})
+                    for (size_t at; (at = arg.find(mark)) != std::wstring::npos;) {
+                        if (value.empty()) throw GraphError(std::string("the arguments use ") +
+                                                            fs::path(mark).string() + " but " + missing);
+                        arg.replace(at, std::wcslen(mark), value);
+                    }
+                args.push_back(std::move(arg));
+            }
+
+            // Scripts go through their interpreter. cmd.exe reparses its line (& | < > ^ run commands, %x% expands),
+            // so a batch file's arguments may not hold those characters (or quotes); there's no safe escaping.
+            std::string ext = program.extension().string();
+            std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const auto timeout = std::chrono::seconds(static_cast<long long>(number(r, "timeout")));
+            const auto start = std::chrono::steady_clock::now();
+            ProcessResult result;
+            try {
+                if (ext == ".bat" || ext == ".cmd") {
+                    std::wstring line = L"\"" + program.wstring() + L"\"";
+                    for (const std::wstring& a : args) {
+                        if (a.find_first_of(L"&|<>^%!\"\r\n") != std::wstring::npos)
+                            throw GraphError(program.filename().string() + " is a batch file: its arguments can't "
+                                             "hold & | < > ^ % ! or quotes (Windows would run them as commands). "
+                                             "Use the program's .exe, or a .ps1 / .py script.");
+                        line += a.find_first_of(L" \t") == std::wstring::npos ? L" " + a : L" \"" + a + L"\"";
+                    }
+                    const fs::path cmd = system_program(L"cmd.exe");
+                    result = run_process_line(cmd, L"cmd.exe /d /s /c \"" + line + L"\"", timeout, true, {}, base);
+                } else if (ext == ".ps1") {
+                    args.insert(args.begin(), {L"-NoProfile", L"-ExecutionPolicy", L"Bypass", L"-File", program.wstring()});
+                    result = run_process(system_program(L"WindowsPowerShell\\v1.0\\powershell.exe"), args, timeout,
+                                         true, {}, base);
+                } else if (ext == ".py") {
+                    fs::path python = search_path(L"py.exe", nullptr);
+                    if (python.empty()) python = search_path(L"python.exe", nullptr);
+                    if (python.empty()) throw GraphError("no Python found (py.exe or python.exe on PATH)");
+                    args.insert(args.begin(), program.wstring());
+                    result = run_process(python, args, timeout, true, {}, base);
+                } else {
+                    result = run_process(program, args, timeout, true, {}, base);
+                }
+            } catch (const ProcessError& e) {
+                throw GraphError(e.what());
+            }
+            if (result.exit_code != 0)
+                throw GraphError(program.filename().string() + " failed (exit code " + std::to_string(result.exit_code) +
+                                 ")" + (result.output.empty() ? "" : ":\n" + tail_of(result.output)));
+            std::error_code ec;
+            if (!out.empty() && !fs::is_regular_file(long_path(out), ec))
+                throw GraphError(program.filename().string() + " finished but didn't write " + out.string());
+
+            std::string text = result.output;  // what it printed (its errors too: one pipe)
+            while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) text.pop_back();
+            if (!text.empty()) r.log("printed: " + tail_of(text, 500));
+            r.output("text", {text, {}, {}});
+            if (!out.empty()) r.output("file", file_value(out, in.empty() ? "" : in[0].game_path));
+            const auto took = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            char seconds[32];
+            std::snprintf(seconds, sizeof seconds, "%.1f s", took);
+            r.done("ran " + program.filename().string() + " (" + seconds + ")" +
+                       (out.empty() ? "" : ", wrote " + out.filename().string()),
+                   out);
+        },
+        .preview = [](NodeRun& r) {  // what it would run and write; what it prints is known only in a run
+            r.change(ChangeKind::Run, find_program(r.text("program"), r.run.options.base_dir));
+            if (const fs::path out = clean_path(r.text("out_file"), r.run.options.base_dir); !out.empty()) {
+                r.change(ChangeKind::Write, out);
+                r.output("file", file_value(out));
+            }
+        },
+    };
+}
+
 }  // namespace
 
 const std::vector<NodeSpec>& node_specs() {
@@ -1247,7 +1416,7 @@ const std::vector<NodeSpec>& node_specs() {
         // The main steps: the texture pipeline, then file steps.
         load_tex(), files_in_folder(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
         resize_image_node(), overlay_image_node(), replace_photo_node(), preview_node(), package_mod(),
-        copy_file(), move_file(), rename_file(), delete_file(), make_folder(),
+        copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),
     };
