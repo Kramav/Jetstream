@@ -269,6 +269,11 @@ InputSpec image_input(const char* name, const char* label, const char* hint) {
             .path = PathKind::OpenFile, .filter = kEditImageFormats};
 }
 
+InputSpec advanced(InputSpec in) {
+    in.advanced = true;
+    return in;
+}
+
 InputSpec number_input(const char* name, const char* label, const char* hint, const char* initial, float min,
                        float max, const char* format, const char* zero = nullptr) {
     return {.name = name, .label = label, .type = Text, .widget = Widget::Number, .hint = hint, .initial = initial,
@@ -314,6 +319,19 @@ float number(const NodeRun& r, const char* input) {
 }
 
 // Replace photo's Zoom and Picture X / Y as a Framing (percentages; an empty Zoom, as in older graphs, is 100%).
+}  // namespace
+
+bool at_initial(const InputSpec& in, const std::string& value) {
+    if (in.widget == Widget::Checkbox) return (value == "true") == (std::string_view(in.initial) == "true");
+    if (in.widget == Widget::Number) {
+        const auto v = parse_number(in, value), d = parse_number(in, in.initial);
+        return v && d && *v == *d;
+    }
+    return value == in.initial;
+}
+
+namespace {
+
 Framing framing_from(float zoom, float x, float y) { return {zoom > 0 ? zoom / 100 : 1, x / 100, y / 100}; }
 Framing framing_of(const NodeRun& r) {
     return framing_from(number(r, "zoom"), number(r, "picture_x"), number(r, "picture_y"));
@@ -458,8 +476,8 @@ NodeSpec preview_node() {
                    "nothing. Click the picture to enlarge it. To preview something that also goes on to a step, put a "
                    "Split on its link.",
         .inputs = {{.name = "in", .label = "picture", .type = Any},
-                   number_input("size", "Size", "How large the picture shows on the graph, in pixels at 100% zoom.",
-                                "320", 120, 1600, "%.0f px")},
+                   advanced(number_input("size", "Size", "How large the picture shows on the graph, in pixels at "
+                                         "100% zoom.", "320", 120, 1600, "%.0f px"))},
         .family = Family::Output,
         .pure = true,
         .thumbnail = true,
@@ -479,32 +497,33 @@ NodeSpec replace_photo_node() {
                    "its stains, and if wanted its scratches.",
         .inputs = {image_input("frame", "Frame image", "The framed photo, e.g. Export image of the frame's texture."),
                    image_input("picture", "Picture", "The new picture. It's cropped to fill the photo's area."),
-                   number_input("frame_width", "Frame width",
+                   advanced(number_input("frame_width", "Frame width",
                                 "Where the old photo starts: its distance in from the frame's outer outline, in "
                                 "pixels. Larger moves the edge inwards (a smaller picture). 0 (auto): found, the "
                                 "innermost ring all the way round. To nudge the found edge, use Grow instead.",
-                                "0", 0, 4096, "%.0f px", "auto"),
-                   number_input("grow", "Grow", "Pixels to move the found edge outwards (the picture covers more of "
-                                "the frame); negative moves it in (shows more of the old photo).", "0", -40, 40,
-                                "%.0f px"),
-                   number_input("feather", "Feather", "Softens the edge, in pixels.", "1", 0, 20, "%.0f px"),
-                   number_input("zoom", "Zoom", "Zooms into the picture: 100 just fills the photo's area end to "
-                                "end, 200 shows half as much of it.", "100", 100, 400, "%.0f%%"),
-                   number_input("picture_x", "Picture X", "Which part of the picture shows across: -100 its left "
-                                "edge, 100 its right edge, 0 the middle. Matters once it's wider than the area (or "
-                                "zoomed).", "0", -100, 100, "%.0f%%"),
-                   number_input("picture_y", "Picture Y", "Which part of the picture shows up and down: -100 its top, "
-                                "100 its bottom, 0 the middle (e.g. -40 keeps heads in).", "0", -100, 100, "%.0f%%"),
-                   number_input("tone", "Match tone", "The old photo's brightness, contrast and colour cast.", "100",
-                                0, 100, "%.0f%%"),
-                   number_input("shading", "Shading", "The old photo's darkening towards its edges: the frame's "
-                                "shadow.", "100", 0, 100, "%.0f%%"),
-                   number_input("stains", "Stains", "The old photo's stains: colour its toning doesn't explain, "
-                                "darkening the new picture.", "100", 0, 100, "%.0f%%"),
-                   number_input("detail", "Scratches", "The old photo's scratches and specks (thin marks only, not "
-                                "its picture's outlines).", "0", 0, 100, "%.0f%%"),
+                                "0", 0, 4096, "%.0f px", "auto")),
+                   advanced(number_input("grow", "Grow", "Pixels to move the found edge outwards (the picture covers "
+                                         "more of the frame); negative moves it in (shows more of the old photo).",
+                                         "0", -40, 40, "%.0f px")),
+                   advanced(number_input("feather", "Feather", "Softens the edge, in pixels.", "1", 0, 20, "%.0f px")),
+                   advanced(number_input("zoom", "Zoom", "Zooms into the picture: 100 just fills the photo's area end "
+                                         "to end, 200 shows half as much of it.", "100", 100, 400, "%.0f%%")),
+                   advanced(number_input("picture_x", "Picture X", "Which part of the picture shows across: -100 its "
+                                         "left edge, 100 its right edge, 0 the middle. Matters once it's wider than "
+                                         "the area (or zoomed).", "0", -100, 100, "%.0f%%")),
+                   advanced(number_input("picture_y", "Picture Y", "Which part of the picture shows up and down: -100 "
+                                         "its top, 100 its bottom, 0 the middle (e.g. -40 keeps heads in).", "0",
+                                         -100, 100, "%.0f%%")),
+                   advanced(number_input("tone", "Match tone", "The old photo's brightness, contrast and colour cast.",
+                                         "100", 0, 100, "%.0f%%")),
+                   advanced(number_input("shading", "Shading", "The old photo's darkening towards its edges: the "
+                                         "frame's shadow.", "100", 0, 100, "%.0f%%")),
+                   advanced(number_input("stains", "Stains", "The old photo's stains: colour its toning doesn't "
+                                         "explain, darkening the new picture.", "100", 0, 100, "%.0f%%")),
+                   advanced(number_input("detail", "Scratches", "The old photo's scratches and specks (thin marks "
+                                         "only, not its picture's outlines).", "0", 0, 100, "%.0f%%")),
                    {.name = "show_outline", .label = "Show edge", .type = Text, .widget = Widget::Checkbox,
-                    .hint = "Draws the photo's edge as found on the preview (not in the result)."},
+                    .hint = "Draws the photo's edge as found on the preview (not in the result).", .advanced = true},
                    save_to_input()},
         .outputs = {{"image", Image, "image"}},
         .family = Family::Transform,

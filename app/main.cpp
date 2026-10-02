@@ -472,6 +472,7 @@ struct State {
     // Top-to-bottom flow: the ports along each block's top (inputs) and bottom (outputs) edge, spread evenly: how many
     // each block had last frame (by node), and the ones drawn so far in the block being drawn.
     std::map<int, std::array<int, 2>> port_count;
+    std::set<int> unfolded;  // blocks showing all their settings, in use or not (InputSpec::advanced)
     std::map<std::uintptr_t, bool> pin_top;  // an input pin on its block's top edge (a linked field, Across)
     std::array<int, 2> ports_now{};
     std::string add_type;  // from the Nodes panel: a block to add next frame, at `add_at` (graph) or mid-view
@@ -1283,13 +1284,23 @@ ImVec2 draw_block_preview(ImDrawList* draw, ImVec2 at, const remod::NodeSpec& sp
         float y = look.padding.y;
         label(x0, y, spec.title, utility ? pal::muted : pal::text, title, g_title_font);
         y += title + style.ItemSpacing.y;
-        for (const auto& in : spec.inputs) {  // fixed inputs: pin, label, field
+        int folded = 0;
+        for (const auto& in : spec.inputs) {  // fixed inputs: pin, label, field (a fresh block's advanced ones fold)
             if (in.multiple || in.result) continue;
+            if (in.advanced) {
+                ++folded;
+                continue;
+            }
             pin(false, y, in.type, in.editable() ? PinLook::Field : PinLook::Port);
             label(x0, y + style.FramePadding.y, in.required ? (std::string(in.label) + " *").c_str() : in.label, text);
             if (in.widget == remod::Widget::Checkbox) box(x0 + label_w, y, row, frame);
             else if (in.editable()) box(x0 + label_w, y, field_w, frame);
             if (in.widget == remod::Widget::Path) box(x0 + label_w + field_w + style.ItemSpacing.x, y, button_w, button);
+            y += step;
+        }
+        if (folded > 0) {
+            label(x0, y + style.FramePadding.y,
+                  ("+ " + std::to_string(folded) + " setting" + (folded == 1 ? "" : "s") + " at their defaults").c_str(), dim);
             y += step;
         }
         if (spec.manual) {
@@ -1472,9 +1483,9 @@ void draw_pin(State& s, ed::PinId id, const std::string& label, remod::PortType 
     if (o.downward || from_above) {
         // Top to bottom (Graph::downward): ports spread evenly along the top edge (inputs) or the bottom (outputs),
         // in row order; an unlinked field has none (a dozen markers would crowd the edge) and takes a link at its row.
-        // Across, a linked field (user, 2026-10-02: "fields linked from above") is on the top edge the same way: data
-        // comes in from the left, settings from above. Such a pin is grabbed and dropped on at its row's label, so
-        // links still go to a named field.
+        // Across, an input linked from a small helper (core from_above: a Value, a Text; user, 2026-10-02) is on the
+        // top edge the same way: helpers sit above, big blocks feed from the left. Such a pin is grabbed and dropped
+        // on at its row's label, so links still go to a named field.
         const float half = ImGui::GetFrameHeight() * 0.5f;
         const ImVec2 label_min(ImGui::GetItemRectMin().x, y - half), label_max(ImGui::GetItemRectMax().x, y + half);
         ImVec2 center = (label_min + label_max) * 0.5f;
@@ -1764,9 +1775,20 @@ ImVec2 draw_far_block(State& s, const remod::Node& n, const remod::NodeSpec& spe
     }
 
     const float title_size = 12.5f * u, key_size = 9.5f * u;
-    const std::string title = remod::block_title(n);
+    std::string title = remod::block_title(n);
     const bool failed = state == remod::NodeState::Failed && status;
-    const std::string key = dot ? "" : failed ? status->message : key_value(s.graph, n, spec);
+    std::string key = dot ? "" : failed ? status->message : key_value(s.graph, n, spec);
+    // A block that only holds a value (a Value: no inputs, its value an output field) is that value (user,
+    // 2026-10-02): unless it's been named, the value is its title (a path: its last part; hover for all of it).
+    std::string held;
+    if (const auto out = std::ranges::find_if(spec.outputs, [](const remod::PortSpec& o) { return o.field != nullptr; });
+        spec.inputs.empty() && out != spec.outputs.end() && title == spec.title && !failed)
+        if (const auto v = n.params.find(out->field); v != n.params.end() && !v->second.empty()) {
+            held = v->second;
+            const std::string last = std::filesystem::path(held).filename().string();
+            title = last.empty() ? held : last;
+            key.clear();
+        }
     ImVec2 size(12 * u, 12 * u);
     float title_h = 0;
     if (!dot) {
@@ -1806,7 +1828,9 @@ ImVec2 draw_far_block(State& s, const remod::Node& n, const remod::NodeSpec& spe
     ImGui::SetCursorScreenPos(at);
     ImGui::Dummy(ImVec2(size.x, size.y + (key.empty() ? 0 : 4 * u + key_size)));
     if (ImGui::IsItemHovered())
-        hint = title + (title != spec.title ? std::string(" (") + spec.title + ")" : "") + "\n" + spec.summary +
+        hint = (held.empty() ? title + (title != spec.title ? std::string(" (") + spec.title + ")" : "")
+                             : held + " (" + spec.title + ")") +
+               "\n" + spec.summary +
                (status ? "\n\n" + status_text(*status) : "");
     if (!dot) {
         centered_text(d, g_title_font, title_size, at + ImVec2(size.x / 2, (size.y - title_h) / 2), 92 * u,
@@ -2191,10 +2215,12 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         const auto state = run_state(s, n.id);
         const remod::Family family = spec ? spec->family : remod::Family::Transform;
         const ImVec2 last_size = ed::GetNodeSize(n.id);  // pins go on its edges (last frame's: known once drawn)
-        ed::PushStyleVar(ed::StyleVar_NodePadding, far_view ? ImVec4(0, 0, 0, 0) : padding);
+        // A Split is a junction, not a step (user, 2026-10-02: Splits shouldn't take a column): its dot at every zoom.
+        const bool symbol = far_view || family == remod::Family::Flow;
+        ed::PushStyleVar(ed::StyleVar_NodePadding, symbol ? ImVec4(0, 0, 0, 0) : padding);
         ed::BeginNode(n.id);
         ImGui::PushID(n.id);
-        const float top = ImGui::GetCursorScreenPos().y - (far_view ? 0 : padding.y);
+        const float top = ImGui::GetCursorScreenPos().y - (symbol ? 0 : padding.y);
         float band = 0;   // Near: the header's height
         ImVec2 far_size;  // Far: the symbol's size
         // A utility (Split, Text) is a small, quiet block: narrow, a smaller plain title, its description only as
@@ -2212,7 +2238,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.ports_now = {};
         if (!spec) {
             ImGui::Text("%s (unknown node type)", n.type.c_str());
-        } else if (far_view) {
+        } else if (symbol) {
             far_size = draw_far_block(s, n, *spec, status, state, block_u, hovered_hint);
         } else {
             // The header: a large title, readable without zooming in, with the type at its right (Build layout
@@ -2312,7 +2338,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                                                  : std::string(in.label) + ": none connected";
                         folding(row < linked.size() ? 1.0f : detail, [&] {
                             draw_pin(s, pin_id(n.id, false, slot, row), label, pin_type, false, row < linked.size(), x0,
-                                     node_width, o, row < linked.size() || !s.build_mode ? PinLook::Port : PinLook::Add);
+                                     node_width, o, row < linked.size() || !s.build_mode ? PinLook::Port : PinLook::Add,
+                                     row < linked.size() && remod::from_above(s.graph, s.graph.links[linked[row]]));
                             if (ImGui::IsItemHovered()) hovered_hint = row < linked.size() ? from(linked[row]) : in.hint;
                         });
                     }
@@ -2324,7 +2351,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     const std::string label = in.required ? std::string(in.label) + " *" : std::string(in.label);
                     draw_pin(s, pin_id(n.id, false, slot), label, pin_type, false, !linked.empty(), x0, node_width, o,
                              linked.empty() && in.editable() ? PinLook::Field : PinLook::Port,
-                             in.editable() && !linked.empty());
+                             !linked.empty() && remod::from_above(s.graph, s.graph.links[linked[0]]));
                     if (ImGui::IsItemHovered()) hovered_hint = linked.empty() ? std::string(in.hint) : from(linked[0]);
                     if (!in.editable()) return;
                     // Not SameLine(x): inside a node (an ImGui group) that offset is group-relative, so x0 would be
@@ -2428,9 +2455,36 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             // Fixed inputs first; destinations keep the row of the output they share, flipped or not (only the circle
             // changes side); inputs that grow a row per link come last, at the bottom of the node, so the fields don't
             // move down as links are added.
+            // Settings most uses leave alone (InputSpec::advanced) only while in use: changed or linked (user,
+            // 2026-10-02: "only display them if we are using them"); the rest fold into one row that opens them.
+            int folded = 0, foldable = 0;
             for (size_t slot = 0; slot < spec->inputs.size(); ++slot) {
                 const remod::InputSpec& in = spec->inputs[slot];
-                if (!in.multiple && !in.result) draw_input(slot);
+                if (in.multiple || in.result) continue;
+                if (in.advanced) {
+                    ++foldable;
+                    const auto v = n.params.find(in.name);
+                    if (!s.unfolded.contains(n.id) && s.graph.links_into(n.id, in.name).empty() &&
+                        remod::at_initial(in, v == n.params.end() ? std::string(in.initial) : v->second)) {
+                        ++folded;
+                        continue;
+                    }
+                }
+                draw_input(slot);
+            }
+            if (foldable > 0 && (folded > 0 || s.unfolded.contains(n.id))) {
+                const std::string fold = folded > 0 ? "+ " + std::to_string(folded) + " setting" + (folded == 1 ? "" : "s") +
+                                                          " at their defaults"
+                                                    : std::string("- hide settings at their defaults");
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                if (ImGui::SmallButton(fold.c_str())) {
+                    if (folded > 0) s.unfolded.insert(n.id);
+                    else s.unfolded.erase(n.id);
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    hovered_hint = folded > 0 ? "Show this block's other settings (shown anyway once changed or linked)."
+                                              : "Fold away the settings still at their defaults.";
             }
             if (manual) {  // Edit image: the user's own step
                 const std::filesystem::path file = status ? status->file : std::filesystem::path();
@@ -2525,26 +2579,26 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             for (size_t slot = 0; slot < spec->inputs.size(); ++slot)
                 if (spec->inputs[slot].multiple) draw_input(slot);
         }
-        if (!far_view && spec && spec->thumbnail)
+        if (!symbol && spec && spec->thumbnail)
             folding(detail, [&] {
                 const bool large = spec->view_size != nullptr;
                 draw_thumb(s, n.id, node_width, large ? picture_size(n, *spec) : font * 8, large, hovered_hint);
             });
-        if (!far_view) ImGui::Dummy(ImVec2(node_width, 0));  // fixes the node width so the right edge (and its pins) line up
-        if (!far_view) s.port_count[n.id] = s.ports_now;  // (Far counts its own)
+        if (!symbol) ImGui::Dummy(ImVec2(node_width, 0));  // fixes the node width so the right edge (and its pins) line up
+        if (!symbol) s.port_count[n.id] = s.ports_now;  // (Far counts its own)
         ImGui::PopID();
         ed::EndNode();
         ed::PopStyleVar();
 
         // The block's outline, under its contents. Far: the symbol (a Split: a dot); Near: the whole block.
         const ImVec2 pos = ed::GetNodePosition(n.id), size = ed::GetNodeSize(n.id);
-        if (!far_view) s.near_size[n.id] = size;
-        s.mini.push_back({n.id, family, pos, far_view ? far_size : size});
+        if (!far_view) s.near_size[n.id] = symbol ? far_size : size;
+        s.mini.push_back({n.id, family, pos, symbol ? far_size : size});
         ImDrawList* bg = ed::GetNodeBackgroundDrawList(n.id);
         if (!bg) continue;
         const bool selected = ed::IsNodeSelected(n.id), hovered = ed::GetHoveredNode() == ed::NodeId(n.id);
         BlockPaint paint = block_paint(state, far_view, selected, hovered);
-        if (far_view && family == remod::Family::Flow) {
+        if (symbol && family == remod::Family::Flow) {
             const ImVec2 c = pos + far_size * 0.5f;
             bg->AddCircleFilled(c, 6 * block_u, with_alpha(paint.stroke, paint.alpha));
             if (selected) {  // a dashed ring
@@ -2647,7 +2701,9 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             n.y = p.y;
             sizes.push_back({size.x, size.y});
         }
-        const auto at = remod::tidy_layout(s.graph, sizes, font * 8, min_gap, s.graph.downward);
+        // Wraps onto a new band past the view's width at about 70% zoom: fitted afterwards, it stays readable.
+        const auto at = remod::tidy_layout(s.graph, sizes, font * 8, min_gap, s.graph.downward,
+                                           (s.graph.downward ? view_size.y : view_size.x) / 0.7f);
         for (size_t i = 0; i < at.size(); ++i) ed::SetNodePosition(s.graph.nodes[i].id, ImVec2(at[i][0], at[i][1]));
         s.navigate = true;  // fit the view to the result
     }

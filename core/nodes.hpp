@@ -68,8 +68,15 @@ struct InputSpec {
     float min = 0, max = 0;
     const char* format = "%.0f";
     const char* zero = nullptr;
+    // A tuning field most uses leave alone (Replace photo's ageing, feather...): front ends show it only while it's in
+    // use (changed from its initial value, or linked), folding the rest into one row that opens them (user,
+    // 2026-10-02: big blocks crowd the graph).
+    bool advanced = false;
     bool editable() const { return widget != Widget::None; }
 };
+
+// Whether a typed value is the input's initial one: a Number by value ("100" = "100.0"), a checkbox "" = "false".
+bool at_initial(const InputSpec& in, const std::string& value);
 
 // What kind of step a block is; front ends give each family its own outline (docs/design_handoff_node_graph):
 // Source brings a file in, Transform converts, Manual is the user's own step, Flow passes a value on (Split), File

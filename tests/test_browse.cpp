@@ -294,7 +294,7 @@ TEST_CASE("tidy_layout: the main chain a row by step order, a helper feeding it 
     CHECK(remod::tidy_layout(g, sizes, 100, 40).size() == 6);
 }
 
-TEST_CASE("tidy_layout: a Preview goes below its column's blocks; top to bottom swaps the axes") {
+TEST_CASE("tidy_layout: a Split sits in the gap, a Preview below its column; top to bottom swaps the axes") {
     remod::Graph g;
     for (const auto& [id, type] : std::vector<std::pair<int, const char*>>{
              {1, "LoadTex"}, {2, "Split"}, {3, "ExportImage"}, {4, "Preview"}, {5, "SaveTex"}})
@@ -302,15 +302,19 @@ TEST_CASE("tidy_layout: a Preview goes below its column's blocks; top to bottom 
     g.links = {{1, "tex", 2, "in"}, {2, "out", 3, "tex"}, {2, "out", 4, "in"}, {3, "png", 5, "image"}};
     const std::vector<std::array<float, 2>> sizes{{300, 200}, {100, 60}, {300, 150}, {320, 320}, {300, 180}};
     const auto at = remod::tidy_layout(g, sizes, 100, 40);
+    CHECK(at[2][0] == at[0][0] + 300 + 100);  // no column for the Split: Export right after LoadTex...
+    CHECK(at[1][0] >= at[0][0] + 300);        // ...the Split in the gap between them
+    CHECK(at[1][0] + 100 <= at[2][0]);
+    CHECK(at[1][1] + 30 == at[0][1] + 100);   // level with the middle of what feeds it
     CHECK(at[3][0] == at[2][0]);              // the Preview shares Export's column...
     CHECK(at[3][1] == at[2][1] + 200 + 40);   // ...in the row below the main chain (its tallest block, LoadTex: 200)
-    CHECK(at[2][1] == at[1][1]);              // the main chain stays a row
+    CHECK(at[2][1] == at[0][1]);              // the main chain stays a row
     CHECK(at[4][1] == at[2][1]);
 
     const auto down = remod::tidy_layout(g, sizes, 100, 40, true);
-    CHECK(down[2][1] == down[1][1] + 60 + 100);  // Export one row below the Split
-    CHECK(down[2][0] == down[1][0]);             // in line with it
-    CHECK(down[3][1] == down[2][1]);             // the Preview beside Export (to its right)
+    CHECK(down[2][1] == down[0][1] + 200 + 100);  // Export right under LoadTex (the Split in the gap)
+    CHECK(down[2][0] == down[0][0]);              // in line with it
+    CHECK(down[3][1] == down[2][1]);              // the Preview beside Export (to its right)
     CHECK(down[3][0] == down[2][0] + 300 + 40);
 }
 
@@ -332,6 +336,57 @@ TEST_CASE("tidy_layout: a side branch lines up under where it joins, in a row be
     CHECK(at[6][1] == at[5][1]);
     CHECK(at[7][0] == at[5][0]);  // Use existing image, also feeding the side's SaveTex: stacked with its LoadTex
     CHECK(at[7][1] == at[5][1] + 100 + 40);
+}
+
+TEST_CASE("tidy_layout: a long chain wraps onto a band underneath, cut where no branch spans the cut") {
+    remod::Graph g;
+    for (int id = 1; id <= 6; ++id) g.nodes.push_back({id, "SaveTex", {}, 0, 0});  // the main chain, 1 -> ... -> 6
+    for (int id = 1; id < 6; ++id) g.links.push_back({id, "tex", id + 1, "original"});
+    const std::vector<std::array<float, 2>> sizes(6, {300, 100});
+    const auto at = remod::tidy_layout(g, sizes, 100, 40, false, 1000);  // two columns (700) fit, three (1100) don't
+    CHECK(at[1][0] == 400);
+    CHECK(at[2][0] == 0);  // a new band: back at the left
+    CHECK(at[2][1] == at[0][1] + 100 + 40 + 40);  // under the first (two gaps between bands)
+    CHECK(at[3][0] == 400);
+    CHECK(at[4][0] == 0);
+    CHECK(remod::tidy_layout(g, sizes, 100, 40)[5][0] == 5 * 400);  // no limit: one row
+
+    // A side branch over columns 1-3 joining the 5th block: the cut before column 2 would split it, so the first band
+    // ends earlier, after column 0.
+    for (int id = 7; id <= 9; ++id) g.nodes.push_back({id, "LoadTex", {}, 0, 0});
+    g.links.push_back({7, "tex", 8, "original"});
+    g.links.push_back({8, "tex", 9, "original"});
+    g.links.push_back({9, "tex", 5, "image"});
+    const std::vector<std::array<float, 2>> more(9, {300, 100});
+    const auto cut = remod::tidy_layout(g, more, 100, 40, false, 1000);
+    CHECK(cut[1][0] == 0);           // column 1 starts the second band...
+    CHECK(cut[6][0] == cut[1][0]);   // ...with the branch's first block under it
+    CHECK(cut[6][1] > cut[1][1]);
+}
+
+TEST_CASE("from_above: links from small helpers come in from the top; at_initial compares numbers by value") {
+    remod::Graph g;
+    const int v = g.add_node("Value").id, t = g.add_node("Text").id, l = g.add_node("LoadTex").id;
+    const int p = g.add_node("PackageMod").id, s = g.add_node("Split").id;
+    REQUIRE(g.connect({t, "text", p, "name"}).empty());
+    REQUIRE(g.connect({l, "tex", s, "in"}).empty());
+    REQUIRE(g.connect({s, "out", p, "tex"}).empty());
+    CHECK(remod::is_helper(g, v));
+    CHECK(remod::is_helper(g, t));        // a Text with nothing linked in
+    CHECK_FALSE(remod::is_helper(g, l));  // not a utility
+    CHECK_FALSE(remod::is_helper(g, s));  // a Split carries what's linked in
+    CHECK(remod::from_above(g, g.links[0]));
+    CHECK_FALSE(remod::from_above(g, g.links[2]));
+
+    const remod::InputSpec& zoom = *remod::find_input(*remod::find_spec("ReplacePhoto"), "zoom");
+    CHECK(zoom.advanced);
+    CHECK(remod::at_initial(zoom, "100"));
+    CHECK(remod::at_initial(zoom, "100.0"));
+    CHECK_FALSE(remod::at_initial(zoom, "150"));
+    const remod::InputSpec& edge = *remod::find_input(*remod::find_spec("ReplacePhoto"), "show_outline");
+    CHECK(remod::at_initial(edge, ""));
+    CHECK(remod::at_initial(edge, "false"));
+    CHECK_FALSE(remod::at_initial(edge, "true"));
 }
 
 TEST_CASE("texture_target: the selected Original texture block, else the only one") {

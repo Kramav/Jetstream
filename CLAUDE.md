@@ -557,21 +557,35 @@ Fill these in from the manual spike before implementing the affected code:
     own picture texture (Resize "Match size of" covers them).
   - Declined: **Install to Fluffy** (the user installs by hand). A template library: only one real workflow exists
     yet (the RE4R texture mod).
-- **Done (2026-10-02): more verticality in the left-to-right flow** (was "Later: Tidy up should allow more vertical
-  inputs"; user chose "fields linked from above" and "branches stack down"):
+- **Done (2026-10-02): more verticality in the left-to-right flow, narrower graphs** (was "Later: Tidy up should
+  allow more vertical inputs"; user chose "fields linked from above", "branches stack down", then the rule below,
+  wrapping, Splits without a column and folding unused settings):
   - core `tidy_layout`: the longest chain of links is one row; every other block as late as it can go (just before
-    the first block it feeds: a side branch lines up under where it joins); a helper fed by nothing that feeds the main
-    chain (Value, Text) in a row above, right over what it feeds; every other branch (linked blocks off the main
-    chain, a Preview) in a row below, sharing a row with branches whose columns don't overlap.
-  - A linked field (an editable input with a link: a Value into Frame width, a Text into Mod name) takes its link at
-    the block's top edge, spread along it in row order; data inputs stay on the left. Grabbed and dropped on at its
-    row's label (`ed::PinRect`). Core `LinkRoute::to_top`: the stub points up and the path arrives from above.
+    the first block it feeds: a side branch lines up under where it joins); a helper feeding the main chain in a row
+    above, right over what it feeds; every other branch (linked blocks off the main chain, a Preview) in a row below,
+    sharing a row with branches whose columns don't overlap. A Split takes no column: it sits in the gap before
+    what it feeds, level with the middle of what feeds it. Past `max_width` (the app: the view's width at about 70%
+    zoom) the columns wrap onto a new band underneath, cut where no branch (or helper and its block) spans the cut
+    if there's such a place.
+  - **From above only from small helpers (user, 2026-10-02: "only from value nodes, not large nodes"):** core
+    `is_helper` (a utility with nothing linked into it: Value, Text) and `from_above(link)`. Such a link comes into
+    the block's top edge (any input, not only fields), spread along it in row order; everything else from the left.
+    Grabbed and dropped on at its row's label (`ed::PinRect`). Core `LinkRoute::to_top`: the stub points up and the
+    path arrives from above.
+  - **A Split is its junction dot at every zoom** (was a narrow block at Near): the Far drawing (`draw_far_block`,
+    `symbol` in draw_canvas); its links meet at the dot, new ones drag from its right half.
+  - **Settings only while in use (user, 2026-10-02: "only display ... ageing, scratches, feathering ... if we are
+    using them"):** `InputSpec::advanced` (Replace photo's Frame width, Grow, Feather, Zoom, Picture X / Y, the four
+    ageing sliders, Show edge; the Preview's Size). Such a field has a row only while changed from its initial value
+    (core `at_initial`: numbers by value) or linked; the rest fold into one "+ N settings at their defaults" row that
+    opens them (per block, while the app runs). The Nodes panel's previews fold them too.
   - **Top to bottom (`Graph::downward`, "flow": "down") is built but has no switch (user, 2026-10-02: big blocks like
     Replace photo don't suit it at Near zoom; a later consideration).** Core swaps x and y around the left-to-right
     code (`tidy_layout`, `make_room`, `route_links` take `downward`); the app spreads ports along top and bottom
     edges. A graph saved that way still shows that way.
-  - Checked: tests (main row, helper above, side branch lined up below, Preview below; routes into a top edge from
-    above; downward swaps); the app starts on graphs with a linked field and a downward one without asserting.
+  - Checked: tests (main row, helper above, side branch lined up below, Preview below, Split in the gap, wrapping and
+    its cut, from_above, at_initial; routes into a top edge from above; downward swaps); the app starts on graphs with
+    Splits, a linked field and a downward one without asserting.
     **Not checked by eye.**
 - **Far future (user, 2026-10-01): drop a Browser path on empty canvas to add a block holding it** (.tex → Original
   texture, image → Use existing image, anything else → Value), as an option in an options menu. Not started; today

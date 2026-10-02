@@ -209,16 +209,24 @@ void set_edit_done(Graph& graph, int node, bool done);
 // is one, else the graph's only one; 0 if neither.
 int texture_target(const Graph& graph, int selected);
 
+// A small helper: a utility block with nothing linked into it (a Value, a Text). Its links come into what they feed
+// from above (front ends put that input on the block's top edge) and Tidy up puts it in a row above (user,
+// 2026-10-02: inputs from the top only from helpers, never from large blocks).
+bool is_helper(const Graph& graph, int node);
+bool from_above(const Graph& graph, const Link& link);  // its source is a helper
+
 // "Tidy up": positions in columns by step order and rows (user, 2026-10-02: "more vertical inputs", "branches stack
-// down"). The longest chain of links is one row; every other block goes as late as it can (just before the first
-// block it feeds, so a side branch lines up under where it joins). A helper fed by nothing that feeds the main chain
-// (a Value, a Text) goes in a row above it, right over what it feeds; every other branch (blocks off the main chain,
-// linked together; a Preview) in a row below, sharing a row with branches whose columns don't overlap. Columns are as
-// wide as their widest block, `gap_x` apart; rows as tall as their tallest stack, blocks `gap_y` apart. The layout
-// starts at the blocks' current top-left corner. `sizes` (width, height) and the result (top-left corners) are in
-// `graph.nodes` order. `downward`: the flow runs top to bottom (columns become rows, "above" becomes "left of").
+// down", narrower graphs). The longest chain of links is one row; every other block goes as late as it can (just
+// before the first block it feeds, so a side branch lines up under where it joins). A helper feeding the main chain
+// (is_helper: a Value, a Text) goes in a row above it, right over what it feeds; every other branch (blocks off the
+// main chain, linked together; a Preview) in a row below, sharing a row with branches whose columns don't overlap. A
+// Split takes no column: it sits in the gap before what it feeds, level with what feeds it. Columns are as wide as
+// their widest block, `gap_x` apart; rows as tall as their tallest stack, blocks `gap_y` apart. Past `max_width`
+// (0: never) the columns wrap onto a new band of rows underneath, cut where no branch spans the cut if possible. The
+// layout starts at the blocks' current top-left corner. `sizes` (width, height) and the result (top-left corners) are
+// in `graph.nodes` order. `downward`: the flow runs top to bottom (columns become rows, "above" becomes "left of").
 std::vector<std::array<float, 2>> tidy_layout(const Graph& graph, const std::vector<std::array<float, 2>>& sizes,
-                                              float gap_x, float gap_y, bool downward = false);
+                                              float gap_x, float gap_y, bool downward = false, float max_width = 0);
 
 // Placement that leaves lines room (CLAUDE.md §4, links). Positions (top-left corners) and sizes (width, height) are
 // in `graph.nodes` order (keep_apart: any order); both return a position for every block.

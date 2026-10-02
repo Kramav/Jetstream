@@ -8,6 +8,7 @@
 #include <random>
 #include <set>
 #include <sstream>
+#include <tuple>
 #include <utility>
 
 namespace remod {
@@ -792,9 +793,17 @@ Graph swapped(Graph g) {
 
 }  // namespace
 
+bool is_helper(const Graph& g, int node) {
+    const Node* n = g.find(node);
+    const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+    return spec && spec->utility && std::ranges::none_of(g.links, [&](const Link& l) { return l.to_node == node; });
+}
+
+bool from_above(const Graph& g, const Link& link) { return is_helper(g, link.from_node); }
+
 std::vector<std::array<float, 2>> tidy_layout(const Graph& g, const std::vector<std::array<float, 2>>& sizes,
-                                              float gap_x, float gap_y, bool downward) {
-    if (downward) return swapped(tidy_layout(swapped(g), swapped(sizes), gap_x, gap_y));
+                                              float gap_x, float gap_y, bool downward, float max_width) {
+    if (downward) return swapped(tidy_layout(swapped(g), swapped(sizes), gap_x, gap_y, false, max_width));
     const size_t n = g.nodes.size();
     std::vector<std::array<float, 2>> out(n);
     if (n == 0 || sizes.size() != n) return out;
@@ -806,15 +815,21 @@ std::vector<std::array<float, 2>> tidy_layout(const Graph& g, const std::vector<
             feeders[index[l.to_node]].push_back(index[l.from_node]);
             targets[index[l.from_node]].push_back(index[l.to_node]);
         }
+    // A Split is a junction, not a step (user, 2026-10-02): it takes no column of its own but sits in the gap before
+    // the column of what it feeds. `step`: how many columns a block moves what it feeds on.
+    std::vector<char> split(n, 0);
+    for (size_t i = 0; i < n; ++i)
+        if (const NodeSpec* spec = find_spec(g.nodes[i].type)) split[i] = spec->family == Family::Flow;
+    auto step = [&](size_t i) { return split[i] ? size_t(0) : size_t(1); };
 
-    // The earliest column: one right of the furthest block feeding it (the longest chain of links into it). At most n
-    // rounds, so a cycle can't loop forever.
+    // The earliest column: past the furthest block feeding it (the longest chain of links into it). At most n rounds,
+    // so a cycle can't loop forever.
     std::vector<size_t> earliest(n, 0);
     for (size_t round = 0; round < n; ++round) {
         bool changed = false;
         for (size_t i = 0; i < n; ++i)
             for (const size_t f : feeders[i])
-                if (earliest[f] + 1 > earliest[i] && earliest[f] + 1 < n) earliest[i] = earliest[f] + 1, changed = true;
+                if (const size_t c = earliest[f] + step(f); c > earliest[i] && c < n) earliest[i] = c, changed = true;
         if (!changed) break;
     }
 
@@ -824,7 +839,8 @@ std::vector<std::array<float, 2>> tidy_layout(const Graph& g, const std::vector<
     size_t at = size_t(std::ranges::max_element(earliest) - earliest.begin());
     for (size_t hop = 0; hop < n && !main[at]; ++hop) {
         main[at] = 1;
-        const auto before = std::ranges::find_if(feeders[at], [&](size_t f) { return earliest[f] + 1 == earliest[at]; });
+        const auto before =
+            std::ranges::find_if(feeders[at], [&](size_t f) { return earliest[f] + step(f) == earliest[at]; });
         if (before == feeders[at].end()) break;
         at = *before;
     }
@@ -837,72 +853,163 @@ std::vector<std::array<float, 2>> tidy_layout(const Graph& g, const std::vector<
         for (size_t i = 0; i < n; ++i) {
             if (main[i] || targets[i].empty()) continue;
             size_t late = n;
-            for (const size_t t : targets[i]) late = std::min(late, column[t]);
-            late = late > 0 ? std::max(late - 1, earliest[i]) : earliest[i];
+            for (const size_t t : targets[i]) late = std::min(late, column[t] >= step(i) ? column[t] - step(i) : 0);
+            late = std::max(late, earliest[i]);
             if (late != column[i]) column[i] = late, changed = true;
         }
         if (!changed) break;
     }
 
-    // Rows (user, 2026-10-02: "branches stack down"): a helper fed by nothing that feeds the main chain (a Value, a
-    // Text) goes in a row above it; every other branch (linked blocks off the main chain, a Preview) in a row below,
-    // sharing a row with others whose columns don't overlap. Row -1 above, 0 the main chain, 1... below.
-    std::vector<int> row(n, 0);
-    std::vector<char> grouped(n, 0);
-    std::vector<std::vector<std::pair<size_t, size_t>>> spans;  // per row below: the column spans its branches take
+    // Rows (user, 2026-10-02: "branches stack down"): a helper feeding the main chain (core is_helper: a Value, a Text)
+    // goes in a row above it; every other branch (linked blocks off the main chain, a Preview) in a row below.
+    std::vector<int> group(n, -1);  // the branch a block off the main chain belongs to (-1: main or a helper above)
+    std::vector<char> above(n, 0);
+    std::vector<std::pair<size_t, size_t>> group_span;  // each branch's columns
     for (size_t i = 0; i < n; ++i) {
-        if (main[i] || grouped[i]) continue;
-        const NodeSpec* spec = find_spec(g.nodes[i].type);
-        if (spec && spec->utility && feeders[i].empty() && !targets[i].empty() &&
+        if (main[i] || group[i] >= 0 || above[i]) continue;
+        if (is_helper(g, g.nodes[i].id) && !targets[i].empty() &&
             std::ranges::all_of(targets[i], [&](size_t t) { return bool(main[t]); })) {
-            row[i] = -1;
-            grouped[i] = 1;
+            above[i] = 1;
             continue;
         }
-        // Its branch: the blocks off the main chain linked to it, either way.
-        std::vector<size_t> branch{i}, todo{i};
-        grouped[i] = 1;
+        const int id = int(group_span.size());
+        std::vector<size_t> todo{i};
+        group[i] = id;
+        size_t lo = column[i], hi = column[i];
         while (!todo.empty()) {
             const size_t b = todo.back();
             todo.pop_back();
+            lo = std::min(lo, column[b]), hi = std::max(hi, column[b]);
             for (const auto* next : {&feeders[b], &targets[b]})
                 for (const size_t k : *next)
-                    if (!main[k] && !grouped[k]) grouped[k] = 1, branch.push_back(k), todo.push_back(k);
+                    if (!main[k] && group[k] < 0 && !above[k]) group[k] = id, todo.push_back(k);
         }
-        size_t lo = n, hi = 0;
-        for (const size_t b : branch) lo = std::min(lo, column[b]), hi = std::max(hi, column[b]);
-        size_t r = 0;  // the first row below whose taken spans it doesn't overlap
-        while (r < spans.size() &&
-               std::ranges::any_of(spans[r], [&](const auto& s) { return lo <= s.second && s.first <= hi; }))
-            ++r;
-        if (r == spans.size()) spans.emplace_back();
-        spans[r].push_back({lo, hi});
-        for (const size_t b : branch) row[b] = int(r) + 1;
+        group_span.push_back({lo, hi});
     }
 
-    // Columns left to right from the current top-left corner, each as wide as its widest block; rows top to bottom, each
-    // as tall as its tallest stack (blocks of one row in one column stack, in file order), `gap_y` apart.
+    // Wrapping (user, 2026-10-02): once the columns pass `max_width`, the rest continues on a new band of rows
+    // underneath, cut where no branch (or helper and what it feeds) spans the cut if there's such a place.
+    const size_t columns = *std::ranges::max_element(column) + 1;
+    std::vector<float> width(columns, 0);
+    for (size_t i = 0; i < n; ++i)
+        if (!split[i]) width[column[i]] = std::max(width[column[i]], sizes[i][0]);
+    auto cuttable = [&](size_t c) {  // a cut just before column c
+        for (const auto& [lo, hi] : group_span)
+            if (lo < c && c <= hi) return false;
+        for (size_t i = 0; i < n; ++i)
+            if (above[i] && column[i] + 1 == c) return false;
+        return true;
+    };
+    std::vector<size_t> band_of(columns, 0), band_start{0};
+    float run = 0;
+    for (size_t c = 0; c < columns; ++c) {
+        const size_t first = band_start.back();
+        const float add = width[c] + (c > first ? gap_x : 0);
+        if (max_width > 0 && c > first && run + add > max_width) {
+            size_t cut = c;
+            while (cut > first + 1 && !cuttable(cut)) --cut;
+            if (!cuttable(cut)) cut = c;
+            band_start.push_back(cut);
+            run = 0;
+            for (size_t k = cut; k <= c; ++k) run += width[k] + (k > cut ? gap_x : 0);
+        } else {
+            run += add;
+        }
+    }
+    for (size_t b = 0; b < band_start.size(); ++b)
+        for (size_t c = band_start[b]; c < (b + 1 < band_start.size() ? band_start[b + 1] : columns); ++c) band_of[c] = b;
+
+    // Within a band, a branch's part takes the first row below whose columns it doesn't overlap.
+    std::vector<int> row(n, 0);  // -1 above the main chain, 0 the main chain, 1... below
+    std::map<std::pair<int, size_t>, int> branch_row;               // (branch, band) -> its row below
+    std::map<size_t, std::vector<std::vector<std::pair<size_t, size_t>>>> taken;  // band -> per row below: spans
+    for (size_t i = 0; i < n; ++i) {
+        if (main[i]) continue;
+        if (above[i]) {
+            row[i] = -1;
+            continue;
+        }
+        const size_t band = band_of[column[i]];
+        const auto key = std::make_pair(group[i], band);
+        if (!branch_row.contains(key)) {
+            size_t lo = columns, hi = 0;  // the branch's columns in this band
+            for (size_t k = 0; k < n; ++k)
+                if (group[k] == group[i] && band_of[column[k]] == band) lo = std::min(lo, column[k]), hi = std::max(hi, column[k]);
+            auto& rows = taken[band];
+            size_t r = 0;
+            while (r < rows.size() &&
+                   std::ranges::any_of(rows[r], [&](const auto& s) { return lo <= s.second && s.first <= hi; }))
+                ++r;
+            if (r == rows.size()) rows.emplace_back();
+            rows[r].push_back({lo, hi});
+            branch_row[key] = int(r) + 1;
+        }
+        row[i] = branch_row[key];
+    }
+
+    // Columns left to right from the current top-left corner (each band starting again at the left), each as wide as
+    // its widest block; rows as tall as their tallest stack (blocks of one row in one column stack, in file order),
+    // `gap_y` apart; bands two gaps apart.
     float left = g.nodes[0].x, top = g.nodes[0].y;
     for (const Node& node : g.nodes) left = std::min(left, node.x), top = std::min(top, node.y);
-    const size_t columns = *std::ranges::max_element(column) + 1;
-    const int rows = int(spans.size()) + 2;  // -1 .. spans.size()
-    std::vector<float> width(columns, 0), x(columns, left);
-    std::map<std::pair<int, size_t>, float> stack;  // (row, column) -> height so far
+    std::vector<float> x(columns, left);
+    for (size_t c = 1; c < columns; ++c)
+        x[c] = band_of[c] == band_of[c - 1] ? x[c - 1] + width[c - 1] + gap_x : left;
+    std::map<std::tuple<size_t, int, size_t>, float> stack;  // (band, row, column) -> height so far
+    std::map<std::pair<size_t, int>, float> height;          // (band, row) -> its height
     std::vector<float> offset(n, 0);
     for (size_t i = 0; i < n; ++i) {
-        width[column[i]] = std::max(width[column[i]], sizes[i][0]);
-        float& h = stack[{row[i], column[i]}];
+        if (split[i]) continue;
+        float& h = stack[{band_of[column[i]], row[i], column[i]}];
         offset[i] = h;
         h += sizes[i][1] + gap_y;
+        float& r = height[{band_of[column[i]], row[i]}];
+        r = std::max(r, h);
     }
-    for (size_t c = 1; c < columns; ++c) x[c] = x[c - 1] + width[c - 1] + gap_x;
-    std::vector<float> height(size_t(rows), 0), y(size_t(rows), top);
-    for (const auto& [key, h] : stack) height[size_t(key.first + 1)] = std::max(height[size_t(key.first + 1)], h);
-    for (int r = 1; r < rows; ++r) y[size_t(r)] = y[size_t(r - 1)] + height[size_t(r - 1)];
+    std::map<std::pair<size_t, int>, float> row_y;  // (band, row) -> its top
+    float y = top;
+    for (size_t b = 0; b < band_start.size(); ++b) {
+        int deepest = 0;
+        for (const auto& [key, h] : height)
+            if (key.first == b) deepest = std::max(deepest, key.second);
+        for (int r = -1; r <= deepest; ++r) {
+            row_y[{b, r}] = y;
+            if (const auto h = height.find({b, r}); h != height.end()) y += h->second;
+        }
+        y += gap_y;  // two gaps between bands (each row's height ends with one)
+    }
     for (size_t i = 0; i < n; ++i) {
+        if (split[i]) continue;
+        const size_t b = band_of[column[i]];
         // Above the main chain, a helper's stack sits on the row's bottom, right over what it feeds.
-        const float drop = row[i] == -1 ? height[0] - stack[{-1, column[i]}] : 0;
-        out[i] = {x[column[i]], y[size_t(row[i] + 1)] + offset[i] + drop};
+        const float drop = row[i] == -1 ? height[{b, -1}] - stack[{b, -1, column[i]}] : 0;
+        out[i] = {x[column[i]], row_y[{b, row[i]}] + offset[i] + drop};
+    }
+
+    // Splits, in order along the flow: in the gap before their column, level with the middle of what feeds them (in
+    // the same band; else of what they feed); one under another where two would meet.
+    std::vector<size_t> splits;
+    for (size_t i = 0; i < n; ++i)
+        if (split[i]) splits.push_back(i);
+    std::ranges::stable_sort(splits, {}, [&](size_t i) { return earliest[i]; });
+    std::vector<size_t> placed;
+    for (const size_t i : splits) {
+        const size_t b = band_of[column[i]];
+        const float sx = x[column[i]] - gap_x * 0.5f - sizes[i][0] * 0.5f;
+        float sy = row_y[{b, row[i]}];
+        const auto f = feeders[i].empty() ? n : feeders[i][0];
+        const auto t = targets[i].empty() ? n : targets[i][0];
+        const size_t by = f < n && band_of[column[f]] == b ? f : t < n ? t : f;
+        if (by < n) sy = out[by][1] + sizes[by][1] * 0.5f - sizes[i][1] * 0.5f;
+        for (bool moved = true; moved;) {
+            moved = false;
+            for (const size_t k : placed)
+                if (std::abs(out[k][0] - sx) < sizes[i][0] && sy < out[k][1] + sizes[k][1] + gap_y &&
+                    out[k][1] < sy + sizes[i][1] + gap_y)
+                    sy = out[k][1] + sizes[k][1] + gap_y, moved = true;
+        }
+        out[i] = {sx, sy};
+        placed.push_back(i);
     }
     return out;
 }
