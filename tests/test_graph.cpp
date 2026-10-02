@@ -1426,7 +1426,8 @@ TEST_CASE("run: Replace photo puts the picture in the frame's photo; its preview
     CHECK_THAT(r.nodes.at(1).message, ContainsSubstring("photo replaced (frame width"));
     const remod::Bgra out = remod::load_image(tmp.path / "out.png");
     CHECK(out.pixels[(60 * 120 + 60) * 4 + 0] == 255);  // blue in the middle
-    CHECK(out.pixels[(60 * 120 + 31) * 4 + 0] == 255);  // right up to the photo's edge (at 30)
+    CHECK(out.pixels[(60 * 120 + 31) * 4 + 0] >= 200);  // right up to the photo's edge (at 30), softened inwards
+    CHECK(out.pixels[(60 * 120 + 29) * 4 + 0] == 40);   // not onto the frame
     CHECK(out.pixels[(60 * 120 + 15) * 4 + 0] == 40);   // the wood untouched
 
     const remod::ImageLoader load = [](const fs::path& f) -> std::optional<remod::ImagePreview> {

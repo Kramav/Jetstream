@@ -447,8 +447,9 @@ NodeSpec replace_photo_node() {
                                 "pixels. Larger moves the edge inwards (a smaller picture). 0 (auto): found, the "
                                 "innermost ring all the way round. To nudge the found edge, use Grow instead.",
                                 "0", 0, 4096, "%.0f px", "auto"),
-                   number_input("grow", "Grow", "Pixels to move the edge outwards (slides the picture under the "
-                                "frame's lip); negative moves it in.", "2", -40, 40, "%.0f px"),
+                   number_input("grow", "Grow", "Pixels to move the found edge outwards (the picture covers more of "
+                                "the frame); negative moves it in (shows more of the old photo).", "0", -40, 40,
+                                "%.0f px"),
                    number_input("feather", "Feather", "Softens the edge, in pixels.", "1", 0, 20, "%.0f px"),
                    number_input("tone", "Match tone", "The old photo's brightness, contrast and colour cast.", "100",
                                 0, 100, "%.0f%%"),

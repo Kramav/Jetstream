@@ -412,31 +412,23 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
                              2 * at(l, x, y - 1) - at(l, x + 1, y - 1);
             across[size_t(y) * w + x] = (gx * nx + gy * ny) / len;
         }
-    // For snapping: how strong the edge along the ring is (either way), saturated at half its 95th percentile so
-    // every clear edge counts the same.
     std::vector<float> inside;
     for (size_t i = 0; i < across.size(); ++i)
         if (dist[i] > 1.5f) inside.push_back(std::abs(across[i]));
     if (inside.empty()) throw std::runtime_error("the frame image is all transparent");
-    const auto p95 = inside.begin() + std::ptrdiff_t(double(inside.size() - 1) * 0.95);
-    std::nth_element(inside.begin(), p95, inside.end());
-    const float saturation = std::max(1e-4f, *p95 * 0.5f);
-    Plane s(across.size());
-    for (size_t i = 0; i < across.size(); ++i) s[i] = std::min(1.0f, std::abs(across[i]) / saturation);
 
+    // The brightness change across the outline, averaged (with its sign) at each whole distance from it: the frame's
+    // rings, the photo's edge among them, add up; the photo's content cancels out.
+    const int deepest = std::max(4, int(*std::max_element(dist.begin(), dist.end()) * 0.8f));
+    std::vector<double> total(size_t(deepest) + 2), count(size_t(deepest) + 2);
+    for (size_t i = 0; i < dist.size(); ++i)
+        if (const int d = int(std::lround(dist[i])); d >= 1 && d <= deepest) {
+            total[size_t(d)] += across[i];
+            count[size_t(d)] += 1;
+        }
     PhotoArea out;
     out.frame_width = frame_width;
-    if (frame_width <= 0) {
-        // The brightness change across the outline, averaged (with its sign) at each whole distance from it: the
-        // frame's rings, the photo's edge among them, add up; the photo's content cancels out. The innermost clear
-        // peak is the photo's edge.
-        const int deepest = std::max(4, int(*std::max_element(dist.begin(), dist.end()) * 0.8f));
-        std::vector<double> total(size_t(deepest) + 2), count(size_t(deepest) + 2);
-        for (size_t i = 0; i < dist.size(); ++i)
-            if (const int d = int(std::lround(dist[i])); d >= 1 && d <= deepest) {
-                total[size_t(d)] += across[i];
-                count[size_t(d)] += 1;
-            }
+    if (frame_width <= 0) {  // the innermost clear peak is the photo's edge
         std::vector<float> m(size_t(deepest) + 2, 0), smooth(size_t(deepest) + 2, 0);
         for (int d = 1; d <= deepest; ++d)
             m[size_t(d)] = count[size_t(d)] ? float(std::abs(total[size_t(d)] / count[size_t(d)])) : 0;
@@ -452,16 +444,26 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
     }
     const float fw = out.frame_width;
 
+    // For snapping: the edge strength along each ray (either way: a photo can be lighter than its frame in one place
+    // and darker in another; a signed score failed on such a photo), capped at the 95th percentile, so a ramp's
+    // steepest point wins. Capped at half of it (before 2026-10-02), every clear edge scored the same and the path
+    // wandered (user: the picture covered the frame's edge on some sides).
+    const auto p95 = inside.begin() + std::ptrdiff_t(double(inside.size() - 1) * 0.95);
+    std::nth_element(inside.begin(), p95, inside.end());
+    const float cap = std::max(1e-4f, *p95);
+    Plane s(across.size());
+    for (size_t i = 0; i < across.size(); ++i) s[i] = std::min(1.0f, std::abs(across[i]) / cap);
+
     // The middle of the area inside that ring; rays from it find the ring at every angle.
     double cx = 0, cy = 0, n = 0;
     for (unsigned y = 0; y < h; ++y)
         for (unsigned x = 0; x < w; ++x)
             if (dist[size_t(y) * w + x] >= fw) cx += x, cy += y, n += 1;
     if (n == 0) {  // in real pixels (a thumbnail's are fewer)
-        const float deepest = *std::max_element(dist.begin(), dist.end());
+        const float middle = *std::max_element(dist.begin(), dist.end());
         throw std::runtime_error("Frame width " + std::to_string(std::lround(fw / scale)) +
                                  " px reaches past the frame's middle: at most " +
-                                 std::to_string(std::max(0L, std::lround(std::floor(deepest - 1) / scale))) +
+                                 std::to_string(std::max(0L, std::lround(std::floor(middle - 1) / scale))) +
                                  " px here (0 = auto)");
     }
     cx /= n;
@@ -482,7 +484,8 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
         reach = std::max(reach, r + band);
     }
     const int R = int(reach) + 2;
-    // Within the band around the ring, the edge strength along each ray (pulled a little towards the ring).
+    // Within the band around the ring, the edge strength along each ray, pulled towards the ring: harder from outside
+    // it, so of two equal edges the inner one (the photo's, not the frame's) wins.
     constexpr float none = -1e9f;
     std::vector<float> score(size_t(A) * R, none);
     for (int a = 0; a < A; ++a) {
@@ -491,7 +494,7 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
         for (int r = lo; r <= hi; ++r)
             score[size_t(a) * R + r] =
                 sample(s, w, h, float(cx + r * std::cos(t)), float(cy + r * std::sin(t))) -
-                0.05f * std::abs(float(r) - ring[size_t(a)]) / band;
+                (float(r) > ring[size_t(a)] ? 0.15f : 0.05f) * std::abs(float(r) - ring[size_t(a)]) / band;
     }
     // The closed path of radii with the most edge along it, changing by at most K per ray: two turns, the second
     // (settled) kept.
@@ -543,7 +546,11 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
             for (int x = x0; x <= x1; ++x) m[size_t(y) * w + size_t(x)] = 1;
         }
     }
-    if (feather > 0) m = box_blur(std::move(m), w, h, std::max(1, int(std::lround(feather))), 2);
+    if (feather > 0) {  // inwards only: the frame stays untouched (user, 2026-10-02: no picture on the frame)
+        const Plane hard = m;
+        m = box_blur(std::move(m), w, h, std::max(1, int(std::lround(feather))), 2);
+        for (size_t i = 0; i < m.size(); ++i) m[i] *= hard[i];
+    }
     out.mask.resize(m.size());
     for (size_t i = 0; i < m.size(); ++i) out.mask[i] = std::uint8_t(std::lround(std::clamp(m[i], 0.0f, 1.0f) * 255));
     return out;

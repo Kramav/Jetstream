@@ -301,8 +301,21 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   innermost peak (>= half the strongest, searched to 80% of the depth) is the photo's edge ("Frame width", 0 = auto),
   then snapped within a band (15% of the width) by dynamic programming over 720 rays (a closed, smooth contour).
   An unsigned average failed on the real texture (the grimy photo had as much edge as the rings: it picked 164 px
-  inside the photo); the signed one found 91 px, on the edge, at full size and on the 256 px thumbnail. Grow (default
-  2 px, slides under the lip; at 0 a 1-2 px line of the old photo showed) and Feather. Core `replace_photo`: the
+  inside the photo); the signed one found 91 px, on the edge, at full size and on the 256 px thumbnail. Grow and
+  Feather. **No picture on the frame (user, 2026-10-02: auto "slightly clipped" the frame on some sides and corners,
+  fixed by hand with Frame width):** measured per column on `file_039` and `questfile_main_002_01` (where the mask
+  starts vs that column's frame-to-photo step). Causes and fixes:
+  - Grow defaulted to 2 px: 42-86% of columns covered the frame by 2+ px. Default now 0.
+  - The snap score was capped at half its 95th percentile, so every clear edge scored the same and the path wandered
+    1-3 px. Now capped at the 95th percentile (a ramp's steepest point wins), and the pull towards the ring is 3x
+    harder from outside it (0.15 vs 0.05 per band), so of two equal edges the inner one wins. questfile's top: 36% of
+    columns covering -> 5%.
+  - A signed score (only edges stepping frame-to-photo) was tried and failed: a photo can be lighter than its frame
+    in places and darker in others.
+  - Feather blurred the mask both ways, putting a third of the picture on the frame's last pixel; now it softens
+    inwards only.
+  Where unsure (file_039's dark, stained bottom; mitred corners) the edge now leans into the photo, so a sliver of
+  the old photo can show there instead. Core `replace_photo`: the
   picture covers the area (Fill), then the old photo's ageing at slider strengths. **None of them may carry the old
   picture over (user, 2026-10-02: Scratches overlaid the old image; the see-through look was everywhere):**
   - tone: brightness mean / spread, colourfulness, and the old toning as a line over brightness (sepia is browner in

@@ -215,6 +215,12 @@ TEST_CASE("photo_area finds the photo's edge, not the frame's other rings or the
     CHECK(in(80, 147) == 255);  // the black block reaching the photo's edge: still the photo
     CHECK(in(46, 100) == 0);    // the lip
     CHECK(in(20, 100) == 0);    // the wood
+    for (const auto& [lip, photo] : {std::pair{std::array{100u, 48u}, std::array{100u, 52u}},  // every side: off the
+                                     std::pair{std::array{151u, 100u}, std::array{147u, 100u}},  // lip, on the photo
+                                     std::pair{std::array{100u, 151u}, std::array{100u, 147u}}}) {
+        CHECK(in(lip[0], lip[1]) == 0);
+        CHECK(in(photo[0], photo[1]) == 255);
+    }
     CHECK_FALSE(area.outline.empty());
 
     const remod::PhotoArea grown = remod::photo_area(frame, 0, 3, 0);  // under the lip
