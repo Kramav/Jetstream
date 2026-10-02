@@ -106,6 +106,16 @@ void set_block_title(Graph& graph, int node, const std::string& title);  // trim
 Graph load_graph(const std::filesystem::path& file, bool* added_blocks = nullptr);
 void save_graph(const Graph& graph, const std::filesystem::path& file);
 
+// A change a step makes to files: not counting the run's temporary folder and run cache (CLAUDE.md §10 M2,
+// guardrails). Remove: deleted, or moved away from there.
+enum class ChangeKind { Write, Remove, MakeFolder };
+struct FileChange {
+    int node = 0;
+    ChangeKind kind = ChangeKind::Write;
+    std::filesystem::path path;  // absolute
+    bool operator==(const FileChange&) const = default;
+};
+
 struct RunOptions {
     const Profile& profile;
     ITextureConverter& converter;
@@ -113,6 +123,29 @@ struct RunOptions {
     std::function<void(const std::string&)> log = {};
     bool edits_done = false;  // treat every Edit image step as done (the CLI's --edited, where there's no button)
     std::filesystem::path cache_dir;  // results reused by later runs (default_cache_dir()); empty = none
+    // Asked before every FileChange: "" allows it, else why not, and the step fails with that. Empty: all allowed (the
+    // app and the CLI, where the user runs their own graph). A program's runs set it (Guard).
+    std::function<std::string(const FileChange&)> check_change = {};
+};
+
+// Before a run: the changes it will make as far as previews know them (nothing is touched), and the steps whose
+// changes are decided only in the run (a path coming from a step that hasn't run).
+struct ChangePlan {
+    std::vector<FileChange> changes;
+    std::vector<int> unknown;
+};
+ChangePlan plan_changes(const Graph& graph, const std::filesystem::path& base_dir);
+
+// Guardrails for runs a program (an AI) starts. Never inside `read_only` (the game files): refused, no approval
+// lifts it. Removing a file, or writing outside `graph_dir`, needs the user's approval: allowed only if `approved`
+// holds that change (kind and path). Writing and making folders inside `graph_dir` is fine.
+struct Guard {
+    std::vector<std::filesystem::path> read_only;
+    std::filesystem::path graph_dir;
+    std::vector<FileChange> approved;  // node ids aren't compared
+    enum class Verdict { Ok, NeedsApproval, Refused };
+    Verdict judge(const FileChange& change, std::string* why = nullptr) const;
+    std::string check(const FileChange& change) const;  // for RunOptions::check_change: "" or why not
 };
 
 // Where each node got to in a run, for front ends to show.

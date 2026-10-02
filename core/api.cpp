@@ -1,8 +1,13 @@
 #include "api.hpp"
 
+#include "settings.hpp"
+#include "setup.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdio>
+#include <functional>
 
 namespace remod {
 
@@ -66,6 +71,30 @@ fs::path path_of(const json& value) {
 Link link_of(const json& r) {
     return {r.at("from").get<int>(), r.at("from_port").get<std::string>(), r.at("to").get<int>(),
             r.at("to_port").get<std::string>()};
+}
+
+const char* action(ChangeKind k) {
+    return k == ChangeKind::Write ? "write" : k == ChangeKind::Remove ? "remove" : "make folder";
+}
+
+const char* state_name(NodeState s) {
+    switch (s) {
+    case NodeState::Done: return "done";
+    case NodeState::Waiting: return "waiting for the user";
+    case NodeState::Failed: return "failed";
+    case NodeState::NotReached: return "not reached";
+    }
+    return "?";
+}
+
+json statuses(const std::map<int, NodeStatus>& nodes) {
+    json out = json::array();
+    for (const auto& [id, st] : nodes) {
+        json n{{"node", id}, {"state", state_name(st.state)}, {"message", st.message}};
+        if (!st.file.empty()) n["file"] = st.file.string();
+        out.push_back(std::move(n));
+    }
+    return out;
 }
 
 Node& node_of(Graph& g, const json& r) {
@@ -135,6 +164,71 @@ std::string ApiSession::call(const std::string& request) {
             for (const auto& c : graph_.choices_for_pin(n.id, r.at("port").get<std::string>(), r.at("output").get<bool>()))
                 choices.push_back({{"type", c.spec->type}, {"port", c.port}});
             reply["choices"] = choices;
+        } else if (op == "plan" || op == "run") {
+            // Guardrails (CLAUDE.md §10 M2): a run only after a plan, and only against that plan.
+            if (file_.empty()) throw GraphError("save the graph first: a run's folder and relative paths come from its file");
+            const fs::path noesis = path_of(r.at("noesis"));
+            const fs::path profiles = find_profiles_dir();
+            if (profiles.empty()) throw GraphError("no profiles folder found");
+            const Profile profile = load_profile_by_id(profiles, graph_.profile);
+            const fs::path base = fs::absolute(file_).parent_path();
+            Guard guard{.graph_dir = base};
+            if (const fs::path game = game_files_dir(noesis, profile); !game.empty()) guard.read_only.push_back(game);
+            guard.read_only.push_back(noesis.parent_path());  // Noesis and its plugins
+
+            const ChangePlan plan = plan_changes(graph_, base);
+            json changes = json::array();
+            std::vector<FileChange> to_approve;
+            bool refused = false;
+            for (const FileChange& c : plan.changes) {
+                std::string why;
+                const Guard::Verdict v = guard.judge(c, &why);
+                json item{{"node", c.node}, {"action", action(c.kind)}, {"path", c.path.string()},
+                          {"verdict", v == Guard::Verdict::Ok        ? "ok"
+                                      : v == Guard::Verdict::Refused ? "refused"
+                                                                     : "needs approval"}};
+                if (!why.empty()) item["why"] = why;
+                changes.push_back(std::move(item));
+                refused |= v == Guard::Verdict::Refused;
+                if (v == Guard::Verdict::NeedsApproval) to_approve.push_back(c);
+            }
+            // Its id is its content: a run names the plan it was shown, and the changes it would make now must match.
+            char id[17];
+            std::snprintf(id, sizeof id, "%016llx",
+                          static_cast<unsigned long long>(std::hash<std::string>{}(changes.dump() + json(plan.unknown).dump())));
+
+            if (op == "plan") {
+                reply["plan"] = id;
+                reply["changes"] = changes;
+                reply["decided_in_run"] = plan.unknown;  // their changes must stay inside the graph's folder
+                reply["needs_approval"] = !to_approve.empty();
+                reply["refused"] = refused;
+            } else {
+                if (r.at("plan").get<std::string>() != id)
+                    throw GraphError("the changes this run would make differ from that plan: ask for a new plan");
+                if (refused) throw GraphError("the plan has refused changes; nothing was run");
+                if (!to_approve.empty() && !r.value("approve", false))
+                    throw GraphError("the plan has changes that need the user's approval (approve: true once they agree)");
+                guard.approved = to_approve;
+                NoesisConverter converter(noesis);
+                const RunOptions options{.profile = profile, .converter = converter, .base_dir = base,
+                                         .cache_dir = default_cache_dir(),
+                                         .check_change = [&guard](const FileChange& c) { return guard.check(c); }};
+                try {
+                    const RunResult result = run_graph(graph_, options);
+                    apply_run(graph_, result);  // like the app: records what the run found (not saved)
+                    reply["message"] = result.message;
+                    reply["paused"] = result.paused;  // an Edit image waits: hand control back to the user
+                    reply["nodes"] = statuses(result.nodes);
+                    reply["warnings"] = result.warnings;
+                } catch (const RunError& e) {
+                    reply = {{"ok", false}, {"error", e.what()}, {"nodes", statuses(e.nodes)}};
+                }
+            }
+        } else if (op == "edit_done") {
+            const Node& n = node_of(graph_, r);
+            if (n.type != "EditImage") throw GraphError("block " + std::to_string(n.id) + " isn't an Edit image step");
+            set_edit_done(graph_, n.id, r.value("done", true));
         } else if (op == "validate") {
             reply["problems"] = graph_.validate();
         } else if (op == "preview") {

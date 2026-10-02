@@ -647,15 +647,37 @@ Fill these in from the manual spike before implementing the affected code:
     core like the app and the CLI, never its own rules.
   - **The orchestrator needs (2026-10-02, agreed with the user):**
     1. **Core usable by a program:** every edit as a call (list block types, add, link, set a field, validate, preview,
-       run) with structured results and errors, not text for a person. **Built 2026-10-02 except run:** core
-       `ApiSession` (`core/api.*`: one JSON request -> one JSON reply; ops types, new, open, save, graph, add, remove,
-       set, link, unlink, next, validate, preview; errors are `{"ok": false, "error": ...}` with core's own reasons) and
-       `remod api` (JSON lines on stdin/stdout). Added blocks go in a row to the right; Tidy up in the app arranges
-       them. **run waits for item 2** (it changes files).
-    2. **Guardrails on file-changing steps** (Delete, Move, Copy with Overwrite): a dry run first (`preview_values`
-       covers most of it), the user's approval for writes outside the graph's folders, and never into the game files.
+       run) with structured results and errors, not text for a person. **Built 2026-10-02:** core `ApiSession`
+       (`core/api.*`: one JSON request -> one JSON reply; ops types, new, open, save, graph, add, remove, set, link,
+       unlink, next, validate, preview, plan, run, edit_done; errors are `{"ok": false, "error": ...}` with core's own
+       reasons) and `remod api` (JSON lines on stdin/stdout). Added blocks go in a row to the right; Tidy up in the app
+       arranges them.
+    2. **Guardrails on file-changing steps. Built 2026-10-02 (user: "add guardrails"):**
+       - **Every change goes through one check:** every step that changes the user's files calls `NodeRun::change`
+         (write / remove / make folder) before it does, in its run and its preview, with the same paths. This
+         covers Export, Save to, Package's folder and zip, Copy / Move / Rename (Move and Rename also remove the
+         source), Delete and Make folder. The run's temporary folder and the run cache aren't counted.
+       - **The plan:** core `plan_changes` collects those changes from the previews, so nothing is touched.
+         Blocks whose paths are only known in the run are listed as unknown (`may_change_files`).
+       - **The rules (core `Guard`):**
+         - Refused, with no approval possible: the game files (the RE plugin's NativesPath folder) and Noesis's
+           folder.
+         - Needs approval: removing any file, and writing outside the graph's folder.
+         - Fine: everything else inside the graph's folder.
+       - **Checked during the run too:** a run with `RunOptions::check_change` set asks the guard before every
+         change, and the step fails with the reason. So a path decided only in the run can't get around the plan.
+       - **The API flow:** `plan` returns each change with its verdict and an id made from the changes. `run` must
+         name that id: if the changes differ now, it's refused and needs a new plan. Refused changes stop it, and
+         changes needing approval need `approve: true`.
+       - **Approval belongs to the user.** The program in between (an MCP server) must ask the user and never
+         decide it itself. `approve` can't prove a person agreed.
+       - **The app and the CLI's `run` aren't guarded:** there the user runs their own graph.
+       - Checked: tests, plus a `plan` of the user's example graph against their real Noesis setup. Its two writes
+         to `C:\spike` needed approval and its package write was fine. No API run with real Noesis yet.
     3. **Results it can see:** thumbnail / Preview pixels handed to the AI, not only drawn in the app.
-    4. **Manual steps:** an Edit image waiting on the user hands control back instead of stalling.
+    4. **Manual steps. Done 2026-10-02:** a run stopped at an Edit image replies `"paused": true`, with the step
+       "waiting for the user" and its file. The program hands control back, and `edit_done` marks the step done once
+       the user has finished.
     5. Block descriptions for an AI (when to use, when not, examples) beside the tooltip text.
   - **Order (2026-10-02):** the orchestrator first, over the existing blocks (no generation needed: "replace this
     frame's photo with my picture and package it" works with today's blocks), then the generation block. The texture

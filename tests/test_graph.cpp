@@ -229,6 +229,61 @@ TEST_CASE("run: Convert image to texture reuses the texture converted before fro
                                [](const fs::directory_entry& e) { return e.path().extension() == ".part"; }));
 }
 
+TEST_CASE("guardrails: a plan lists a run's file changes; a guarded run refuses what isn't allowed") {
+    TempDir tmp;
+    const fs::path dir = tmp.path / "graph", outside = tmp.path / "elsewhere", game = tmp.path / "game";
+    fs::create_directories(dir);
+    test::write_file(dir / "a.txt", "a");
+    Graph g;
+    auto& copy = g.add_node("CopyFile");  // 1: out of the graph's folder
+    copy.params["source"] = "a.txt";
+    copy.params["dest"] = (outside / "a.txt").string();
+    g.add_node("DeleteFile").params["source"] = "old.txt";  // 2
+    g.add_node("MakeFolder").params["folder"] = "made";     // 3
+    g.add_node("LoadTex").params["tex"] = "x.tex.143221013";  // 4 -> 5 SaveTex -> 6 Copy: known only in a run
+    g.add_node("SaveTex");
+    g.add_node("CopyFile").params["dest"] = "copies";
+    REQUIRE(g.connect({4, "tex", 5, "original"}).empty());
+    REQUIRE(g.connect({5, "tex", 6, "source"}).empty());
+
+    const remod::ChangePlan plan = remod::plan_changes(g, dir);
+    using K = remod::ChangeKind;
+    const std::vector<remod::FileChange> want{{1, K::Write, outside / "a.txt"},
+                                              {2, K::Remove, dir / "old.txt"},
+                                              {3, K::MakeFolder, dir / "made"}};
+    CHECK(plan.changes == want);
+    CHECK(plan.unknown == std::vector<int>{6});  // SaveTex changes nothing of the user's; the Copy after it is unknown
+
+    remod::Guard guard{.read_only = {game}, .graph_dir = dir};
+    CHECK(guard.judge({1, K::Write, dir / "made" / "x.png"}) == remod::Guard::Verdict::Ok);
+    CHECK(guard.judge({1, K::Write, outside / "a.txt"}) == remod::Guard::Verdict::NeedsApproval);
+    CHECK(guard.judge({1, K::Remove, dir / "old.txt"}) == remod::Guard::Verdict::NeedsApproval);  // even inside
+    std::string why;
+    CHECK(guard.judge({1, K::Write, tmp.path / "GAME" / "natives" / "x.tex"}, &why) == remod::Guard::Verdict::Refused);
+    CHECK_THAT(why, ContainsSubstring("game files"));
+    guard.approved = {{0, K::Write, outside / "A.TXT"}};  // approval: kind and path (any case)
+    CHECK(guard.judge({1, K::Write, outside / "a.txt"}) == remod::Guard::Verdict::Ok);
+    guard.approved.push_back({0, K::Write, game / "x.tex"});
+    CHECK(guard.judge({1, K::Write, game / "x.tex"}) == remod::Guard::Verdict::Refused);  // no approval lifts it
+
+    Graph just_copy;
+    just_copy.nodes.push_back(g.nodes[0]);
+    FakeConverter conv;
+    remod::Guard strict{.graph_dir = dir};
+    const remod::RunOptions guarded{.profile = re4r(), .converter = conv, .base_dir = dir,
+                                    .check_change = [&](const remod::FileChange& c) { return strict.check(c); }};
+    try {
+        remod::run_graph(just_copy, guarded);
+        FAIL("expected a RunError");
+    } catch (const remod::RunError& e) {
+        CHECK_THAT(std::string(e.what()), ContainsSubstring("outside the graph's folder"));
+    }
+    CHECK_FALSE(fs::exists(outside / "a.txt"));
+    strict.approved = {{1, K::Write, outside / "a.txt"}};
+    remod::run_graph(just_copy, guarded);
+    CHECK(fs::exists(outside / "a.txt"));
+}
+
 TEST_CASE("game path is inferred from a natives tree") {
     CHECK(remod::game_path_from("D:/mods/natives/stm/_chainsaw/ui/a.tex.1", "natives/STM") == "_chainsaw/ui/a.tex.1");
     CHECK(remod::game_path_from("D:\\x\\NATIVES\\STM\\a.tex.1", "natives/STM") == "a.tex.1");

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <fstream>
 #include <random>
 #include <set>
@@ -673,7 +674,24 @@ void NodeRun::warn(const std::string& warning) {
     if (run.options.log) run.options.log("warning: " + run.result.warnings.back());
 }
 
-RunValues preview_values(const Graph& g, const fs::path& base_dir) {
+void NodeRun::change(ChangeKind kind, const fs::path& path) {
+    const FileChange c{node.id, kind, fs::absolute(path).lexically_normal()};
+    if (run.planned) {
+        run.planned->push_back(c);
+    } else if (run.options.check_change) {
+        if (const std::string why = run.options.check_change(c); !why.empty()) throw GraphError(why);
+    }
+}
+
+namespace {
+
+// Every block's preview (pure blocks run), as far as known: the outputs, and the blocks that couldn't say.
+struct PreviewPass {
+    RunValues values;
+    std::set<int> unknown;  // a block with a preview (or pure) that threw, or one with neither
+};
+
+PreviewPass preview_pass(const Graph& g, const fs::path& base_dir, std::vector<FileChange>* planned = nullptr) {
     struct NoConverter : ITextureConverter {  // previews convert nothing
         TexMeta load_tex(const fs::path&, const fs::path&, const Profile&) override { throw GraphError("not in a preview"); }
         TexMeta save_tex(const fs::path&, const fs::path&, const fs::path&, const Profile&) override {
@@ -682,21 +700,93 @@ RunValues preview_values(const Graph& g, const fs::path& base_dir) {
     } converter;
     const Profile profile;
     const RunOptions options{.profile = profile, .converter = converter, .base_dir = base_dir};
-    RunState run{.graph = g, .options = options, .work_dir = {}};
+    RunState run{.graph = g, .options = options, .work_dir = {}, .planned = planned};
+    PreviewPass pass;
     for (const Node* n : topo_order(g)) {
         const NodeSpec* spec = find_spec(n->type);
         void (*fn)(NodeRun&) = !spec ? nullptr : spec->pure ? spec->run : spec->preview;
-        if (!fn) continue;
+        if (!fn) {
+            pass.unknown.insert(n->id);
+            continue;
+        }
         try {
             NodeRun node_run(run, *n);
             fn(node_run);
         } catch (const std::exception&) {
             // Not known yet: an input isn't (its source can't be previewed), or a value isn't usable.
+            pass.unknown.insert(n->id);
         }
     }
-    RunValues out;
-    for (const auto& [key, value] : run.outputs) out[key] = value.text;
-    return out;
+    for (const auto& [key, value] : run.outputs) pass.values[key] = value.text;
+    return pass;
+}
+
+// Could this block change files? Steps that do (File family, Package), one with an output field (Export's image
+// file), or a destination row in use (an image block's Save to).
+bool may_change_files(const Graph& g, const Node& n) {
+    const NodeSpec* spec = find_spec(n.type);
+    if (!spec || spec->pure) return false;
+    if (spec->family == Family::File || spec->family == Family::Output) return true;
+    if (std::ranges::any_of(spec->outputs, [](const PortSpec& o) { return o.field != nullptr; })) return true;
+    return std::ranges::any_of(spec->inputs, [&](const InputSpec& in) {
+        if (!in.result) return false;
+        const auto it = n.params.find(in.name);
+        return (it != n.params.end() && !it->second.empty()) || g.is_connected(n.id, in.name, false);
+    });
+}
+
+// Inside `dir` (or it), comparing as Windows does: ignoring case, either slash.
+bool inside(const fs::path& path, const fs::path& dir) {
+    if (dir.empty()) return false;
+    auto norm = [](const fs::path& p) {
+        std::wstring s = fs::absolute(p).lexically_normal().generic_wstring();
+        while (s.size() > 1 && s.back() == L'/') s.pop_back();
+        for (wchar_t& c : s) c = static_cast<wchar_t>(std::towlower(c));
+        return s;
+    };
+    const std::wstring a = norm(path), d = norm(dir);
+    return a == d || (a.size() > d.size() && a.starts_with(d) && a[d.size()] == L'/');
+}
+
+}  // namespace
+
+RunValues preview_values(const Graph& g, const fs::path& base_dir) { return preview_pass(g, base_dir).values; }
+
+ChangePlan plan_changes(const Graph& g, const fs::path& base_dir) {
+    ChangePlan plan;
+    const PreviewPass pass = preview_pass(g, base_dir, &plan.changes);
+    for (const Node& n : g.nodes)
+        if (pass.unknown.contains(n.id) && may_change_files(g, n)) plan.unknown.push_back(n.id);
+    return plan;
+}
+
+Guard::Verdict Guard::judge(const FileChange& c, std::string* why) const {
+    auto say = [&](std::string text) {
+        if (why) *why = std::move(text);
+    };
+    for (const fs::path& dir : read_only)
+        if (inside(c.path, dir)) {
+            say(c.path.string() + " is in the game files (" + dir.string() + "), which are never changed");
+            return Verdict::Refused;
+        }
+    if (std::ranges::any_of(approved, [&](const FileChange& a) {
+            return a.kind == c.kind && inside(c.path, a.path) && inside(a.path, c.path);
+        }))
+        return Verdict::Ok;
+    if (c.kind == ChangeKind::Remove) {
+        say("removes " + c.path.string() + ": needs the user's approval");
+        return Verdict::NeedsApproval;
+    }
+    if (!inside(c.path, graph_dir)) {
+        say("writes " + c.path.string() + ", outside the graph's folder: needs the user's approval");
+        return Verdict::NeedsApproval;
+    }
+    return Verdict::Ok;
+}
+
+std::string Guard::check(const FileChange& c) const {
+    std::string why;
+    return judge(c, &why) == Verdict::Ok ? std::string() : why;
 }
 
 std::string link_value(const Graph& g, const RunValues& preview, const RunValues& last_run, size_t link,

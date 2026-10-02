@@ -43,3 +43,40 @@ TEST_CASE("api: a program builds, checks and saves a graph with core's rules") {
     CHECK(other.call(R"({"op":"remove","id":2})") == R"({"ok":true})");
     CHECK_THAT(other.call(R"({"op":"graph"})"), ContainsSubstring(R"("links":[])"));
 }
+
+TEST_CASE("api: a run needs a plan, the user's approval where it asks for it, and never touches Noesis's folder") {
+    test::TempDir tmp;
+    const auto g = tmp.path / "g", noesis = tmp.path / "noesis" / "Noesis64.exe";
+    test::write_file(g / "a.txt", "a");
+    test::write_file(noesis, "");  // stands in: the run converts nothing
+    const std::string n = noesis.generic_string(), out = (tmp.path / "out" / "a.txt").generic_string();
+    auto plan_id = [](const std::string& reply) { return reply.substr(reply.find(R"("plan":")") + 8, 16); };
+
+    remod::ApiSession api;
+    api.call(R"({"op":"new"})");
+    api.call(R"({"op":"add","type":"CopyFile"})");
+    api.call(R"({"op":"set","id":1,"input":"source","value":"a.txt"})");
+    api.call(R"({"op":"set","id":1,"input":"dest","value":")" + out + R"("})");
+    CHECK_THAT(api.call(R"({"op":"plan","noesis":")" + n + R"("})"), ContainsSubstring("save the graph first"));
+    api.call(R"({"op":"save","file":")" + (g / "g.json").generic_string() + R"("})");
+
+    const std::string plan = api.call(R"({"op":"plan","noesis":")" + n + R"("})");
+    CHECK_THAT(plan, ContainsSubstring(R"("verdict":"needs approval")") && ContainsSubstring(R"("needs_approval":true)"));
+    const std::string id = plan_id(plan);
+    CHECK_THAT(api.call(R"({"op":"run","noesis":")" + n + R"(","plan":")" + id + R"("})"),
+               ContainsSubstring("need the user's approval"));
+    CHECK_THAT(api.call(R"({"op":"run","noesis":")" + n + R"(","plan":"0000000000000000","approve":true})"),
+               ContainsSubstring("ask for a new plan"));
+    CHECK_FALSE(std::filesystem::exists(tmp.path / "out" / "a.txt"));
+    CHECK_THAT(api.call(R"({"op":"run","noesis":")" + n + R"(","plan":")" + id + R"(","approve":true})"),
+               StartsWith(R"({"message":"Done.")") && ContainsSubstring(R"("state":"done")"));
+    CHECK(std::filesystem::exists(tmp.path / "out" / "a.txt"));
+
+    // Into Noesis's folder: refused, and approval doesn't lift it.
+    api.call(R"({"op":"set","id":1,"input":"dest","value":")" + (tmp.path / "noesis" / "a.txt").generic_string() + R"("})");
+    const std::string bad = api.call(R"({"op":"plan","noesis":")" + n + R"("})");
+    CHECK_THAT(bad, ContainsSubstring(R"("verdict":"refused")"));
+    CHECK_THAT(api.call(R"({"op":"run","noesis":")" + n + R"(","plan":")" + plan_id(bad) + R"(","approve":true})"),
+               ContainsSubstring("refused changes"));
+    CHECK_FALSE(std::filesystem::exists(tmp.path / "noesis" / "a.txt"));
+}

@@ -17,7 +17,18 @@
 //   next     id, port, output (bool)       block types that could attach to that pin, and through which port
 //   validate                               every problem that would stop a run
 //   preview                                every output's value as known without running (nothing is touched)
-// Not here yet: run. It changes files, so it waits for the orchestrator's guardrails (CLAUDE.md §10 M2).
+//   plan     noesis                        the file changes a run would make, each judged by the guardrails (Guard):
+//                                          ok, needs approval (removing a file; writing outside the graph's folder),
+//                                          refused (the game files, Noesis's folder). Blocks whose changes are decided
+//                                          only in the run (decided_in_run) may change files inside the graph's
+//                                          folder only, and remove nothing.
+//   run      noesis, plan, [approve]       runs against that plan: refused if the changes differ now, if any is
+//                                          refused, or if one needs approval and `approve` isn't true. The guardrails
+//                                          are checked again at every change. `approve` is the user's answer: the
+//                                          program (an MCP server) must ask the user, never decide it itself. A run
+//                                          stopped at an Edit image says "paused": hand control back to the user.
+//   edit_done id, [done]                   marks an Edit image step done (the user finished editing)
+// plan and run need the graph saved: its folder is where a run may write freely.
 #include "graph.hpp"
 
 #include <filesystem>

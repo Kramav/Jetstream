@@ -34,6 +34,7 @@ struct RunState {
     std::set<int> waiting;
     std::set<int> fresh_exports;  // Export image steps that wrote a new image in this run
     std::vector<std::filesystem::path> to_edit;
+    std::vector<FileChange>* planned = nullptr;  // plan_changes: previews record their changes here
 };
 
 // One node's view of the run: its inputs, its outputs, and where it reports.
@@ -55,6 +56,10 @@ public:
     void wait(const std::string& message, const std::filesystem::path& file);  // the user has something to do here
     void log(const std::string& line) const;  // "<node label>: <line>"
     void warn(const std::string& warning);    // RunResult::warnings (front ends show it), and the log
+    // Before changing a file (not the temporary folder or run cache): a run asks RunOptions::check_change and throws
+    // its reason; a preview records the change for plan_changes. Every step that changes files calls it, in its run
+    // and in its preview, with the same paths.
+    void change(ChangeKind kind, const std::filesystem::path& path);
 };
 
 // "Export image (node 2)": the user-facing name first, the id to find it by.

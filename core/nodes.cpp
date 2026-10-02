@@ -160,6 +160,7 @@ NodeSpec export_image() {
             const bool stale = from != r.node.params.end() && from->second != tex.path.string();
             const bool untouched = from != r.node.params.end() && !stale && at != r.node.params.end() &&
                                    at->second == write_time(png);
+            if (!fs::exists(png) || (editing ? stale : !untouched)) r.change(ChangeKind::Write, png);
             if (fs::exists(png) && (editing ? stale : !untouched)) {
                 if (editing) r.log(png.filename().string() + " is from another texture (" + from->second + "): exporting again");
                 fs::remove(png);
@@ -176,6 +177,7 @@ NodeSpec export_image() {
         },
         .preview = [](NodeRun& r) {
             r.input("tex");  // known only if its texture is
+            r.change(ChangeKind::Write, r.resolve(r.text("png")));
             r.output("png", file_value(r.resolve(r.text("png"))));
         },
     };
@@ -361,6 +363,7 @@ fs::path image_out(NodeRun& r) {
     const std::string to = r.text("save_to");
     if (to.empty()) return r.run.work_dir / (std::to_string(r.node.id) + ".png");
     const fs::path out = clean_path(to, r.run.options.base_dir);
+    r.change(ChangeKind::Write, out);
     if (out.has_parent_path()) fs::create_directories(long_path(out.parent_path()));
     return out;
 }
@@ -446,6 +449,7 @@ void write_image(NodeRun& r, const Bgra& image, const std::string& what) {
 void image_preview(NodeRun& r) {
     const std::string to = r.text("save_to");
     if (to.empty()) throw GraphError("a temporary file, made in the run");
+    r.change(ChangeKind::Write, clean_path(to, r.run.options.base_dir));
     r.output("image", file_value(clean_path(to, r.run.options.base_dir)));
 }
 
@@ -682,6 +686,8 @@ NodeSpec package_mod() {
                 tile_images(previews, spec.screenshot);
                 if (previews.size() > 1) r.log("combined " + std::to_string(previews.size()) + " previews");
             }
+            r.change(ChangeKind::Write, spec.out_dir / spec.mod_name);  // the mod folder and its .zip
+            r.change(ChangeKind::Write, (spec.out_dir / spec.mod_name) += ".zip");
             bool unchanged = false;
             const fs::path root = build_package(r.profile(), spec, &unchanged);
             r.output("mod", file_value(fs::path(root) += ".zip"));
@@ -693,6 +699,8 @@ NodeSpec package_mod() {
         .preview = [](NodeRun& r) {
             const std::string name = r.text("name");
             if (name.empty()) throw GraphError("no mod name yet");
+            r.change(ChangeKind::Write, r.resolve(r.text("out")) / name);
+            r.change(ChangeKind::Write, (r.resolve(r.text("out")) / name) += ".zip");
             r.output("mod", file_value(fs::absolute(r.resolve(r.text("out")) / name) += ".zip"));  // as build_package
         },
     };
@@ -765,6 +773,8 @@ void transfer(NodeRun& r, const fs::path& source, const fs::path& target, Transf
         r.done("kept existing " + target.filename().string(), target);
         return;
     }
+    r.change(ChangeKind::Write, target);
+    if (how != Transfer::Copy) r.change(ChangeKind::Remove, source);
     try {
         if (find_input(spec, "create_dirs") && r.text("create_dirs") == "true")
             fs::create_directories(long_path(target.parent_path()));
@@ -782,6 +792,15 @@ void transfer(NodeRun& r, const fs::path& source, const fs::path& target, Transf
     r.output("path", file_value(target));
     const char* verb = how == Transfer::Copy ? "copied to " : how == Transfer::Move ? "moved to " : "renamed to ";
     r.done(verb + (how == Transfer::Rename ? target.filename().string() : target.string()), target);
+}
+
+// Copy's and Move's outputs and changes before a run (Rename has its own target).
+void transfer_preview(NodeRun& r, Transfer how) {
+    const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
+    const fs::path target = destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir));
+    r.change(ChangeKind::Write, target);
+    if (how != Transfer::Copy) r.change(ChangeKind::Remove, source);
+    r.output("path", file_value(target));
 }
 
 NodeSpec copy_file() {
@@ -806,10 +825,7 @@ NodeSpec copy_file() {
             transfer(r, source, destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir)),
                      Transfer::Copy);
         },
-        .preview = [](NodeRun& r) {
-            const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
-            r.output("path", file_value(destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir))));
-        },
+        .preview = [](NodeRun& r) { transfer_preview(r, Transfer::Copy); },
     };
 }
 
@@ -834,10 +850,7 @@ NodeSpec move_file() {
             transfer(r, source, destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir)),
                      Transfer::Move);
         },
-        .preview = [](NodeRun& r) {
-            const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
-            r.output("path", file_value(destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir))));
-        },
+        .preview = [](NodeRun& r) { transfer_preview(r, Transfer::Move); },
     };
 }
 
@@ -862,7 +875,10 @@ NodeSpec rename_file() {
             transfer(r, source, source.parent_path() / name, Transfer::Rename);
         },
         .preview = [](NodeRun& r) {
-            r.output("path", file_value(clean_path(r.text("source"), r.run.options.base_dir).parent_path() / r.text("name")));
+            const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
+            r.change(ChangeKind::Write, source.parent_path() / r.text("name"));
+            r.change(ChangeKind::Remove, source);
+            r.output("path", file_value(source.parent_path() / r.text("name")));
         },
     };
 }
@@ -904,6 +920,7 @@ NodeSpec delete_file() {
                 return;
             }
             if (fs::is_directory(long_path(file))) throw GraphError(file.string() + " is a folder; Delete file deletes files");
+            r.change(ChangeKind::Remove, file);
             if (r.text("recycle") == "true") {
                 recycle(file);
                 r.done("moved to the Recycle Bin: " + file.filename().string(), file);
@@ -913,6 +930,7 @@ NodeSpec delete_file() {
                 r.done("deleted " + file.filename().string(), file);
             }
         },
+        .preview = [](NodeRun& r) { r.change(ChangeKind::Remove, clean_path(r.text("source"), r.run.options.base_dir)); },
     };
 }
 
@@ -931,6 +949,7 @@ NodeSpec make_folder() {
             const bool existed = fs::exists(long_path(folder));
             if (existed && !fs::is_directory(long_path(folder)))
                 throw GraphError(folder.string() + " is a file, not a folder");
+            if (!existed) r.change(ChangeKind::MakeFolder, folder);
             std::error_code ec;
             if (!existed && !fs::create_directories(long_path(folder), ec))
                 throw GraphError("can't make " + folder.string() + ": " + ec.message());
@@ -938,6 +957,7 @@ NodeSpec make_folder() {
             r.done((existed ? "already there: " : "made ") + folder.string(), folder);
         },
         .preview = [](NodeRun& r) {
+            r.change(ChangeKind::MakeFolder, clean_path(r.text("folder"), r.run.options.base_dir));
             r.output("folder", file_value(clean_path(r.text("folder"), r.run.options.base_dir)));
         },
     };
