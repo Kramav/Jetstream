@@ -55,6 +55,7 @@ IDXGISwapChain* g_swap_chain = nullptr;
 ID3D11RenderTargetView* g_rtv = nullptr;
 bool g_occluded = false;
 UINT g_resize_w = 0, g_resize_h = 0;
+bool g_close_requested = false;  // the window's X / Alt+F4: the main loop asks about unsaved changes first
 
 void create_render_target() {
     ID3D11Texture2D* back = nullptr;
@@ -109,6 +110,9 @@ LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SYSCOMMAND:
         if ((wp & 0xfff0) == SC_KEYMENU) return 0;  // no ALT menu
         break;
+    case WM_CLOSE:
+        g_close_requested = true;
+        return 0;
     case WM_DESTROY:
         ::PostQuitMessage(0);
         return 0;
@@ -385,9 +389,19 @@ struct State {
     }();
     remod::Graph graph;
     std::string status = "New graph. Right-click the canvas to add nodes.";
-    bool push_positions = false;  // after a load: move editor nodes to the positions in the file
+    bool push_positions = false;  // after a load or an undo: move editor nodes to the positions in the graph
     bool navigate = false;
-    bool save_requested = false;  // handled inside the editor, where node positions can be read
+    // Undo / redo (core History) and unsaved changes: the graph as last loaded or saved. Block positions are synced
+    // into the graph every frame (draw_canvas), so moves count too. After a load or New the baseline waits a frame,
+    // until the editor has placed (and rounded) the positions.
+    remod::History history;
+    remod::Graph saved_graph;
+    bool baseline_pending = true;
+    // Asked before New, Load or closing with unsaved changes: what to do once the user has answered.
+    enum class Pending { None, New, Load, Close } pending = Pending::None;
+    std::string pending_path;  // the graph to load
+    bool quit = false;
+    remod::RunValues values;  // what every output gave in the last run (linked fields show it)
     std::future<remod::RunResult> run;
     std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
     // Link drawing: pin centres (canvas coordinates) recorded while drawing the nodes, and the routes, recomputed
@@ -509,13 +523,96 @@ void load_graph_file(State& s) {
         s.graph = remod::load_graph(s.graph_path, &added);
         s.tidy_after_load = added;  // blocks an old file gained have no place yet
         s.statuses.clear();
+        s.values.clear();
         s.push_positions = true;
+        s.navigate = true;
+        s.baseline_pending = true;  // no undo steps, nothing unsaved (once the positions are placed)
         s.status = "Loaded " + s.graph_path + ": " + std::to_string(s.graph.nodes.size()) + " nodes, " +
                    std::to_string(s.graph.links.size()) + " links";
         remember_paths(s);
     } catch (const std::exception& e) {
         s.status = std::string("Error: ") + e.what();
     }
+}
+
+bool unsaved(const State& s) { return !s.baseline_pending && s.graph != s.saved_graph; }
+
+// Saves the graph (block positions are synced every frame). Returns whether it worked.
+bool save_graph_file(State& s) {
+    s.graph_path = unquote(s.graph_path);
+    try {
+        remod::save_graph(s.graph, s.graph_path);
+        s.saved_graph = s.graph;
+        s.status = "Saved " + s.graph_path;
+        remember_paths(s);
+        return true;
+    } catch (const std::exception& e) {
+        s.status = std::string("Error: ") + e.what();
+        return false;
+    }
+}
+
+void new_graph(State& s) {
+    s.graph = {};
+    s.statuses.clear();
+    s.values.clear();
+    s.baseline_pending = true;
+    s.build_mode = true;  // an empty layout can only be built
+    remember_paths(s);
+    s.status = "New layout. Right-click the canvas to add blocks.";
+}
+
+// New, Load or Close, after asking about unsaved changes if there are any (draw_unsaved_prompt).
+void do_pending(State& s) {
+    if (s.pending == State::Pending::New) new_graph(s);
+    if (s.pending == State::Pending::Load) {
+        s.graph_path = s.pending_path;
+        load_graph_file(s);
+    }
+    if (s.pending == State::Pending::Close) s.quit = true;
+    s.pending = State::Pending::None;
+}
+
+void ask(State& s, State::Pending what, const std::string& path = {}) {
+    s.pending = what;
+    s.pending_path = path;
+    if (!unsaved(s)) do_pending(s);
+}
+
+// "Save changes?" before New, Load or closing, while the graph has unsaved changes.
+void draw_unsaved_prompt(State& s) {
+    if (s.pending == State::Pending::None) return;
+    if (!ImGui::IsPopupOpen("Unsaved changes")) ImGui::OpenPopup("Unsaved changes");
+    if (!ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const char* what = s.pending == State::Pending::New    ? "starting a new layout"
+                       : s.pending == State::Pending::Load ? "loading another graph"
+                                                           : "closing";
+    ImGui::Text("Save the changes to %s before %s?", std::filesystem::path(s.graph_path).filename().string().c_str(), what);
+    if (ImGui::Button("Save")) {
+        ImGui::CloseCurrentPopup();
+        if (save_graph_file(s)) do_pending(s);
+        else s.pending = State::Pending::None;  // the status line says why
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Don't save")) {
+        ImGui::CloseCurrentPopup();
+        do_pending(s);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ImGui::CloseCurrentPopup();
+        s.pending = State::Pending::None;
+    }
+    ImGui::EndPopup();
+}
+
+// Ctrl+Z / Ctrl+Y (and the buttons): the graph as it was, its blocks moved back too.
+void undo(State& s, bool redo) {
+    if (!(redo ? s.history.redo(s.graph) : s.history.undo(s.graph))) return;
+    s.push_positions = true;
+    s.place_new = 0;
+    s.dragged.clear();
+    s.status = redo ? "Redone." : "Undone.";
 }
 
 void start_run(State& s) {
@@ -546,10 +643,12 @@ void poll_run(State& s) {
         const remod::RunResult r = s.run.get();
         remod::apply_run(s.graph, r);  // e.g. a re-exported image un-does an earlier "Done editing"
         s.statuses = r.nodes;
+        s.values = r.values;
         s.status = r.message;
         s.warnings = r.warnings;  // shown in a popup (draw_warnings)
     } catch (const remod::RunError& e) {
         s.statuses = e.nodes;
+        s.values = e.values;
         s.status = std::string("Error: ") + e.what();
     } catch (const std::exception& e) {
         s.statuses.clear();
@@ -719,28 +818,29 @@ void draw_side_panel(State& s) {
     }
     ImGui::InputText("##graph", &s.graph_path);
     ImGui::SameLine();
-    if (ImGui::Button("...##graph") && browse(remod::PathKind::OpenFile, "json", s.graph_path)) load_graph_file(s);
+    if (std::string picked = s.graph_path; ImGui::Button("...##graph") && browse(remod::PathKind::OpenFile, "json", picked))
+        ask(s, State::Pending::Load, picked);
     ImGui::SameLine();
     ImGui::TextUnformatted("Graph file");
-    if (ImGui::Button("New")) {
-        s.graph = {};
-        s.statuses.clear();
-        s.build_mode = true;  // an empty layout can only be built
-        remember_paths(s);
-        s.status = "New layout. Right-click the canvas to add blocks.";
-    }
+    if (ImGui::Button("New")) ask(s, State::Pending::New);
     ImGui::SameLine();
-    if (ImGui::Button("Load")) load_graph_file(s);
+    if (ImGui::Button("Load")) ask(s, State::Pending::Load, unquote(s.graph_path));
     ImGui::SameLine();
-    if (ImGui::Button("Save")) {
-        s.graph_path = unquote(s.graph_path);
-        s.save_requested = true;
-    }
+    if (ImGui::Button(unsaved(s) ? "Save*" : "Save")) save_graph_file(s);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(unsaved(s) ? "Unsaved changes. Ctrl+S" : "Ctrl+S");
     ImGui::SameLine();
-    if (ImGui::Button("Save As...") && browse(remod::PathKind::SaveFile, "json", s.graph_path))
-        s.save_requested = true;
+    if (ImGui::Button("Save As...") && browse(remod::PathKind::SaveFile, "json", s.graph_path)) save_graph_file(s);
     ImGui::SameLine();
     if (ImGui::Button("Fit view")) s.navigate = true;
+    ImGui::BeginDisabled(!s.history.can_undo());
+    if (ImGui::Button("Undo")) undo(s, false);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!s.history.can_redo());
+    if (ImGui::Button("Redo")) undo(s, true);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y or Ctrl+Shift+Z");
 
     if (!s.build_mode) {  // run settings
         ImGui::InputText("##noesis", &s.noesis_path);
@@ -1669,7 +1769,6 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     if (s.push_positions) {
         for (const auto& n : s.graph.nodes) ed::SetNodePosition(n.id, ImVec2(n.x, n.y));
         s.push_positions = false;
-        s.navigate = true;
     }
 
     const float font = ImGui::GetFontSize();
@@ -1818,8 +1917,12 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     in.type == remod::PortType::Any && !linked.empty()
                         ? s.graph.output_type(s.graph.links[linked[0]].from_node, s.graph.links[linked[0]].from_port)
                         : in.type;
+                // A link's tooltip: the value it holds (the last run's, or a Value's), else the input's hint; its source.
                 auto from = [&](size_t link) {
-                    return std::string(in.hint) + "\nFrom: " + source_of(s.graph, s.graph.links[link]);
+                    bool from_run = false;
+                    const std::string held = remod::link_value(s.graph, s.values, link, &from_run);
+                    return (held.empty() ? std::string(in.hint) : held + (from_run ? "\n(as of the last run)" : "")) +
+                           "\nFrom: " + source_of(s.graph, s.graph.links[link]);
                 };
                 ImGui::PushID(in.name);
                 if (in.multiple) {  // one row per link, plus (when building) an empty row to connect the next one
@@ -1853,9 +1956,11 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     ImGui::SetCursorPosX(x0 + label_width);
                     const Faded field(linked.empty() ? 1.0f : detail);  // a linked row stays; its field fades
                     std::string& value = n.params[in.name];
-                    if (!linked.empty()) {  // a link overrides the typed value
+                    if (!linked.empty()) {  // a link overrides the typed value: show what it holds, if known yet
+                        const std::string held = remod::link_value(s.graph, s.values, linked[0]);
                         ImGui::AlignTextToFramePadding();
-                        ImGui::TextDisabled("linked");
+                        ImGui::TextDisabled(
+                            "%s", fit_text(nullptr, font, held.empty() ? "linked (known after a run)" : held, field_width).c_str());
                         if (ImGui::IsItemHovered()) hovered_hint = from(linked[0]);
                     } else if (in.widget == remod::Widget::Checkbox) {
                         bool on = value == "true";
@@ -1878,7 +1983,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     } else {
                         ImGui::SetNextItemWidth(field_width - (in.result && s.build_mode ? flip_width : 0));
                         ImGui::InputText("##v", &value);
-                        if (ImGui::IsItemHovered()) hovered_hint = in.hint;
+                        if (ImGui::IsItemHovered()) hovered_hint = value.empty() ? std::string(in.hint) : value;  // all of it
                         accept_path(s, value, in.path,
                                     in.path == remod::PathKind::OpenTexture ? s.texture_filter.c_str() : in.filter,
                                     hovered_hint);
@@ -1978,7 +2083,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                                                                             : nullptr;
                     ImGui::SetNextItemWidth(field_width - (dest && s.build_mode ? flip_width : 0));
                     ImGui::InputTextWithHint("##v", dest ? dest->label : out.field_label, &value);
-                    if (ImGui::IsItemHovered()) hovered_hint = dest ? dest->hint : out.hint;
+                    if (ImGui::IsItemHovered())  // the whole value (a long path doesn't fit the field), else the hint
+                        hovered_hint = !value.empty() ? value : dest ? dest->hint : out.hint;
                     accept_path(s, value, picker, filter, hovered_hint);
                     ImGui::SameLine();
                     if (picker == remod::PathKind::None) {
@@ -2487,21 +2593,10 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.pending_texture.clear();
     }
 
-    if (s.save_requested) {
-        s.save_requested = false;
-        for (auto& n : s.graph.nodes) {
-            const ImVec2 p = ed::GetNodePosition(n.id);
-            n.x = p.x;
-            n.y = p.y;
-        }
-        try {
-            remod::save_graph(s.graph, s.graph_path);
-            s.status = "Saved " + s.graph_path;
-            remember_paths(s);
-        } catch (const std::exception& e) {
-            s.status = std::string("Error: ") + e.what();
-        }
-    }
+    // Block positions into the graph, every frame: undo, the unsaved-changes check and saving see where blocks are.
+    // (A block the editor hasn't placed yet reports FLT_MAX.)
+    for (auto& n : s.graph.nodes)
+        if (const ImVec2 p = ed::GetNodePosition(n.id); p.x < FLT_MAX / 2) n.x = p.x, n.y = p.y;
 
     // Zooming while holding a block keeps it under the cursor. The editor drags by the mouse's distance from the
     // click, both in graph coordinates, but converts the screen click through the current zoom every frame, so a
@@ -2592,6 +2687,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             if (msg.message == WM_QUIT) done = true;
         }
         if (done) break;
+        // Closing asks about unsaved changes first (before the minimized-window skip below, so it's never lost).
+        if (g_close_requested) {
+            g_close_requested = false;
+            if (unsaved(state)) {
+                ::ShowWindow(hwnd, SW_RESTORE);
+                g_occluded = false;
+            }
+            ask(state, State::Pending::Close);
+        }
+        if (state.quit) break;
 
         if (g_occluded && g_swap_chain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
             ::Sleep(10);
@@ -2611,6 +2716,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         ImGui::NewFrame();
 
         poll_run(state);
+        // Undo / redo and save, from anywhere in the app (a text box being typed in keeps its own Ctrl+Z).
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) undo(state, false);
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal) ||
+            ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal))
+            undo(state, true);
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) save_graph_file(state);
         const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
         // Panels show only where they're used. Both layouts: Browser left (its paths drag onto block fields), Graph
         // middle, Pipeline right (closable in Use layout). Along the bottom: Use layout the viewer, then Textures;
@@ -2648,7 +2759,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         if (state.pinned != state.saved.pinned_folders) remember_paths(state);  // a folder was pinned or unpinned
         if (state.build_mode || state.show_pipeline) draw_side_panel(state);
         draw_canvas(state, editor);
+        // Undo steps and the unsaved-changes baseline, once the graph is settled: nothing dragged or typed, no block
+        // still being placed. After a load or New, the graph as the editor placed it is the baseline.
+        if (state.baseline_pending) {
+            state.history.reset(state.graph);
+            state.saved_graph = state.graph;
+            state.baseline_pending = false;
+        } else if (!ImGui::IsAnyItemActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !state.place_new) {
+            state.history.track(state.graph);
+        }
+        draw_unsaved_prompt(state);
         draw_warnings(state);
+        // The window's title: the graph's file name, with * while it has unsaved changes.
+        static std::wstring title;
+        if (std::wstring now = L"remod - " + std::filesystem::path(state.graph_path).filename().wstring() +
+                               (unsaved(state) ? L"*" : L"");
+            now != title) {
+            title = now;
+            ::SetWindowTextW(hwnd, title.c_str());
+        }
 
         ImGui::Render();
         const ImVec4 bg = ImGui::ColorConvertU32ToFloat4(pal::bg);

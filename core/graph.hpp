@@ -24,6 +24,7 @@ struct Node {
     std::string type;
     std::map<std::string, std::string> params;  // typed values of editable inputs
     float x = 0, y = 0;                          // canvas position; only the editor uses it
+    bool operator==(const Node&) const = default;
 };
 
 struct Link {
@@ -31,12 +32,14 @@ struct Link {
     std::string from_port;
     int to_node = 0;
     std::string to_port;  // an input name
+    bool operator==(const Link&) const = default;
 };
 
 struct Graph {
     std::string profile = "re4r";  // profile id: profiles/<id>.toml
     std::vector<Node> nodes;
     std::vector<Link> links;
+    bool operator==(const Graph&) const = default;  // undo history, unsaved changes
 
     Node& add_node(const std::string& type);  // new unique id, every editable input present (its `initial` value)
     void remove_node(int id);                 // and its links
@@ -115,23 +118,49 @@ struct NodeStatus {
     std::filesystem::path file;   // the file concerned, e.g. the image an Edit image step waits on
 };
 
+// What each output gave in a run, by (node, output): its text (the text itself, or a file's full path).
+using RunValues = std::map<std::pair<int, std::string>, std::string>;
+
 struct RunResult {
     bool paused = false;  // an Edit image step is waiting for the user
     std::string message;
     std::map<int, NodeStatus> nodes;
     std::vector<int> reset_edits;  // Edit image steps whose image was just re-exported: their "done" no longer holds
     std::vector<std::string> warnings;  // things the user should check in game, e.g. a changed mip count
+    RunValues values;                   // what every output gave (front ends show what a link held)
 };
 
 // A node failed: the message names it, `nodes` says where every node got to.
 struct RunError : GraphError {
     std::map<int, NodeStatus> nodes;
+    RunValues values;  // what the outputs that ran gave
     RunError(const std::string& message, std::map<int, NodeStatus> statuses)
         : GraphError(message), nodes(std::move(statuses)) {}
 };
 
 // Runs nodes in dependency order. Throws GraphError if the graph isn't runnable, RunError if a node fails.
 RunResult run_graph(const Graph& graph, const RunOptions& options);
+
+// What link `link` holds, as far as is known without running: what its source gave in the last run (`last_run`,
+// RunResult::values; `*from_run` set), else a Value block's typed value (through Splits); "" if neither.
+std::string link_value(const Graph& graph, const RunValues& last_run, size_t link, bool* from_run = nullptr);
+
+// Undo / redo (front ends): snapshots of the whole graph (blocks, links, values, positions; small). A front end calls
+// track() whenever the graph may have changed and is settled (nothing being dragged or typed): a change since the
+// last snapshot becomes one undo step. Up to 200 steps.
+class History {
+public:
+    void reset(const Graph& graph);  // a loaded or new graph: no steps
+    void track(const Graph& now);
+    bool undo(Graph& graph);  // false if there's nothing to undo; else `graph` is the earlier one
+    bool redo(Graph& graph);
+    bool can_undo() const { return !past_.empty(); }
+    bool can_redo() const { return !future_.empty(); }
+
+private:
+    std::vector<Graph> past_, future_;
+    Graph last_;
+};
 
 // Node ids in the order a run takes them (dependency order, ties in file order). Nodes in a loop are left out.
 std::vector<int> step_order(const Graph& graph);

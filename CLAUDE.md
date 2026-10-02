@@ -194,6 +194,19 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   STEP card); empty: Windows' editor for the file type, as before. It can be linked from a Value (one for every Edit
   image block); core `known_value` reads a field's value before a run (typed, or a Value's through Splits).
   Starting the program is the app's (`open_in_editor`, ShellExecute); a failure goes to the status line.
+- **Undo / redo (user, 2026-10-01):** core `History` keeps snapshots of the whole graph (blocks, links, values,
+  positions; `Graph::operator==`, up to 200 steps). The app syncs block positions into the graph every frame and
+  calls `track` once the graph is settled (nothing active or dragged, no block still being placed), so every kind of
+  edit is one step with no per-edit code. Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z (a text box being typed in keeps its own),
+  and Undo / Redo buttons in the Pipeline panel; an undo moves blocks back without refitting the view.
+- **Unsaved changes (user, 2026-10-01):** the graph differs from the one last loaded or saved (`saved_graph`, taken
+  a frame after a load or New, once the editor has placed and rounded positions). `*` in the window title and on
+  Save; Ctrl+S saves; New, Load and closing the window (WM_CLOSE, also from the taskbar while minimized) ask Save /
+  Don't save / Cancel. View changes (fit, Far / Near) run after the blocks are drawn.
+- **Fields show their values (user, 2026-10-01):** hovering a filled field shows the whole value (e.g. a long path)
+  instead of the hint; a linked field shows what it holds instead of "linked": the source's value from the last run
+  (`RunResult::values`, every output's text, also on `RunError`), else a Value's (through Splits; core `link_value`),
+  else "linked (known after a run)". Link tooltips say which, and where it comes from.
 - **App modes:** Build layout (structure editing: add/insert/duplicate/delete/link, via core helpers
   `choices_for_pin`, `add_connected`, `choices_for_link`, `insert_node`, `duplicate_node`, `disconnect_node`)
   and Use layout (structure and block positions locked; fill in, run, edit). The switch sits centred above the
@@ -416,6 +429,11 @@ Fill these in from the manual spike before implementing the affected code:
 
 ## 10. Later milestones (do not start)
 
+- **Later (user, 2026-10-01): Tidy up should allow more vertical inputs** (lay blocks out with room for inputs that
+  come in from above and below, not only the columns-by-step-order arrangement), **and maybe an option to rotate the
+  connections from left-to-right to top-to-bottom** (outputs at a block's bottom, inputs at its top) for easier
+  linking. Would touch core `tidy_layout`, `route_links` (which assumes rightward pins) and the block layout. Not
+  started.
 - **Far future (user, 2026-10-01): drop a Browser path on empty canvas to add a block holding it** (.tex → Original
   texture, image → Use existing image, anything else → Value), as an option in an options menu. Not started; today
   a drop only fills a field.

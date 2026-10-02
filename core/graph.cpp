@@ -608,7 +608,9 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
         } catch (const std::exception& e) {
             result.nodes[n.id] = {NodeState::Failed, e.what(), {}};
             for (const auto& other : g.nodes) result.nodes.try_emplace(other.id);  // the rest: not reached
-            throw RunError(node_label(n) + ": " + e.what(), std::move(result.nodes));
+            RunError error(node_label(n) + ": " + e.what(), std::move(result.nodes));
+            for (const auto& [key, value] : run.outputs) error.values[key] = value.text;
+            throw error;
         }
     }
 
@@ -624,6 +626,7 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
     } else {
         result.message = "Done.";
     }
+    for (const auto& [key, value] : run.outputs) result.values[key] = value.text;
     return std::move(result);
 }
 
@@ -664,6 +667,55 @@ void NodeRun::log(const std::string& line) const {
 void NodeRun::warn(const std::string& warning) {
     run.result.warnings.push_back(node_label(node) + ": " + warning);
     if (run.options.log) run.options.log("warning: " + run.result.warnings.back());
+}
+
+std::string link_value(const Graph& g, const RunValues& last_run, size_t link, bool* from_run) {
+    if (from_run) *from_run = false;
+    if (link >= g.links.size()) return "";
+    const Link& l = g.links[link];
+    if (const auto it = last_run.find({l.from_node, l.from_port}); it != last_run.end()) {
+        if (from_run) *from_run = true;
+        return it->second;
+    }
+    const Node* from = g.find(l.from_node);
+    if (!from) return "";
+    if (from->type == "Value") {
+        const auto it = from->params.find("value");
+        return it == from->params.end() ? std::string() : it->second;
+    }
+    return from->type == "Split" ? known_value(g, from->id, "in") : std::string();
+}
+
+void History::reset(const Graph& graph) {
+    past_.clear();
+    future_.clear();
+    last_ = graph;
+}
+
+void History::track(const Graph& now) {
+    if (now == last_) return;
+    past_.push_back(std::move(last_));
+    if (past_.size() > 200) past_.erase(past_.begin());
+    future_.clear();  // a new change: what was undone can't be redone any more
+    last_ = now;
+}
+
+bool History::undo(Graph& graph) {
+    if (past_.empty()) return false;
+    future_.push_back(std::move(last_));
+    last_ = std::move(past_.back());
+    past_.pop_back();
+    graph = last_;
+    return true;
+}
+
+bool History::redo(Graph& graph) {
+    if (future_.empty()) return false;
+    past_.push_back(std::move(last_));
+    last_ = std::move(future_.back());
+    future_.pop_back();
+    graph = last_;
+    return true;
 }
 
 std::vector<int> step_order(const Graph& g) {

@@ -2,16 +2,6 @@
   "links": [
     {
       "from": [
-        6,
-        "out"
-      ],
-      "to": [
-        2,
-        "tex"
-      ]
-    },
-    {
-      "from": [
         2,
         "png"
       ],
@@ -132,8 +122,28 @@
     },
     {
       "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        2,
+        "tex"
+      ]
+    },
+    {
+      "from": [
         12,
         "out"
+      ],
+      "to": [
+        13,
+        "text"
+      ]
+    },
+    {
+      "from": [
+        13,
+        "text"
       ],
       "to": [
         1,
@@ -149,8 +159,8 @@
         "tex": "C:/work/natives/STM/_chainsaw/ui/ui3200/tex/my_texture.tex.143221013"
       },
       "pos": [
-        64.0,
-        147.0
+        951.0,
+        -163.0
       ],
       "type": "LoadTex"
     },
@@ -160,8 +170,8 @@
         "png": "my_texture.png"
       },
       "pos": [
-        760.0,
-        0.0
+        1711.0,
+        -163.0
       ],
       "type": "ExportImage"
     },
@@ -171,8 +181,8 @@
         "editor": ""
       },
       "pos": [
-        1264.0,
-        0.0
+        2215.0,
+        -112.0
       ],
       "type": "EditImage"
     },
@@ -180,8 +190,8 @@
       "id": 4,
       "params": {},
       "pos": [
-        2024.0,
-        0.0
+        2975.0,
+        -137.0
       ],
       "type": "SaveTex"
     },
@@ -196,8 +206,8 @@
         "version": "1.0"
       },
       "pos": [
-        2528.0,
-        0.0
+        3479.0,
+        -172.0
       ],
       "type": "PackageMod"
     },
@@ -205,8 +215,8 @@
       "id": 6,
       "params": {},
       "pos": [
-        501.0,
-        -1.0
+        1455.0,
+        -163.0
       ],
       "type": "Split"
     },
@@ -214,8 +224,8 @@
       "id": 7,
       "params": {},
       "pos": [
-        1768.0,
-        0.0
+        2719.0,
+        -112.0
       ],
       "type": "Split"
     },
@@ -225,7 +235,7 @@
         "value": "cosa"
       },
       "pos": [
-        2111.0,
+        -385.0,
         -265.0
       ],
       "type": "Value"
@@ -236,8 +246,8 @@
         "value": "\"C:\\Program Files\\GIMP 3\\bin\\gimp-3.exe\""
       },
       "pos": [
-        959.0,
-        -153.0
+        -385.0,
+        -61.0
       ],
       "type": "Value"
     },
@@ -247,8 +257,8 @@
         "file": ""
       },
       "pos": [
-        -343.0,
-        -3.0
+        -25.0,
+        -163.0
       ],
       "type": "RequireFile"
     },
@@ -259,7 +269,7 @@
       },
       "pos": [
         -385.0,
-        -169.0
+        -163.0
       ],
       "type": "Value"
     },
@@ -267,10 +277,24 @@
       "id": 12,
       "params": {},
       "pos": [
-        -194.0,
-        173.0
+        335.0,
+        -163.0
       ],
       "type": "Split"
+    },
+    {
+      "id": 13,
+      "params": {
+        "keep": "after",
+        "marker": "\\natives\\stm",
+        "occurrence": "first",
+        "text": ""
+      },
+      "pos": [
+        591.0,
+        -163.0
+      ],
+      "type": "CutText"
     }
   ],
   "profile": "re4r",

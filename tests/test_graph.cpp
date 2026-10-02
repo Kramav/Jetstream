@@ -862,6 +862,33 @@ TEST_CASE("known_value: typed, or from a Value through Splits; a step's result i
     CHECK(remod::known_value(g, 4, "editor").empty());
 }
 
+TEST_CASE("History: each settled change is one undo step; a new change drops the redo steps") {
+    Graph g;
+    remod::History h;
+    h.reset(g);
+    CHECK_FALSE(h.can_undo());
+    g.add_node("Value");
+    h.track(g);
+    h.track(g);  // unchanged: no step
+    g.find(1)->params["value"] = "D:/mods";
+    g.find(1)->x = 40;
+    h.track(g);
+    REQUIRE(h.undo(g));
+    CHECK(g.find(1)->params["value"].empty());
+    CHECK(g.find(1)->x == 0);  // positions too
+    REQUIRE(h.undo(g));
+    CHECK(g.nodes.empty());
+    CHECK_FALSE(h.undo(g));
+    REQUIRE(h.redo(g));
+    CHECK(g.nodes.size() == 1);
+    CHECK(h.can_redo());
+    g.add_node("Text");  // a new change after an undo
+    h.track(g);
+    CHECK_FALSE(h.can_redo());
+    h.reset(g);
+    CHECK_FALSE(h.can_undo());
+}
+
 TEST_CASE("path_fit: which dropped paths a field takes") {
     using remod::PathKind;
     CHECK(remod::path_fit(PathKind::Folder, nullptr, "E:/mods/out", true).empty());
@@ -1114,6 +1141,33 @@ TEST_CASE("run: Cut text passes on the part it keeps, and stops clearly without 
     CHECK(run_in(g, tmp.path).nodes.at(out).message == "\"_chainsaw/ui/a.tex.143221013\"");
     g.find(1)->params["marker"] = "streaming/";
     CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("'streaming/' isn't in"));
+}
+
+TEST_CASE("link_value: the last run's value of the source, else a Value's through Splits") {
+    TempDir tmp;
+    Graph g;
+    g.add_node("Value").params["value"] = "D:/GIMP/gimp.exe";  // 1
+    g.add_node("Split");                                       // 2
+    g.add_node("EditImage");                                    // 3
+    auto& text = g.add_node("Text");                            // 4
+    text.params["text"] = "Clean HUD";
+    g.add_node("Text");  // 5
+    REQUIRE(g.connect({1, "value", 2, "in"}).empty());
+    REQUIRE(g.connect({2, "out", 3, "editor"}).empty());
+    REQUIRE(g.connect({4, "text", 5, "text"}).empty());
+    bool from_run = true;
+    CHECK(remod::link_value(g, {}, 1, &from_run) == "D:/GIMP/gimp.exe");  // Split -> Edit image: the Value's, via the Split
+    CHECK_FALSE(from_run);
+    CHECK(remod::link_value(g, {}, 2).empty());  // a step's result: unknown before a run
+
+    Graph texts;  // a run records what every output gave
+    texts.add_node("Text").params["text"] = "Clean HUD";
+    texts.add_node("Text");
+    REQUIRE(texts.connect({1, "text", 2, "text"}).empty());
+    const auto r = run_in(texts, tmp.path);
+    CHECK(r.values.at({1, "text"}) == "Clean HUD");
+    CHECK(remod::link_value(texts, r.values, 0, &from_run) == "Clean HUD");
+    CHECK(from_run);
 }
 
 TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {
