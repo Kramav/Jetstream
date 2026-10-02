@@ -112,6 +112,7 @@ struct RunOptions {
     std::filesystem::path base_dir;  // relative paths resolve against this (the graph file's folder)
     std::function<void(const std::string&)> log = {};
     bool edits_done = false;  // treat every Edit image step as done (the CLI's --edited, where there's no button)
+    std::filesystem::path cache_dir;  // results reused by later runs (default_cache_dir()); empty = none
 };
 
 // Where each node got to in a run, for front ends to show.

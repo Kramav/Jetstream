@@ -199,6 +199,36 @@ TEST_CASE("the Replace photo example graph loads and validates") {
     CHECK(preview.at({5, "out"}) == preview.at({4, "image"}));
 }
 
+TEST_CASE("run: Convert image to texture reuses the texture converted before from the same bytes") {
+    TempDir tmp;
+    const fs::path tex = tmp.path / "natives/STM/_chainsaw/ui/a.tex.143221013";
+    test::write_fake_tex(tex, 143221013, 64, 32, 1, 5, 99);
+    Graph g = pipeline(tex.string(), "a.png", "out");
+    g.find(5)->params["replace"] = "true";
+    FakeConverter conv;
+    const remod::RunOptions opt{
+        .profile = re4r(), .converter = conv, .base_dir = tmp.path, .edits_done = true, .cache_dir = tmp.path / "cache"};
+
+    const auto first = remod::run_graph(g, opt);
+    CHECK(conv.saves == 1);
+    const fs::path made = first.values.at({4, "tex"});
+    CHECK(made.parent_path() == tmp.path / "cache");
+    CHECK(fs::is_regular_file(made));
+
+    const auto again = remod::run_graph(g, opt);  // nothing changed: no conversion, and the package is left as it is
+    CHECK(conv.saves == 1);
+    CHECK_THAT(again.nodes.at(4).message, ContainsSubstring("unchanged"));
+    CHECK(again.values.at({4, "tex"}) == made.string());
+    CHECK_THAT(again.nodes.at(5).message, ContainsSubstring("unchanged"));
+
+    test::write_file(tmp.path / "a.png", test::read_file(tmp.path / "a.png") + "edited");  // the edit changed
+    const auto edited = remod::run_graph(g, opt);
+    CHECK(conv.saves == 2);
+    CHECK(edited.values.at({4, "tex"}) != made.string());
+    CHECK(std::ranges::none_of(fs::directory_iterator(tmp.path / "cache"),
+                               [](const fs::directory_entry& e) { return e.path().extension() == ".part"; }));
+}
+
 TEST_CASE("game path is inferred from a natives tree") {
     CHECK(remod::game_path_from("D:/mods/natives/stm/_chainsaw/ui/a.tex.1", "natives/STM") == "_chainsaw/ui/a.tex.1");
     CHECK(remod::game_path_from("D:\\x\\NATIVES\\STM\\a.tex.1", "natives/STM") == "a.tex.1");
@@ -1278,6 +1308,17 @@ TEST_CASE("run: the image blocks write PNGs; Save to keeps one and is the output
     CHECK_FALSE(remod::preview_values(g, tmp.path).contains({1, "image"}));
     const auto r = run_in(g, tmp.path);
     CHECK_FALSE(fs::exists(r.values.at({1, "image"})));
+    {  // with a run cache: kept there, named by its pixels, so a second run finds it and writes nothing
+        FakeConverter conv;
+        const remod::RunOptions cached{.profile = re4r(), .converter = conv, .base_dir = tmp.path,
+                                       .cache_dir = tmp.path / "cache"};
+        const fs::path made = remod::run_graph(g, cached).values.at({1, "image"});
+        CHECK(made.parent_path() == tmp.path / "cache");
+        CHECK(remod::run_graph(g, cached).values.at({1, "image"}) == made.string());
+        CHECK(remod::load_image(made).pixels[2] > 100);
+        g.find(1)->params["brightness"] = "40";  // a different result: another file
+        CHECK(remod::run_graph(g, cached).values.at({1, "image"}) != made.string());
+    }
     g.find(1)->params["hue"] = "lots";
     CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("Hue must be a number from -180 to 180"));
 

@@ -267,8 +267,15 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   or deleted outside the tool). An unchanged Run writes nothing for it (it used to cost ~2.5 MB: PNG, Noesis's temp
   copy and log). **Also skipped when unchanged (user, 2026-10-02):** an image block's Save to (the result is compared
   with the file, read back; "unchanged" in its message) and Package (`build_package(..., &unchanged)`: the same files
-  with the same bytes, the same modinfo.ini, nothing else in the folder, its zip there: left as it is). Still written
-  every run: the run's temporary folder (SaveTex's .tex, temporary image results), deleted afterwards.
+  with the same bytes, the same modinfo.ini, nothing else in the folder, its zip there: left as it is).
+  **Run cache (2026-10-02): an unchanged run writes nothing** (`RunOptions::cache_dir`, app and CLI:
+  `%LOCALAPPDATA%\remod\run_cache`, `default_cache_dir()`; empty = the run's temporary folder, as in most tests).
+  Convert image to texture names its `.tex` by a hash of the image's and the original's bytes (and the game's export
+  options) and reuses one already there ("unchanged: reused ..."; Noesis isn't started, which also saves seconds); an
+  image block without Save to names its PNG by a hash of its pixels. Written as `.part` then renamed, so a cut-off
+  write is never reused; a reuse touches the file; oldest files go past 512 MB. ponytail: `std::hash` (64-bit
+  FNV-1a), not a cryptographic hash. A Noesis update doesn't clear the cache (older results were valid). Downstream
+  steps get the cache file's path (a Move of it just means a fresh conversion next time).
   **A file for editing whose texture changed (user, 2026-10-02: a new frame texture still previewed, and would have packaged,
   the old frame's PNG; overwrite chosen over a backup or a refusal):** each run records the texture the file is from
   (node state `exported_from` / `exported_time`, via `RunResult::state` / `RunError::state` and `apply_run`); a
@@ -372,7 +379,8 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   treating `\` and `/` alike; a missing marker fails the run. E.g. a texture path cut after `natives/STM/` gives the
   in-game path for LoadTex's `game_path` when the file isn't inside a natives tree.
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
-- Runs from `remod run --graph <file> --noesis <exe>` and from the app's Run button.
+- Runs from `remod run --graph <file> --noesis <exe>` and from the app's Run button. Programs edit graphs through
+  `remod api` (core `ApiSession`, §10 M2).
 
 **Status: M1 complete (2026-09-30).** All three criteria below are met; the user confirmed the tool-built mod
 works end to end.
@@ -541,6 +549,45 @@ Fill these in from the manual spike before implementing the affected code:
 - [ ] Screenshot size/aspect requirements for Fluffy, if any (formats: jpg/png/tga/bmp [guide]). The tool
       combines several previews into one 512-px-per-tile grid PNG.
 - [ ] Should a tier-1 package include `manifest.json`, or only tier 2/3?
+- [x] **What RE4R textures pack in each channel** (read-only spike 2026-10-02, for channel tools). The extracted
+      game files (20,828 textures outside `streaming/`, 6,392 `.mdf2`) were surveyed. Three sources:
+      - **[game data]** which material slot each file-name suffix fills, from every `.mdf2`;
+      - **[game data]** the formats, from the headers;
+      - channel statistics (40 textures per suffix, decoded at <= 128 px), plus one character texture per suffix
+        saved channel by channel and looked at.
+
+      Results:
+      - **The format tells colour from data, from the header alone.** Colour textures are `*_SRGB`:
+        - `albd` (BC1 3,038 / BC7 2,060);
+        - `alba`, `albm`, `alb`;
+        - UI `im` / `iam`.
+
+        Data textures are `*_UNORM`: `nrrc`, `nrmr`, `atos`, `atoc`, `occ`, `lymo`, `msk*`. A tool can therefore say
+        "this holds data, not colour" without trusting names.
+      - Suffix, material slot, and what the channels show. Meanings are **[inferred]** from slot names and looks; no
+        shader was read and nothing was tested in game.
+
+        | Suffix | Files | Slot | Channels |
+        |---|---|---|---|
+        | `albd` | 5,102 | BaseDielectricMap | RGB colour. Alpha is a mask in 15 of 40, white in the rest. On a flashlight it is dark on the lens and metal parts. Inferred: dielectric vs metal. |
+        | `albm` | 56 | BaseMetalMap / BaseDielectricMap | RGB colour. Alpha is mostly 0. Inferred: metal. |
+        | `alba` | 392 | BaseAlphaMap | RGB colour. Alpha varies in 36 of 40. Inferred: opacity. |
+        | `nrmr` | 1,069 | NormalRoughnessMap | RGB is a unit normal (mean \|len²−1\| 0.03; R and G relief, B near white). A is a flat-region mask. Inferred: roughness. |
+        | `nrrc` | 4,226 | NormalRoughnessCavityMap | **Not RGB.** The relief is in **G and A** (a swizzle: X in A). R is a flat-region mask (inferred: roughness). B is nearly white (inferred: cavity). |
+        | `atos` | 1,795, mostly BC1 | AlphaTranslucentOcclusionSSSMap | R is near white (inferred: alpha). G is near constant (inferred: translucency). B looks like ambient occlusion. A: none in BC1. |
+        | `atoc` | 789 | AlphaTranslucentOcclusionCavityMap | Like `atos`, but A varies. |
+        | `occ` | 2,381, BC4 | OcclusionMap | One channel. |
+        | `msk1` / `msk3` | | | Mostly BC4, one channel. |
+        | `msk4` | | Several slots | No single layout. The sample, a WrinkleNormal / Detail slot, was a unit normal. |
+
+      Consequences:
+      - The image blocks already keep alpha, so colour edits on `albd` / `alba` / `albm` leave the alpha data alone.
+      - An AI result (plain RGB) needs the original's alpha put back: a merge.
+      - Data textures shouldn't get colour edits at all.
+      - Any tool treating `nrrc` as a normal must read G and A, not R and G.
+      - Split / merge itself needs no meanings; only labels do.
+
+      Still open: whether these meanings are right (a shader or in-game test).
 
 ## 10. Later milestones (do not start)
 
@@ -550,7 +597,7 @@ Fill these in from the manual spike before implementing the affected code:
     need a per-item name (e.g. a folder field). User: not yet, "dumb rebuilding textures isn't really helpful" until
     there's more to do per texture.
   - **Channel tools:** split / merge channels, so colour can be edited without touching data packed in another
-    channel. Which RE4R textures pack what (`_albm`, `_nrmr`, `_atos`...) is `[TBD-spike]`; don't assume.
+    channel. Which RE4R textures pack what: §9 (spike 2026-10-02; meanings inferred, layouts observed).
   - **Mod options:** one mod with variants to choose in Fluffy.
   - Frames: done as **Replace photo** (§4; RE4R's UI frames are opaque, no transparent opening). Open: a picture
     printed at an angle or in perspective (four-corner warp) if one turns up; in-world paintings usually have their
@@ -593,6 +640,36 @@ Fill these in from the manual spike before implementing the affected code:
 
 - M2: AI backend as a separate local process (not in the app). GPU/VRAM detection at install.
   img2img/ControlNet for textures, never plain text-to-image for UV-mapped textures.
+  - **Two ways in (user, 2026-10-02):** a single AI call as a block in the graph, and an **AI orchestrator** (an
+    MCP-server-style interface) that builds and edits graphs itself. The orchestrator must know which blocks can come
+    next and which can't: core already decides this (`node_specs()` with descriptions and pins, `accepts`,
+    `choices_for_pin`, `add_connected`, `insert_node`, validation, `preview_values`), so it would be a thin layer over
+    core like the app and the CLI, never its own rules.
+  - **The orchestrator needs (2026-10-02, agreed with the user):**
+    1. **Core usable by a program:** every edit as a call (list block types, add, link, set a field, validate, preview,
+       run) with structured results and errors, not text for a person. **Built 2026-10-02 except run:** core
+       `ApiSession` (`core/api.*`: one JSON request -> one JSON reply; ops types, new, open, save, graph, add, remove,
+       set, link, unlink, next, validate, preview; errors are `{"ok": false, "error": ...}` with core's own reasons) and
+       `remod api` (JSON lines on stdin/stdout). Added blocks go in a row to the right; Tidy up in the app arranges
+       them. **run waits for item 2** (it changes files).
+    2. **Guardrails on file-changing steps** (Delete, Move, Copy with Overwrite): a dry run first (`preview_values`
+       covers most of it), the user's approval for writes outside the graph's folders, and never into the game files.
+    3. **Results it can see:** thumbnail / Preview pixels handed to the AI, not only drawn in the app.
+    4. **Manual steps:** an Edit image waiting on the user hands control back instead of stalling.
+    5. Block descriptions for an AI (when to use, when not, examples) beside the tooltip text.
+  - **Order (2026-10-02):** the orchestrator first, over the existing blocks (no generation needed: "replace this
+    frame's photo with my picture and package it" works with today's blocks), then the generation block. The texture
+    tools below move from "before M2" to "before the generation block".
+  - **Tools the AI's results must pass through, to have before the generation block (user, 2026-10-02: "give the AI as
+    many polished tools as we can"):**
+    1. **Channel tools** (split / merge, §10 Future work): an AI result is plain RGB and would overwrite data packed
+       in a channel. Spike done (§9): sRGB = colour, UNORM = data; `albd` alpha is data; `nrrc`'s normal is in G/A.
+    2. **Streaming copies** (§9): character textures are the ones with `streaming/` copies; whether a mod must
+       replace both decides what every AI texture targets. Needs an in-game test (the user's call when).
+    3. **Masks / regions:** "change only the jacket". The mesh view's material-to-texture matching is a start.
+       Design work.
+    4. **Batch** (§10 Future work): worth it once there's real work per texture, which AI is.
+    Done: an unchanged run writes nothing (the run cache, §4); AI iteration means many runs.
 - M3: REFramework Lua runtime reading manifests (triggers → actions).
 - M4: C++ REFramework plugin for video playback (in-game "cutscene" videos).
 - Replace ImGui front end with a polished native UI.

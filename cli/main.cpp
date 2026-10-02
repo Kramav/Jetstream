@@ -1,7 +1,9 @@
 // remod CLI: runs a saved graph headlessly (`run`), plus the pipeline steps as single commands.
+#include "api.hpp"
 #include "graph.hpp"
 #include "package.hpp"
 #include "profile.hpp"
+#include "settings.hpp"
 #include "texture_converter.hpp"
 
 #include <algorithm>
@@ -22,7 +24,9 @@ constexpr const char* kUsage =
     "                --out <new.tex.N>\n"
     "  remod package --profile <toml> --tex <file> --game-path <natives-relative path> --name <ModName>\n"
     "                --out <dir> [--version v] [--author a] [--description d] [--screenshot file]\n"
-    "                [--replace true]\n";
+    "                [--replace true]\n"
+    "  remod api     graph editing for programs: one JSON request per line on stdin, one JSON reply per line\n"
+    "                (requests: core/api.hpp)\n";
 
 struct Command {
     std::vector<std::string> required;
@@ -31,6 +35,7 @@ struct Command {
 
 const std::map<std::string, Command> kCommands{
     {"run", {{"graph", "noesis"}, {"profiles", "edited"}}},
+    {"api", {{}, {}}},
     {"tex2png", {{"profile", "noesis", "tex", "out"}, {}}},
     {"png2tex", {{"profile", "noesis", "png", "original", "out"}, {}}},
     {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot", "replace"}}},
@@ -71,6 +76,13 @@ int run(int argc, char** argv) {
         }
     }
 
+    if (cmd->first == "api") {
+        remod::ApiSession session;
+        for (std::string line; std::getline(std::cin, line);)
+            if (!line.empty()) std::cout << session.call(line) << std::endl;  // flushed: the caller waits for each reply
+        return 0;
+    }
+
     if (cmd->first == "run") {
         const std::filesystem::path graph_file = args["graph"];
         const remod::Graph graph = remod::load_graph(graph_file);
@@ -83,7 +95,8 @@ int run(int argc, char** argv) {
                     .converter = noesis,
                     .base_dir = std::filesystem::absolute(graph_file).parent_path(),
                     .log = [](const std::string& line) { std::cout << line << "\n"; },
-                    .edits_done = args["edited"] == "true"});
+                    .edits_done = args["edited"] == "true",
+                    .cache_dir = remod::default_cache_dir()});
         for (const auto& w : result.warnings) std::cout << "WARNING: " << w << "\n";
         std::cout << result.message << "\n";
         return 0;

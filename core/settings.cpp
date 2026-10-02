@@ -10,13 +10,27 @@ namespace remod {
 
 namespace fs = std::filesystem;
 
-fs::path default_settings_path() {
-    char* appdata = nullptr;
+namespace {
+
+fs::path env_dir(const char* name) {
+    char* value = nullptr;
     size_t n = 0;
-    _dupenv_s(&appdata, &n, "APPDATA");
-    const fs::path dir = appdata ? fs::path(appdata) : fs::path();
-    std::free(appdata);
+    _dupenv_s(&value, &n, name);
+    const fs::path dir = value ? fs::path(value) : fs::path();
+    std::free(value);
+    return dir;
+}
+
+}  // namespace
+
+fs::path default_settings_path() {
+    const fs::path dir = env_dir("APPDATA");
     return dir.empty() ? dir : dir / "remod" / "settings.json";
+}
+
+fs::path default_cache_dir() {
+    const fs::path dir = env_dir("LOCALAPPDATA");
+    return dir.empty() ? dir : dir / "remod" / "run_cache";
 }
 
 Settings load_settings(const fs::path& file) {

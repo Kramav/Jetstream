@@ -10,6 +10,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <optional>
 #include <regex>
 
@@ -235,6 +239,46 @@ NodeSpec import_image() {
     };
 }
 
+std::string file_bytes(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) throw GraphError("can't read " + file.string());
+    return {std::istreambuf_iterator<char>(in), {}};
+}
+
+// A run cache file's name: the bytes it was made from, hashed.
+// ponytail: std::hash (MSVC: 64-bit FNV-1a); accidental collisions are negligible at a cache's size. A SHA-256
+// (BCrypt) if a cache ever holds millions.
+std::string hash_hex(const std::string& bytes) {
+    char hex[17];
+    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(std::hash<std::string>{}(bytes)));
+    return hex;
+}
+
+// The texture made from this image and original, with this game's export options.
+std::string cache_name(const fs::path& image, const fs::path& original, const Profile& p) {
+    return hash_hex(file_bytes(image) + '\0' + file_bytes(original) + '\0' + p.noesis_export) + ".tex." + p.tex_suffix;
+}
+
+// Oldest first (a reuse touches its file) until the cache is under its limit; `keep` (just written) stays.
+void prune_cache(const fs::path& dir, const fs::path& keep) {
+    constexpr std::uintmax_t limit = 512ull << 20;  // ponytail: fixed; a setting if someone needs more
+    std::error_code ec;
+    std::vector<std::pair<fs::file_time_type, fs::path>> files;
+    std::uintmax_t total = 0;
+    for (const auto& e : fs::directory_iterator(dir, ec))
+        if (e.is_regular_file(ec)) {
+            files.emplace_back(e.last_write_time(ec), e.path());
+            total += e.file_size(ec);
+        }
+    std::ranges::sort(files);
+    for (const auto& [time, file] : files) {
+        if (total <= limit) break;
+        if (file == keep) continue;
+        const std::uintmax_t size = fs::file_size(file, ec);
+        if (fs::remove(file, ec)) total -= size;
+    }
+}
+
 NodeSpec save_tex() {
     return {
         .type = "SaveTex",
@@ -246,10 +290,35 @@ NodeSpec save_tex() {
         .family = Family::Transform,
         .run = [](NodeRun& r) {
             const Value original = r.input("original");
-            const fs::path out = r.run.work_dir / (std::to_string(r.node.id) + ".tex." + r.profile().tex_suffix);
-            const TexMeta m = r.run.options.converter.save_tex(r.input("image").path, original.path, out, r.profile());
-            r.output("tex", file_value(out, original.game_path));
-            r.done("encoded " + m.format + ", " + std::to_string(m.mip_count) + " mips");
+            const fs::path image = r.input("image").path, &cache = r.run.options.cache_dir;
+            // A texture converted before from the same bytes is reused (user, 2026-10-02: an unchanged run writes
+            // nothing; Noesis also takes seconds). Written as .part, then renamed, so a cut-off write is never reused.
+            const fs::path out = cache.empty()
+                                     ? r.run.work_dir / (std::to_string(r.node.id) + ".tex." + r.profile().tex_suffix)
+                                     : cache / cache_name(image, original.path, r.profile());
+            std::error_code ec;
+            TexMeta m;
+            if (!cache.empty() && fs::is_regular_file(out, ec)) {
+                m = read_tex_meta(out, r.profile());
+                fs::last_write_time(out, fs::file_time_type::clock::now(), ec);  // recently used: pruned last
+                r.output("tex", file_value(out, original.game_path));
+                r.done("unchanged: reused the texture converted before (" + m.format + ", " +
+                       std::to_string(m.mip_count) + " mips)");
+            } else {
+                fs::path target = out;
+                if (!cache.empty()) {
+                    fs::create_directories(cache);
+                    target += ".part";
+                    fs::remove(target, ec);
+                }
+                m = r.run.options.converter.save_tex(image, original.path, target, r.profile());
+                if (target != out) {
+                    fs::rename(target, out);
+                    prune_cache(cache, out);
+                }
+                r.output("tex", file_value(out, original.game_path));
+                r.done("encoded " + m.format + ", " + std::to_string(m.mip_count) + " mips");
+            }
             // Waiting (CLAUDE.md §9): whether the game minds a different mip count is untested, so say so.
             const std::uint32_t original_mips = read_tex_meta(original.path, r.profile()).mip_count;
             if (m.mip_count != original_mips)
@@ -338,10 +407,30 @@ Framing framing_of(const NodeRun& r) {
 }
 
 void write_image(NodeRun& r, const Bgra& image, const std::string& what) {
+    const bool kept = !r.text("save_to").empty();
+    const fs::path& cache = r.run.options.cache_dir;
+    if (!kept && !cache.empty()) {
+        // A temporary result goes to the run cache, named by its pixels: the same result is the file already there.
+        const std::string name = hash_hex(std::string(reinterpret_cast<const char*>(image.pixels.data()),
+                                                      image.pixels.size()) +
+                                          std::to_string(image.width) + "x" + std::to_string(image.height));
+        const fs::path out = cache / (name + ".png");
+        if (std::error_code ec; fs::is_regular_file(out, ec)) {
+            fs::last_write_time(out, fs::file_time_type::clock::now(), ec);
+        } else {
+            fs::create_directories(cache);
+            const fs::path part = cache / (name + ".part.png");
+            save_png(part, image);
+            fs::rename(part, out);
+            prune_cache(cache, out);
+        }
+        r.output("image", file_value(out));
+        r.done(what, out);
+        return;
+    }
     const fs::path out = image_out(r);
     // Save to is written only when the result differs from what's there (user, 2026-10-02: no needless write cycles;
     // reading it back costs no wear).
-    const bool kept = !r.text("save_to").empty();
     bool same = false;
     if (std::error_code ec; kept && fs::is_regular_file(out, ec)) try {
             const Bgra old = load_image(out);

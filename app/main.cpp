@@ -684,7 +684,8 @@ void start_run(State& s) {
                                         .log = [&s](const std::string& line) {
                                             std::lock_guard lock(s.log_mutex);
                                             s.log.push_back(line);
-                                        }});
+                                        },
+                                        .cache_dir = remod::default_cache_dir()});
     });
 }
 

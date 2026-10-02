@@ -20,6 +20,10 @@ struct Settings {
 // %APPDATA%\remod\settings.json (empty if APPDATA isn't set).
 std::filesystem::path default_settings_path();
 
+// %LOCALAPPDATA%\remod\run_cache: Convert image to texture's textures and image blocks' temporary results, reused by
+// later runs (empty if LOCALAPPDATA isn't set).
+std::filesystem::path default_cache_dir();
+
 // Missing or unreadable file -> default Settings; never throws (a bad settings file must not stop the app).
 Settings load_settings(const std::filesystem::path& file);
 
