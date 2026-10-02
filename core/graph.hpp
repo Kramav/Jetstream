@@ -150,10 +150,19 @@ struct Guard {
 
 // Where each node got to in a run, for front ends to show.
 enum class NodeState { NotReached, Done, Waiting, Failed };
+// A block repeated for a list (fan-out, list_source): each item's own outcome.
+struct ItemStatus {
+    std::string name;  // the item's {name}
+    std::string key;   // the item's path in its list (relative to the folder): per-item state is kept under it
+    NodeState state = NodeState::NotReached;
+    std::string message;
+    std::filesystem::path file;
+};
 struct NodeStatus {
     NodeState state = NodeState::NotReached;
     std::string message;          // short, for the node: "exported x.png", the error, ...
     std::filesystem::path file;   // the file concerned, e.g. the image an Edit image step waits on
+    std::vector<ItemStatus> items;  // a block repeated for a list: per item, in list order (state/message sum them up)
 };
 
 // What each output gave in a run, by (node, output): its text (the text itself, or a file's full path).
@@ -236,8 +245,14 @@ std::vector<int> step_order(const Graph& graph);
 // the state params steps recorded (Export image: which texture its file is from and the file's write time).
 void apply_run(Graph& graph, const RunResult& result);
 
-// Marks an Edit image step done (the user finished editing) or not.
-void set_edit_done(Graph& graph, int node, bool done);
+// Marks an Edit image step done (the user finished editing) or not. `item`: one item of a step repeated for a list
+// (ItemStatus::key); "" = the step itself, or every item of a repeated one.
+void set_edit_done(Graph& graph, int node, bool done, const std::string& item = {});
+
+// Fan-out: the block whose list output (PortSpec::list, e.g. Files in folder) a block is repeated for, or 0. A block
+// is repeated for a list when a list, or a block repeated for it, feeds one of its inputs that takes a single value;
+// one that takes it only into inputs taking many (`multiple`, e.g. Package's textures) runs once and gets every item.
+int list_source(const Graph& graph, int node);
 
 // The browser's "Use in graph": the Original texture (LoadTex) block a picked texture goes into. `selected` if it
 // is one, else the graph's only one; 0 if neither.

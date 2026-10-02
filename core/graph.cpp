@@ -471,11 +471,33 @@ std::vector<std::string> Graph::validate() const {
         for (const auto& [key, _] : n.params) {
             const InputSpec* in = find_input(*spec, key);
             const InputSpec* flips = key.starts_with("flip:") ? find_input(*spec, key.substr(5)) : nullptr;
+            const std::string state_key = key.substr(0, key.find('@'));  // per-item state: "<name>@<item key>"
             const bool known = (in && in->editable()) || (flips && flips->result) || key == "title" ||
                                std::ranges::any_of(spec->outputs, [&](const PortSpec& o) { return o.field && key == o.field; }) ||
-                               std::ranges::any_of(spec->state, [&](const char* s) { return key == s; });
+                               std::ranges::any_of(spec->state, [&](const char* s) { return state_key == s; });
             if (!known) errors.push_back(node_label(n) + ": unknown parameter '" + key + "'");
         }
+        // Fan-out: one list per block, and {name} only where there's an item to name.
+        const int list = list_source(*this, n.id);
+        for (const auto& l : links) {
+            if (l.to_node != n.id) continue;
+            const InputSpec* in = find_input(*spec, l.to_port);
+            const Node* from = find(l.from_node);
+            const NodeSpec* from_spec = from ? find_spec(from->type) : nullptr;
+            const PortSpec* out = from_spec ? find_output(*from_spec, l.from_port) : nullptr;
+            const int other = out && out->list ? l.from_node : from ? list_source(*this, l.from_node) : 0;
+            if (in && !in->multiple && other && other != list)
+                errors.push_back(node_label(n) + ": two lists meet here (" + node_label(*find(list)) + " and " +
+                                 node_label(*find(other)) + "); a block can be repeated for one list only");
+        }
+        // (A Value feeding a repeated block may hold it: the block fills it in.)
+        const bool feeds_repeated = std::ranges::any_of(links, [&](const Link& l) {
+            return l.from_node == n.id && list_source(*this, l.to_node) != 0;
+        });
+        if (!list && !feeds_repeated)
+            for (const auto& [key, value] : n.params)
+                if (value.find("{name}") != std::string::npos)
+                    errors.push_back(node_label(n) + ": {name} only works in a block repeated for a list (Files in folder)");
     }
     for (const auto& l : links)
         if (auto err = check_link(*this, l); !err.empty()) errors.push_back(err);
@@ -587,6 +609,128 @@ void save_graph(const Graph& g, const fs::path& file) {
     if (!out.flush()) throw GraphError("failed to write " + file.string());
 }
 
+int list_source(const Graph& g, int node) {
+    // The first list reaching one of its single-value inputs (validate() refuses two different ones).
+    std::set<int> seen;
+    std::function<int(int)> source = [&](int id) -> int {
+        if (!seen.insert(id).second) return 0;  // a loop (refused anyway)
+        const Node* n = g.find(id);
+        const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+        if (!spec) return 0;
+        for (const Link& l : g.links) {
+            if (l.to_node != id) continue;
+            const InputSpec* in = find_input(*spec, l.to_port);
+            if (!in || in->multiple) continue;  // an input taking many collects the items
+            const Node* from = g.find(l.from_node);
+            const NodeSpec* from_spec = from ? find_spec(from->type) : nullptr;
+            const PortSpec* out = from_spec ? find_output(*from_spec, l.from_port) : nullptr;
+            if (out && out->list) return l.from_node;
+            if (const int list = source(l.from_node)) return list;
+        }
+        return 0;
+    };
+    return source(node);
+}
+
+namespace {
+
+// Fan-out bookkeeping for a run or a preview: each block's list source.
+void prepare(RunState& run) {
+    for (const Node& n : run.graph.nodes) run.source[n.id] = list_source(run.graph, n.id);
+}
+
+// The list an output's values belong to: the list block itself (a list output), the list a repeated block runs for,
+// or 0 (one value).
+int list_of(const RunState& run, int node, const std::string& port) {
+    const Node* n = run.graph.find(node);
+    const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+    const PortSpec* out = spec ? find_output(*spec, port) : nullptr;
+    if (out && out->list) return node;
+    const auto it = run.source.find(node);
+    return it == run.source.end() ? 0 : it->second;
+}
+
+// A list's items that are still in (not skipped after failing), in list order; none while the list isn't known.
+std::vector<int> list_items(const RunState& run, int list) {
+    std::vector<int> out;
+    const auto items = run.items.find(list);
+    if (items == run.items.end()) return out;
+    const auto skipped = run.skipped.find(list);
+    for (int i = 0; i < int(items->second.size()); ++i)
+        if (skipped == run.skipped.end() || !skipped->second.contains(i)) out.push_back(i);
+    return out;
+}
+
+// The items a block runs for: its list's, or just once (-1) if it isn't repeated.
+std::vector<int> items_for(const RunState& run, int node) {
+    const auto it = run.source.find(node);
+    return it == run.source.end() || it->second == 0 ? std::vector<int>{-1} : list_items(run, it->second);
+}
+
+// Must this block (for the current item) wait: does an input come from a step waiting for the user? Into a block that
+// isn't repeated, any item of a list waiting holds it up (Package never packages part of a list).
+bool blocked(const RunState& run, int node) {
+    for (const Link& l : run.graph.links) {
+        if (l.to_node != node) continue;
+        const int list = list_of(run, l.from_node, l.from_port);
+        if (!list) {
+            if (run.waiting.contains({l.from_node, -1})) return true;
+        } else if (run.item >= 0) {
+            if (run.waiting.contains({l.from_node, run.item})) return true;
+        } else {
+            for (const int item : list_items(run, list))
+                if (run.waiting.contains({l.from_node, item})) return true;
+        }
+    }
+    return false;
+}
+
+// A block's (or, repeated, its current item's) outcome.
+void record(NodeRun& r, NodeState state, const std::string& message, const fs::path& file) {
+    NodeStatus& status = r.run.result.nodes[r.node.id];
+    if (const ListItem* item = r.item())
+        status.items.push_back({item->name, item->key, state, message, file});
+    else
+        status = {state, message, file, {}};
+}
+
+// A repeated block's status from its items': waiting if any item waits, else failed if any failed, else not reached
+// if any item isn't done yet (an earlier step waits for it), else done; the message counts them (one item: its own
+// message).
+void sum_up(NodeStatus& status) {
+    if (status.items.empty()) {
+        status = {NodeState::NotReached, "no items", {}, {}};
+        return;
+    }
+    std::map<NodeState, int> count;
+    for (const ItemStatus& it : status.items) ++count[it.state];
+    status.state = count[NodeState::Waiting]      ? NodeState::Waiting
+                   : count[NodeState::Failed]     ? NodeState::Failed
+                   : count[NodeState::NotReached] ? NodeState::NotReached
+                                                  : NodeState::Done;
+    const auto first = std::ranges::find(status.items, status.state, &ItemStatus::state);
+    status.file = first->file;
+    if (status.items.size() == 1) {
+        status.message = first->message;
+        return;
+    }
+    std::string message;
+    for (const auto& [state, words] : {std::pair{NodeState::Done, " done"}, std::pair{NodeState::Waiting, " waiting for you"},
+                                       std::pair{NodeState::Failed, " failed"},
+                                       std::pair{NodeState::NotReached, " waiting for an earlier step"}})
+        if (count[state]) message += (message.empty() ? "" : ", ") + std::to_string(count[state]) + words;
+    status.message = std::to_string(status.items.size()) + " items: " + message;
+}
+
+// What each output gave, for front ends: a repeated block's first item stands for the list.
+RunValues first_values(const RunState& run) {
+    RunValues values;
+    for (const auto& [key, value] : run.outputs) values.try_emplace({std::get<0>(key), std::get<1>(key)}, value.text);
+    return values;
+}
+
+}  // namespace
+
 RunResult run_graph(const Graph& g, const RunOptions& opt) {
     if (const auto errors = g.validate(); !errors.empty()) {
         std::string msg = "graph can't run:";
@@ -598,25 +742,42 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
 
     TempDir work;
     RunState run{.graph = g, .options = opt, .work_dir = work.path};
+    prepare(run);
     RunResult& result = run.result;
     for (const Node* node : topo_order(g)) {
         const Node& n = *node;
-        if (std::ranges::any_of(g.links, [&](const Link& l) { return l.to_node == n.id && run.waiting.contains(l.from_node); })) {
-            run.waiting.insert(n.id);
-            result.nodes[n.id] = {NodeState::NotReached, "waits for an earlier step", {}};
-            continue;
-        }
-        try {
+        const int list = run.source[n.id];
+        const Node* list_node = list ? g.find(list) : nullptr;
+        const bool skip_failed = list_node && list_node->params.contains("on_fail") && list_node->params.at("on_fail") == "skip";
+        for (const int item : items_for(run, n.id)) {
+            run.item = item;
             NodeRun node_run(run, n);
-            find_spec(n.type)->run(node_run);  // validate() checked the type
-        } catch (const std::exception& e) {
-            result.nodes[n.id] = {NodeState::Failed, e.what(), {}};
-            for (const auto& other : g.nodes) result.nodes.try_emplace(other.id);  // the rest: not reached
-            RunError error(node_label(n) + ": " + e.what(), std::move(result.nodes));
-            for (const auto& [key, value] : run.outputs) error.values[key] = value.text;
-            error.state = result.state;
-            throw error;
+            if (blocked(run, n.id)) {
+                run.waiting.insert({n.id, item});
+                record(node_run, NodeState::NotReached, "waits for an earlier step", {});
+                continue;
+            }
+            try {
+                find_spec(n.type)->run(node_run);  // validate() checked the type
+            } catch (const std::exception& e) {
+                if (skip_failed) {
+                    run.skipped[list].insert(item);
+                    record(node_run, NodeState::Failed, std::string("skipped: ") + e.what(), {});
+                    node_run.warn(node_run.item()->name + " skipped: " + e.what());
+                    continue;
+                }
+                record(node_run, NodeState::Failed, e.what(), {});
+                if (list) sum_up(result.nodes[n.id]);
+                for (const auto& other : g.nodes) result.nodes.try_emplace(other.id);  // the rest: not reached
+                const std::string which = node_run.item() ? " (" + node_run.item()->name + ")" : "";
+                RunError error(node_label(n) + which + ": " + e.what(), std::move(result.nodes));
+                error.values = first_values(run);
+                error.state = result.state;
+                throw error;
+            }
         }
+        run.item = -1;
+        if (list) sum_up(result.nodes[n.id]);
     }
 
     const std::vector<fs::path>& to_edit = run.to_edit;
@@ -631,21 +792,62 @@ RunResult run_graph(const Graph& g, const RunOptions& opt) {
     } else {
         result.message = "Done.";
     }
-    for (const auto& [key, value] : run.outputs) result.values[key] = value.text;
+    result.values = first_values(run);
     return std::move(result);
 }
 
 std::vector<Value> NodeRun::values(const char* input) const {
     std::vector<Value> v;
-    for (size_t i : run.graph.links_into(node.id, input))
-        v.push_back(run.outputs.at({run.graph.links[i].from_node, run.graph.links[i].from_port}));
+    for (size_t i : run.graph.links_into(node.id, input)) {
+        const Link& l = run.graph.links[i];
+        const int list = list_of(run, l.from_node, l.from_port);
+        if (!list) {
+            v.push_back(run.outputs.at({l.from_node, l.from_port, -1}));
+        } else if (run.item >= 0) {
+            v.push_back(run.outputs.at({l.from_node, l.from_port, run.item}));
+        } else {  // a block that isn't repeated takes every item
+            for (const int item : list_items(run, list)) v.push_back(run.outputs.at({l.from_node, l.from_port, item}));
+        }
+    }
     return v;
 }
 
 std::string NodeRun::text(const char* input) const {
-    if (auto v = values(input); !v.empty()) return v.front().text;
-    const auto it = node.params.find(input);
-    return it == node.params.end() ? std::string() : it->second;
+    std::string t;
+    if (auto v = values(input); !v.empty()) {
+        t = v.front().text;
+    } else if (const auto it = node.params.find(input); it != node.params.end()) {
+        t = it->second;
+    }
+    if (const ListItem* it = item())
+        for (size_t at; (at = t.find("{name}")) != std::string::npos;) t.replace(at, 6, it->name);
+    return t;
+}
+
+void NodeRun::output_list(const char* port, std::vector<Value> values, std::vector<ListItem> items) {
+    for (size_t i = 0; i < values.size(); ++i) run.outputs[{node.id, port, int(i)}] = std::move(values[i]);
+    run.items[node.id] = std::move(items);
+}
+
+const ListItem* NodeRun::item() const {
+    if (run.item < 0) return nullptr;
+    const auto list = run.source.find(node.id);
+    return list == run.source.end() ? nullptr : &run.items.at(list->second).at(size_t(run.item));
+}
+
+fs::path NodeRun::temp_file(const std::string& suffix) const {
+    return run.work_dir / (std::to_string(node.id) + (run.item >= 0 ? "_" + std::to_string(run.item) : "") + suffix);
+}
+
+const std::string* NodeRun::state(const std::string& name) const {
+    const ListItem* it = item();
+    const auto found = node.params.find(it ? name + "@" + it->key : name);
+    return found == node.params.end() ? nullptr : &found->second;
+}
+
+void NodeRun::set_state(const std::string& name, const std::string& value) {
+    const ListItem* it = item();
+    run.result.state[node.id][it ? name + "@" + it->key : name] = value;
 }
 
 fs::path NodeRun::resolve(const std::string& p) const {
@@ -655,18 +857,18 @@ fs::path NodeRun::resolve(const std::string& p) const {
 }
 
 void NodeRun::done(const std::string& message, const fs::path& file) {
-    run.result.nodes[node.id] = {NodeState::Done, message, file};
+    record(*this, NodeState::Done, message, file);
     log(message);
 }
 
 void NodeRun::wait(const std::string& message, const fs::path& file) {
-    run.waiting.insert(node.id);
+    run.waiting.insert({node.id, run.item});
     run.to_edit.push_back(file);
-    run.result.nodes[node.id] = {NodeState::Waiting, message, file};
+    record(*this, NodeState::Waiting, message, file);
 }
 
 void NodeRun::log(const std::string& line) const {
-    if (run.options.log) run.options.log(node_label(node) + ": " + line);
+    if (run.options.log) run.options.log(node_label(node) + (item() ? " [" + item()->name + "]" : "") + ": " + line);
 }
 
 void NodeRun::warn(const std::string& warning) {
@@ -674,8 +876,20 @@ void NodeRun::warn(const std::string& warning) {
     if (run.options.log) run.options.log("warning: " + run.result.warnings.back());
 }
 
+void NodeRun::claim(const fs::path& file) {
+    if (run.item < 0) return;
+    const fs::path path = fs::absolute(file).lexically_normal();
+    const auto [it, added] = run.writes.try_emplace({node.id, path}, run.item);
+    if (!added && it->second != run.item) {
+        const auto& items = run.items.at(run.source.at(node.id));
+        throw GraphError(items.at(size_t(it->second)).name + " and " + items.at(size_t(run.item)).name +
+                         " would both write " + path.string() + ": put {name} in its file name");
+    }
+}
+
 void NodeRun::change(ChangeKind kind, const fs::path& path) {
     const FileChange c{node.id, kind, fs::absolute(path).lexically_normal()};
+    if (kind == ChangeKind::Write) claim(c.path);
     if (run.planned) {
         run.planned->push_back(c);
     } else if (run.options.check_change) {
@@ -701,23 +915,29 @@ PreviewPass preview_pass(const Graph& g, const fs::path& base_dir, std::vector<F
     const Profile profile;
     const RunOptions options{.profile = profile, .converter = converter, .base_dir = base_dir};
     RunState run{.graph = g, .options = options, .work_dir = {}, .planned = planned};
+    prepare(run);
     PreviewPass pass;
     for (const Node* n : topo_order(g)) {
         const NodeSpec* spec = find_spec(n->type);
         void (*fn)(NodeRun&) = !spec ? nullptr : spec->pure ? spec->run : spec->preview;
-        if (!fn) {
+        const std::vector<int> items = items_for(run, n->id);
+        if (!fn || items.empty()) {  // no preview, or its list isn't known
             pass.unknown.insert(n->id);
             continue;
         }
-        try {
-            NodeRun node_run(run, *n);
-            fn(node_run);
-        } catch (const std::exception&) {
-            // Not known yet: an input isn't (its source can't be previewed), or a value isn't usable.
-            pass.unknown.insert(n->id);
+        for (const int item : items) {  // a repeated block: every item, so the plan has every item's changes
+            run.item = item;
+            try {
+                NodeRun node_run(run, *n);
+                fn(node_run);
+            } catch (const std::exception&) {
+                // Not known yet: an input isn't (its source can't be previewed), or a value isn't usable.
+                pass.unknown.insert(n->id);
+            }
         }
+        run.item = -1;
     }
-    for (const auto& [key, value] : run.outputs) pass.values[key] = value.text;
+    pass.values = first_values(run);
     return pass;
 }
 
@@ -845,16 +1065,23 @@ void apply_run(Graph& g, const RunResult& result) {
     for (int id : result.reset_edits) set_edit_done(g, id, false);
     for (const auto& [id, params] : result.state)
         if (Node* n = g.find(id))
-            for (const auto& [key, value] : params) n->params[key] = value;
+            for (const auto& [key, value] : params)
+                if (value.empty())
+                    n->params.erase(key);
+                else
+                    n->params[key] = value;
 }
 
-void set_edit_done(Graph& g, int node, bool done) {
+void set_edit_done(Graph& g, int node, bool done, const std::string& item) {
     Node* n = g.find(node);
     if (!n || n->type != "EditImage") return;
+    const std::string key = item.empty() ? "done" : "done@" + item;
     if (done)
-        n->params["done"] = "true";
+        n->params[key] = "true";
     else
-        n->params.erase("done");
+        n->params.erase(key);
+    if (!done && item.empty())  // not done: every item of it either
+        std::erase_if(n->params, [](const auto& p) { return p.first.starts_with("done@"); });
 }
 
 int texture_target(const Graph& g, int selected) {

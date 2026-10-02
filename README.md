@@ -15,10 +15,12 @@ runs from the desktop app and from the CLI.
 - Git and an internet connection for the first build (vcpkg downloads library sources)
 
 You do not install any libraries by hand. `vcpkg.json` lists them and pins their versions:
-toml++, Catch2, Dear ImGui (docking), imgui-node-editor.
+toml++, Catch2, Dear ImGui (docking), imgui-node-editor, DirectXTex.
 
-To convert textures you also need **Noesis** with the **fmt_RE_MESH** plugin in `Noesis\plugins\python`.
-Neither is bundled (licensing); you point the tool at your `Noesis64.exe`.
+Textures convert with the tool's own converter: nothing else to install. **Noesis** (with the **fmt_RE_MESH**
+plugin in `Noesis\plugins\python`) is optional: the Browser's 3D mesh view uses it, and the Pipeline panel's
+"Convert textures with Noesis" uses it instead of the built-in converter. Neither is bundled (licensing); you point
+the tool at your `Noesis64.exe`.
 
 ## Build
 
@@ -49,12 +51,12 @@ Ignore the `'vswhere.exe' is not recognized` line the developer shell may print;
 ctest --test-dir build --output-on-failure
 ```
 
-Tests need no game files. One test, the texture round trip, runs only if you point it at local textures
-and Noesis. Otherwise it's reported as skipped:
+Tests need no game files. The texture round trips run only if you point them at local textures (and, for the
+Noesis one, at Noesis). Otherwise they're reported as skipped:
 
 ```powershell
 $env:REMOD_FIXTURES = "C:\spike"   # folder of original *.tex.143221013 files (never commit these)
-$env:REMOD_NOESIS   = "D:\path\to\Noesis64.exe"
+$env:REMOD_NOESIS   = "D:\path\to\Noesis64.exe"   # optional: the Noesis converter's tests
 ctest --test-dir build --output-on-failure
 ```
 
@@ -96,17 +98,21 @@ as one line that branches, with a dot where it splits.
   Several are combined into one picture.
 - **Edit format:** Export image writes PNG, TGA or JPG, whichever its file name ends in. In the `...` picker,
   pick the format under "Save as type". TGA suits GIMP. JPG loses some quality and all transparency.
-  BMP isn't offered: Noesis writes it without transparency.
+  BMP isn't offered (Noesis writes it without transparency).
 - **Replace existing** on Package rebuilds over the previous build of the same mod, so no manual deleting.
   It never deletes anything else.
-- **Setup check:** the Pipeline panel finds Noesis automatically (remembered path, `REMOD_NOESIS`, PATH, winget)
-  and says whether the RE Engine plugin is installed.
+- **Noesis (optional):** the Pipeline panel finds it automatically (remembered path, `REMOD_NOESIS`, PATH, winget)
+  and says whether the RE Engine plugin is installed. Tick **Convert textures with Noesis** to use it for textures.
 - **Game files (REtool):** set your REtool folder, e.g. `...\REtool\RE4\re_chunk_000\natives\stm`, and the
   texture picker opens there. It's pre-filled from the RE plugin's own setting if you've set it in Noesis.
 
-**Mip levels:** the Noesis plugin always writes mip levels down to 8×8, while most RE4R UI textures have only
-one. The tool builds the mod anyway and shows a warning (a popup in the app, `WARNING:` from the CLI). It probably
-works in game; if a texture looks wrong, that's the first thing to suspect. See CLAUDE.md §9.
+**Mip levels and padded rows:** the built-in converter writes the new texture over a copy of the original, so
+its mip count, row padding and header stay the original's. The Noesis converter writes mip levels down to 8×8
+whatever the original has (most RE4R UI textures have one); the tool builds the mod anyway and shows a warning (a
+popup in the app, `WARNING:` from the CLI). See CLAUDE.md §9.
+
+**Any texture name:** textures are recognised by their header, not their name: `.tex`, `.tex.143221013` and
+`.tex.re2remake` all work, and a package names each one the way the game expects (`.tex.143221013` for RE4R).
 
 ## Browser
 
@@ -125,8 +131,8 @@ Two panels along the bottom show what you pick there:
   with its colour textures; close the 3D view to see the texture again, pick the mesh again to reopen it. The last
   mesh stays while you browse other textures. Drag to turn it, right-drag to move, the wheel zooms, double-click
   resets. Click one of its textures to highlight the parts that use it (click it again to show all). The Groups
-  checkboxes show or hide the mesh's groups (e.g. a character's bare arms, a weapon). Noesis converts the mesh
-  first: under a second for most, several seconds for a character.
+  checkboxes show or hide the mesh's groups (e.g. a character's bare arms, a weapon). The 3D view needs Noesis
+  (optional): it converts the mesh first, under a second for most, several seconds for a character.
 
 Reading the folder takes a few seconds each time the app starts. Nothing is written to disk, except the
 temporary file Noesis converts a mesh into (deleted straight away). A folder that
@@ -160,7 +166,7 @@ Supporting another RE Engine game means adding a profile in `profiles\`; its tex
 1. Start `build\app\remod-app.exe`.
 2. In the **Pipeline** panel, pick a graph with the **`...`** button next to *Graph file* (this loads it),
    or build one: right-click the canvas to add nodes, drag from an output pin to an input pin to link,
-   and press Delete to remove. Pick `Noesis64.exe` with its `...` button, then click **Run**.
+   and press Delete to remove. Then click **Run**.
 3. Every path field in a node has a **`...`** button that opens the Windows file or folder picker.
 4. The panel lists any problems (missing fields, unconnected inputs) and shows the run log.
 5. **Save** / **Save As...** write the graph, including node positions.
@@ -173,26 +179,39 @@ It looks for the `profiles` folder in the current folder, then next to and above
 **From the CLI** (normal PowerShell, repo root):
 
 ```powershell
-.\build\cli\remod.exe run --graph C:\work\my_mod.json --noesis "D:\path\to\Noesis64.exe"
+.\build\cli\remod.exe run --graph C:\work\my_mod.json
 ```
+
+Add `--noesis "D:\path\to\Noesis64.exe"` to `run`, `tex2png` or `png2tex` to convert with Noesis instead.
+
+## Many textures at once
+
+Start the graph with a **Files in folder** block instead of picking one texture:
+- **Folder and files:** pick the folder, and optionally which files (`*_iam.tex*`; empty means every texture).
+- **Repeating:** every block it feeds runs once per file.
+- **File names:** put `{name}` in the file names those blocks write, e.g. Export image's `edits\{name}.png`. It
+  becomes each texture's name, so each one gets its own file.
+- **Collecting:** Package takes them all and builds one mod.
+- **Editing:** the run exports every image, then the **YOUR STEP** card lists them. Mark each one **Done** as you
+  finish it (or **Done editing all**), then Run again. Finished images move on; Package waits until all are done.
+- **If a file fails:** the block's **If a file fails** setting stops the run (the default) or skips that file and
+  goes on with the rest.
 
 ## Single steps with the CLI
 
 The same steps are also available as individual commands:
 
-Run from the repo root in a normal PowerShell window. `$noesis` is just shorthand:
+Run from the repo root in a normal PowerShell window:
 
 ```powershell
-$noesis = "D:\path\to\Noesis64.exe"
-
 # 1. Original texture -> PNG (or .tga / .jpg; also prints size, format and mip count)
-.\build\cli\remod.exe tex2png --profile profiles\re4r.toml --noesis $noesis `
+.\build\cli\remod.exe tex2png --profile profiles\re4r.toml `
   --tex "C:\work\my_texture.tex.143221013" --out "C:\work\my_texture.png"
 
 # 2. Edit the image in any image editor. Keep the same width and height.
 
 # 3. Edited image -> new texture, using the original as the template (same format and mips)
-.\build\cli\remod.exe png2tex --profile profiles\re4r.toml --noesis $noesis `
+.\build\cli\remod.exe png2tex --profile profiles\re4r.toml `
   --png "C:\work\my_texture.png" --original "C:\work\my_texture.tex.143221013" `
   --out "C:\work\new.tex.143221013"
 

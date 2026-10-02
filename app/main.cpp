@@ -366,6 +366,7 @@ struct State {
         const auto found = remod::find_noesis(saved.noesis_path);
         return found.empty() ? saved.noesis_path : found.string();
     }();
+    bool noesis_textures = saved.noesis_textures;  // convert textures with Noesis, not the built-in converter
     std::string game_files = saved.game_files_dir;  // REtool folder; empty = ask the RE plugin (see game_files_dir)
     bool show_help = saved.show_help;
     bool build_mode = saved.build_mode;  // Build layout (edit structure) vs Use layout (fill in and run)
@@ -554,6 +555,7 @@ void accept_path(State& s, std::string& value, remod::PathKind kind, const char*
 void remember_paths(State& s) {
     const remod::Settings now{.graph_path = s.graph_path,
                               .noesis_path = s.noesis_path,
+                              .noesis_textures = s.noesis_textures,
                               .show_help = s.show_help,
                               .game_files_dir = s.game_files,
                               .build_mode = s.build_mode,
@@ -673,13 +675,14 @@ void start_run(State& s) {
         s.log.clear();
     }
     s.status = "Running...";
-    s.run = std::async(std::launch::async, [&s, graph = s.graph, graph_path = s.graph_path, noesis = s.noesis_path] {
+    s.run = std::async(std::launch::async, [&s, graph = s.graph, graph_path = s.graph_path,
+                                            noesis = s.noesis_textures ? s.noesis_path : std::string()] {
         const auto profiles = remod::find_profiles_dir();
         if (profiles.empty()) throw std::runtime_error("no 'profiles' folder found in the current folder or above the app");
         const remod::Profile profile = remod::load_profile_by_id(profiles, graph.profile);
-        remod::NoesisConverter noesis_converter(noesis);
+        const auto converter = remod::make_converter(noesis);
         return remod::run_graph(graph, {.profile = profile,
-                                        .converter = noesis_converter,
+                                        .converter = *converter,
                                         .base_dir = std::filesystem::absolute(graph_path).parent_path(),
                                         .log = [&s](const std::string& line) {
                                             std::lock_guard lock(s.log_mutex);
@@ -764,6 +767,24 @@ std::string open_edit_hint(const State& s, int node) {
                           : "Opens the image in " + editor.filename().string() + " (Open with).";
 }
 
+// An Edit image block repeated for a list (fan-out): an item is done once marked (node param "done@<item key>").
+bool item_done(const remod::Node& n, const remod::ItemStatus& item) { return n.params.contains("done@" + item.key); }
+
+// The block's Done editing: every item the last run left waiting, or the block itself when it isn't repeated.
+void mark_done(State& s, int node, const remod::NodeStatus* status) {
+    if (!status || status->items.empty()) return remod::set_edit_done(s.graph, node, true);
+    for (const remod::ItemStatus& item : status->items)
+        if (item.state == remod::NodeState::Waiting) remod::set_edit_done(s.graph, node, true, item.key);
+}
+
+// Nothing left to mark: the block is done, or each item the last run left waiting is.
+bool edit_done(const remod::Node& n, const remod::NodeStatus* status) {
+    if (n.params.contains("done")) return true;
+    return status && !status->items.empty() && std::ranges::none_of(status->items, [&](const remod::ItemStatus& item) {
+               return item.state == remod::NodeState::Waiting && !item_done(n, item);
+           });
+}
+
 std::optional<remod::NodeState> run_state(const State& s, int id);
 std::string status_text(const remod::NodeStatus& st);
 ImVec4 state_color(remod::NodeState state);
@@ -801,13 +822,33 @@ void draw_steps(State& s) {
         ImGui::TextDisabled("YOUR STEP \xC2\xB7 %d", st.number);
         ImGui::TextUnformatted(remod::block_title(*s.graph.find(st.id)).c_str());
         ImGui::TextWrapped("%s", status->second.message.c_str());
-        if (!status->second.file.empty()) {
+        const remod::Node& node = *s.graph.find(st.id);
+        const auto& items = status->second.items;
+        for (const remod::ItemStatus& item : items) {  // repeated for a list: each image on its own (user, 2026-10-02)
+            if (item.state != remod::NodeState::Waiting) continue;
+            ImGui::PushID(item.key.c_str());
+            if (ImGui::SmallButton("Open")) open_edit(s, st.id, item.file);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", open_edit_hint(s, st.id).c_str());
+            ImGui::SameLine();
+            if (item_done(node, item)) {
+                if (ImGui::SmallButton("Undo")) remod::set_edit_done(s.graph, st.id, false, item.key);
+                ImGui::SameLine();
+                ImGui::TextColored(state_color(remod::NodeState::Done), "%s: done", item.name.c_str());
+            } else {
+                if (ImGui::SmallButton("Done")) remod::set_edit_done(s.graph, st.id, true, item.key);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("This image is edited; the next Run takes it further.");
+                ImGui::SameLine();
+                ImGui::TextUnformatted(item.name.c_str());
+            }
+            ImGui::PopID();
+        }
+        if (items.empty() && !status->second.file.empty()) {
             if (ImGui::Button("Open in editor")) open_edit(s, st.id, status->second.file);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", open_edit_hint(s, st.id).c_str());
             ImGui::SameLine();
         }
         ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(pal::accent));
-        if (ImGui::Button("Done editing")) remod::set_edit_done(s.graph, st.id, true);
+        if (ImGui::Button(items.empty() ? "Done editing" : "Done editing all")) mark_done(s, st.id, &status->second);
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click once you've saved your changes, then Run again.");
         ImGui::EndChild();
@@ -897,6 +938,11 @@ void draw_side_panel(State& s) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y or Ctrl+Shift+Z");
 
     if (!s.build_mode) {  // run settings
+        if (ImGui::Checkbox("Convert textures with Noesis", &s.noesis_textures)) remember_paths(s);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Off: the built-in converter (nothing to install).\n"
+                              "On: Noesis and its RE Engine plugin, which you install yourself.\n"
+                              "Noesis is optional; the 3D mesh view uses it when it's set.");
         ImGui::InputText("##noesis", &s.noesis_path);
         ImGui::SameLine();
         if (ImGui::Button("...##noesis") && browse(remod::PathKind::OpenFile, "exe", s.noesis_path)) remember_paths(s);
@@ -907,8 +953,11 @@ void draw_side_panel(State& s) {
             s.noesis_check = remod::check_noesis(unquote(s.noesis_path));
         }
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(s.noesis_check.ok ? ImVec4(0.4f, 0.85f, 0.4f, 1) : ImVec4(1, 0.45f, 0.35f, 1), "%s",
-                           s.noesis_check.message.c_str());
+        if (s.noesis_check.ok || s.noesis_textures)  // missing only matters when textures need it
+            ImGui::TextColored(s.noesis_check.ok ? ImVec4(0.4f, 0.85f, 0.4f, 1) : ImVec4(1, 0.45f, 0.35f, 1), "%s",
+                               s.noesis_check.message.c_str());
+        else
+            ImGui::TextDisabled("%s", s.noesis_check.message.c_str());
         ImGui::PopTextWrapPos();
 
         // Where the texture picker opens: the REtool folder of extracted game files.
@@ -2208,7 +2257,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         const auto status_it = s.statuses.find(n.id);
         const remod::NodeStatus* status = status_it != s.statuses.end() ? &status_it->second : nullptr;
         const bool manual = spec && spec->manual;
-        const bool edit_done = manual && n.params.contains("done");
+        const bool done_editing = manual && edit_done(n, status);
         const auto warning = s.dest_warnings.find(n.id);
         const bool warned = warning != s.dest_warnings.end();
         // The outline is the block's family (paint_block, after the block); its paint says where the last run got
@@ -2496,8 +2545,9 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     if (ImGui::IsItemHovered()) hovered_hint = open_edit_hint(s, n.id);
                     ImGui::SameLine();
                 }
-                if (!edit_done) {
-                    if (ImGui::Button("Done editing")) remod::set_edit_done(s.graph, n.id, true);
+                if (!done_editing) {
+                    const bool items = status && !status->items.empty();
+                    if (ImGui::Button(items ? "Done editing all" : "Done editing")) mark_done(s, n.id, status);
                     if (ImGui::IsItemHovered())
                         hovered_hint = "Click once you've saved your changes. The next Run continues from here.";
                 } else {

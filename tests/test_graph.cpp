@@ -1664,3 +1664,124 @@ TEST_CASE("placement: blocks let go too close move apart; added blocks make room
     remod::load_graph(REMOD_SCHEMAS_DIR "/graph.v0.example.json", &added);
     CHECK_FALSE(added);
 }
+
+// ---- Fan-out: Files in folder repeats the blocks it feeds, once per file ----
+
+namespace {
+
+// 1 Files in folder (natives/STM/ui) -> 2 LoadTex -> 3 Split -> 4 Export (edits/{name}.png) -> 5 Edit -> 6 SaveTex
+// (original from the Split) -> 7 Package (collects every item's texture).
+Graph fan_out(const fs::path& dir) {
+    for (const char* name : {"a", "b", "c"})
+        test::write_fake_tex(dir / "natives/STM/ui" / (std::string(name) + ".tex.143221013"), 143221013, 64, 32, 1, 5, 99);
+    Graph g;
+    g.add_node("FilesInFolder").params["folder"] = "natives/STM/ui";
+    g.add_node("LoadTex");
+    g.add_node("Split");
+    g.add_node("ExportImage").params["png"] = "edits/{name}.png";
+    g.add_node("EditImage");
+    g.add_node("SaveTex");
+    auto& pkg = g.add_node("PackageMod");
+    pkg.params["name"] = "M";
+    pkg.params["out"] = "out";
+    for (const remod::Link& l : {remod::Link{1, "files", 2, "tex"}, remod::Link{2, "tex", 3, "in"},
+                                 remod::Link{3, "out", 4, "tex"}, remod::Link{4, "png", 5, "png"},
+                                 remod::Link{5, "image", 6, "image"}, remod::Link{3, "out", 6, "original"},
+                                 remod::Link{6, "tex", 7, "tex"}})
+        REQUIRE(g.connect(l).empty());
+    return g;
+}
+
+}  // namespace
+
+TEST_CASE("fan-out: each file runs through the steps, edits are done per item, Package waits for them all") {
+    TempDir tmp;
+    Graph g = fan_out(tmp.path);
+    REQUIRE(g.validate().empty());
+    CHECK(remod::list_source(g, 6) == 1);
+    CHECK(remod::list_source(g, 7) == 0);  // takes them all
+    FakeConverter conv;
+    const remod::RunOptions opt{.profile = re4r(), .converter = conv, .base_dir = tmp.path};
+
+    const auto first = remod::run_graph(g, opt);
+    CHECK(first.paused);
+    CHECK(conv.loads == 3);
+    for (const char* name : {"a", "b", "c"}) CHECK(fs::exists(tmp.path / "edits" / (std::string(name) + ".png")));
+    CHECK(first.nodes.at(5).state == NodeState::Waiting);
+    REQUIRE(first.nodes.at(5).items.size() == 3);
+    CHECK(first.nodes.at(5).items[1].name == "b");
+    CHECK(first.nodes.at(5).items[1].key == "b.tex.143221013");
+    CHECK_THAT(first.nodes.at(5).message, ContainsSubstring("3 waiting for you"));
+    CHECK(first.nodes.at(7).state == NodeState::NotReached);
+    remod::apply_run(g, first);
+    CHECK(g.find(4)->params.contains("exported_from@a.tex.143221013"));
+
+    remod::set_edit_done(g, 5, true, "a.tex.143221013");
+    const auto second = remod::run_graph(g, opt);
+    CHECK(conv.saves == 1);  // a only
+    CHECK(second.nodes.at(6).items[0].state == NodeState::Done);
+    CHECK(second.nodes.at(6).items[1].state == NodeState::NotReached);
+    CHECK(second.nodes.at(6).state == NodeState::NotReached);  // not finished
+    CHECK(second.nodes.at(7).state == NodeState::NotReached);  // never a partial mod
+    CHECK_FALSE(fs::exists(tmp.path / "out"));
+
+    for (const char* key : {"b.tex.143221013", "c.tex.143221013"}) remod::set_edit_done(g, 5, true, key);
+    const auto built = remod::run_graph(g, opt);
+    CHECK_FALSE(built.paused);
+    CHECK(built.nodes.at(7).state == NodeState::Done);
+    for (const char* name : {"a", "b", "c"})
+        CHECK(fs::is_regular_file(tmp.path / "out/M/natives/STM/ui" / (std::string(name) + ".tex.143221013")));
+
+    remod::set_edit_done(g, 5, false);  // "Edit again" on the block: every item
+    CHECK_FALSE(std::ranges::any_of(g.find(5)->params, [](const auto& p) { return p.first.starts_with("done"); }));
+}
+
+TEST_CASE("fan-out: one file name for every item fails, a bad file stops the run or is skipped") {
+    TempDir tmp;
+    Graph g = fan_out(tmp.path);
+    FakeConverter conv;
+    const remod::RunOptions opt{.profile = re4r(), .converter = conv, .base_dir = tmp.path, .edits_done = true};
+
+    g.find(4)->params["png"] = "edits/same.png";
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("would both write") && ContainsSubstring("{name}"));
+    g.find(4)->params["png"] = "edits/{name}.png";
+
+    test::write_fake_tex(tmp.path / "natives/STM/ui/bad.tex.143221013", 36, 64, 32, 1, 5, 99);  // another game's
+    try {
+        remod::run_graph(g, opt);
+        FAIL("expected a RunError");
+    } catch (const remod::RunError& e) {
+        CHECK_THAT(std::string(e.what()), ContainsSubstring("(bad)") && ContainsSubstring("version 36"));
+        CHECK(e.nodes.at(2).state == NodeState::Failed);
+    }
+
+    g.find(1)->params["on_fail"] = "skip";
+    const auto result = remod::run_graph(g, opt);
+    CHECK_FALSE(result.paused);
+    CHECK(std::ranges::any_of(result.warnings, [](const std::string& w) { return w.find("bad skipped") != std::string::npos; }));
+    CHECK(result.nodes.at(2).state == NodeState::Failed);  // one item failed, shown
+    CHECK(result.nodes.at(7).state == NodeState::Done);
+    CHECK(fs::is_regular_file(tmp.path / "out/M/natives/STM/ui/c.tex.143221013"));
+    CHECK_FALSE(fs::exists(tmp.path / "out/M/natives/STM/ui/bad.tex.143221013"));
+}
+
+TEST_CASE("fan-out: previews and the plan cover every item; {name} and two lists are checked") {
+    TempDir tmp;
+    Graph g = fan_out(tmp.path);
+    const auto plan = remod::plan_changes(g, tmp.path);
+    for (const char* name : {"a", "b", "c"})
+        CHECK(std::ranges::any_of(plan.changes, [&](const remod::FileChange& c) {
+            return c.node == 4 && c.path == tmp.path / "edits" / (std::string(name) + ".png");
+        }));
+    CHECK(remod::preview_values(g, tmp.path).at({4, "png"}) == (tmp.path / "edits" / "a.png").string());
+
+    g.find(7)->params["name"] = "{name}";  // Package isn't repeated
+    CHECK(has(g.validate(), "{name} only works in a block repeated for a list"));
+    g.find(7)->params["name"] = "M";
+
+    const int other = g.add_node("FilesInFolder").id;
+    g.find(other)->params["folder"] = "natives/STM/ui";
+    g.disconnect(g.links_into(6, "original").at(0));
+    REQUIRE(g.connect({other, "files", 6, "original"}).empty());
+    CHECK(has(g.validate(), "two lists meet here"));
+}

@@ -42,6 +42,7 @@ struct PortSpec {  // an output
     PathKind path = PathKind::None;
     const char* filter = nullptr;
     bool multiple = false;  // any number of links, one row each (a Split); every other output feeds one input
+    bool list = false;      // gives one value per item (Files in folder): the blocks it feeds repeat per item
 };
 
 // An input. Every input has a pin. Editable inputs (widget != None) can instead be typed; a link wins over the

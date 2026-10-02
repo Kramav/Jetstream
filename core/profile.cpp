@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <set>
 
 namespace remod {
 
@@ -18,6 +19,7 @@ namespace {
 
 constexpr std::array kStringKeys{"id",         "name",          "tex_suffix", "natives_root",
                                  "pak_script", "noesis_export", "file_list",  "noesis_game"};
+const std::set<std::string_view> kOptionalKeys{"noesis_export", "noesis_game"};
 constexpr std::array kPackagingValues{"loose_archive", "pak"};
 
 Profile from_table(const toml::table& root) {
@@ -31,6 +33,7 @@ Profile from_table(const toml::table& root) {
                              &p.pak_script, &p.noesis_export, &p.file_list,  &p.noesis_game};
     for (size_t i = 0; i < kStringKeys.size(); ++i) {
         auto v = (*game)[kStringKeys[i]].value<std::string>();
+        if (!v && kOptionalKeys.contains(kStringKeys[i])) continue;  // optional: Noesis is optional
         if (!v || v->empty())
             errors.push_back(std::string("'") + kStringKeys[i] + "' must be a non-empty string");
         else

@@ -59,13 +59,13 @@ std::vector<DirEntry> list_folder(const std::filesystem::path& folder, std::stri
 std::vector<std::filesystem::path> drive_roots();
 
 // The materials of a mesh's material file (.mdf2) and the textures they use, matched to `textures` (an
-// AssetIndex list). The file is <mesh>.mdf2.*, <mesh>_mat.mdf2.*, <mesh>_00.mdf2.* (fmt_RE_MESH's guesses
-// [plugin source]), else the first .mdf2 in the mesh's folder. Throws if none is found or it can't be read.
+// AssetIndex list). The file is <mesh>.mdf2.*, <mesh>_mat.mdf2.*, <mesh>_00.mdf2.* (the names Noesis's RE
+// plugin tries too), else the first .mdf2 in the mesh's folder. Throws if none is found or it can't be read.
 struct MeshMaterial {
     std::string name;             // matches the mesh's parts (MeshPart::material)
     std::vector<size_t> textures;  // into MeshTextures::textures
     int albedo = -1;              // its colour texture, or -1
-    // As fmt_RE_MESH shows it in Noesis [plugin source]: the colour texture is multiplied by base_color (the colour
+    // As Noesis shows it: the colour texture is multiplied by base_color (the colour
     // on its own without one); `opacity` cuts out (alpha test at 0.05) where that texture's channel (0 red, 3 alpha)
     // is low, for hair, decal and dirt master materials only; `hidden` materials aren't drawn (eye shells without
     // textures, tear lines, lenses, "destroy" parts).

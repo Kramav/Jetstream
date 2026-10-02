@@ -17,11 +17,12 @@ namespace {
 
 constexpr const char* kUsage =
     "usage:\n"
-    "  remod run --graph <file.json> --noesis <Noesis64.exe> [--profiles <dir>] [--edited true]\n"
+    "  remod run --graph <file.json> [--profiles <dir>] [--edited true] [--noesis <Noesis64.exe>]\n"
     "            --edited true: treat Edit image steps as done (you've edited the images)\n"
-    "  remod tex2png --profile <toml> --noesis <Noesis64.exe> --tex <file.tex.N> --out <file.png|.tga|.jpg>\n"
-    "  remod png2tex --profile <toml> --noesis <Noesis64.exe> --png <edited.png|.tga|.jpg> --original <file.tex.N>\n"
-    "                --out <new.tex.N>\n"
+    "  remod tex2png --profile <toml> --tex <file.tex.N> --out <file.png|.tga|.jpg> [--noesis <Noesis64.exe>]\n"
+    "  remod png2tex --profile <toml> --png <edited.png|.tga|.jpg> --original <file.tex.N> --out <new.tex.N>\n"
+    "                [--noesis <Noesis64.exe>]\n"
+    "  --noesis: convert textures with Noesis (optional) instead of the built-in converter\n"
     "  remod package --profile <toml> --tex <file> --game-path <natives-relative path> --name <ModName>\n"
     "                --out <dir> [--version v] [--author a] [--description d] [--screenshot file]\n"
     "                [--replace true]\n"
@@ -34,10 +35,10 @@ struct Command {
 };
 
 const std::map<std::string, Command> kCommands{
-    {"run", {{"graph", "noesis"}, {"profiles", "edited"}}},
+    {"run", {{"graph"}, {"profiles", "edited", "noesis"}}},
     {"api", {{}, {}}},
-    {"tex2png", {{"profile", "noesis", "tex", "out"}, {}}},
-    {"png2tex", {{"profile", "noesis", "png", "original", "out"}, {}}},
+    {"tex2png", {{"profile", "tex", "out"}, {"noesis"}}},
+    {"png2tex", {{"profile", "png", "original", "out"}, {"noesis"}}},
     {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot", "replace"}}},
 };
 
@@ -89,10 +90,10 @@ int run(int argc, char** argv) {
         const std::filesystem::path profiles = args.contains("profiles") ? args["profiles"] : remod::find_profiles_dir();
         if (profiles.empty()) throw std::runtime_error("no profiles folder found; pass --profiles <dir>");
         const remod::Profile profile = remod::load_profile_by_id(profiles, graph.profile);
-        remod::NoesisConverter noesis(args["noesis"]);
+        const auto converter = remod::make_converter(args["noesis"]);
         const auto result = remod::run_graph(
             graph, {.profile = profile,
-                    .converter = noesis,
+                    .converter = *converter,
                     .base_dir = std::filesystem::absolute(graph_file).parent_path(),
                     .log = [](const std::string& line) { std::cout << line << "\n"; },
                     .edits_done = args["edited"] == "true",
@@ -105,14 +106,12 @@ int run(int argc, char** argv) {
     const remod::Profile profile = remod::load_profile(args["profile"]);
 
     if (cmd->first == "tex2png") {
-        remod::NoesisConverter noesis(args["noesis"]);
-        print_meta(noesis.load_tex(args["tex"], args["out"], profile));
+        print_meta(remod::make_converter(args["noesis"])->load_tex(args["tex"], args["out"], profile));
         std::cout << "wrote: " << args["out"] << "\n";
         return 0;
     }
     if (cmd->first == "png2tex") {
-        remod::NoesisConverter noesis(args["noesis"]);
-        const remod::TexMeta made = noesis.save_tex(args["png"], args["original"], args["out"], profile);
+        const remod::TexMeta made = remod::make_converter(args["noesis"])->save_tex(args["png"], args["original"], args["out"], profile);
         print_meta(made);
         std::cout << "wrote: " << args["out"] << "\n";
         if (const auto mips = remod::read_tex_meta(args["original"], profile).mip_count; made.mip_count != mips)

@@ -18,9 +18,9 @@ struct Profile {
     std::string natives_root;
     std::vector<std::string> packaging;  // subset of {"loose_archive", "pak"}
     std::string pak_script;
-    std::string noesis_export;
+    std::string noesis_export;  // optional (Noesis is): its ?cmode export options for this game
     std::string file_list;
-    std::string noesis_game;  // the RE Engine plugin's name for the game, e.g. "RE4" (its <game>NativesPath.txt)
+    std::string noesis_game;  // optional: the RE Engine plugin's name for the game, e.g. "RE4" (its <game>NativesPath.txt)
 
     // Names of fields still set to "TBD" (awaiting the §9 spike).
     std::vector<std::string> unresolved() const;

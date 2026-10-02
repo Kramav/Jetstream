@@ -1,6 +1,6 @@
 #pragma once
-// LoadTex / SaveTex (CLAUDE.md §4). File-based: Noesis converts .tex <-> PNG/TGA/JPG directly, so pixels never
-// pass through this process. ponytail: add in-memory decoding (WIC) when the app needs a texture preview.
+// LoadTex / SaveTex (CLAUDE.md §4): .tex <-> PNG/TGA/JPG, file to file. Built in (NativeConverter, DirectXTex), or
+// optionally through Noesis (NoesisConverter).
 #include "image.hpp"
 #include "mesh.hpp"
 #include "process.hpp"
@@ -10,7 +10,9 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
+#include <string>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -21,6 +23,10 @@ struct ConvertError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+// A texture by (lower-case) name: "x.tex", or "x.tex.<suffix>" with any suffix (the version, 143221013, or a tool's
+// name for the game, re2remake...). Not ".rtex" (render targets). Which game it is comes from its header.
+bool is_tex_name(const std::string& name);
+
 // The version number in an RE Engine .tex header (e.g. 143221013 for RE4R), read from the file's content,
 // so it works whatever the file is named. nullopt if the file isn't an RE Engine texture.
 std::optional<std::uint32_t> read_tex_version(const std::filesystem::path& tex);
@@ -28,13 +34,12 @@ std::optional<std::uint32_t> read_tex_version(const std::filesystem::path& tex);
 // The profile whose tex_suffix matches the file's header version, or nullptr.
 const Profile* profile_for_texture(const std::filesystem::path& tex, const std::vector<Profile>& profiles);
 
-// Reads TexMeta from a .tex header (source_path left empty; the caller knows the game path).
-// Layout from fmt_RE_MESH's reader [plugin source], checked against one RE4R texture (CLAUDE.md §9).
+// Reads TexMeta from a .tex header (source_path left empty; the caller knows the game path). Layout by version
+// [REE-Lib TexFile.cs, MIT]; the file's name doesn't matter (.tex, .tex.143221013, .tex.re2remake...).
 TexMeta read_tex_meta(const std::filesystem::path& tex, const Profile& profile);
 
 // One mip level of a .tex exactly as stored, for previews: the GPU decodes `format` itself (RE Engine uses DXGI's
-// format numbers). Read straight from the file, layout as read_tex_meta [plugin source]; conversions still go
-// through Noesis. Image 0 of an array or cubemap.
+// format numbers). Read straight from the file, layout as read_tex_meta. Image 0 of an array or cubemap.
 struct TexPixels {
     std::uint32_t format = 0;                           // DXGI_FORMAT
     std::uint32_t width = 0, height = 0;                // this mip's visible size
@@ -53,8 +58,8 @@ TexPixels read_tex_pixels(const std::filesystem::path& tex, std::uint32_t max_si
 Bgra decode_tex(const std::filesystem::path& tex, std::uint32_t max_side, unsigned* full_width = nullptr,
                 unsigned* full_height = nullptr);
 
-// Image formats for the edit step, by extension: Noesis picks the format from it, both ways. BMP is left out
-// because Noesis writes it without alpha (spike 2026-09-30). JPG works but loses quality and transparency.
+// Image formats for the edit step, by extension, both ways. BMP is left out because Noesis writes it without alpha
+// (spike 2026-09-30). JPG works but loses quality and transparency.
 inline constexpr const char* kEditImageFormats = "png,tga,jpg,jpeg";
 
 // True if `file` ends in one of kEditImageFormats, ignoring case.
@@ -75,9 +80,24 @@ public:
     // Throws ConvertError if the result doesn't match.
     virtual TexMeta save_tex(const std::filesystem::path& png, const std::filesystem::path& original_tex,
                              const std::filesystem::path& tex_out, const Profile& profile) = 0;
+    // Which converter and settings made a result, for the run cache's key: a different one converts again.
+    virtual std::string id(const Profile&) const { return {}; }
 };
 
-// Noesis + fmt_RE_MESH plugin, command-line mode (CLAUDE.md §9 spike results).
+// Built in: decodes with DirectXTex (decode_tex), and writes a .tex by copying the original and replacing each mip's
+// pixels in place, at the original's pitch and size. So the header, flags, mip count and layout (padded rows too)
+// stay the original's. Image 0 of single-image textures only, as Noesis.
+class NativeConverter final : public ITextureConverter {
+public:
+    TexMeta load_tex(const std::filesystem::path& tex, const std::filesystem::path& png_out,
+                     const Profile& profile) override;
+    TexMeta save_tex(const std::filesystem::path& png, const std::filesystem::path& original_tex,
+                     const std::filesystem::path& tex_out, const Profile& profile) override;
+    std::string id(const Profile&) const override { return "native1"; }
+};
+
+// Optional: Noesis + fmt_RE_MESH plugin, command-line mode (CLAUDE.md §9 spike results). Neither is ours to ship;
+// the user installs them.
 class NoesisConverter final : public ITextureConverter {
 public:
     explicit NoesisConverter(std::filesystem::path noesis_exe,
@@ -86,6 +106,7 @@ public:
                      const Profile& profile) override;
     TexMeta save_tex(const std::filesystem::path& png, const std::filesystem::path& original_tex,
                      const std::filesystem::path& tex_out, const Profile& profile) override;
+    std::string id(const Profile& p) const override { return "noesis " + p.noesis_export; }
     // A game .mesh's shape (highest LOD) for the 3D view, via a temporary OBJ. Throws ConvertError.
     MeshModel load_mesh(const std::filesystem::path& mesh);
 
@@ -94,5 +115,8 @@ private:
     std::filesystem::path exe_;
     std::chrono::milliseconds timeout_;
 };
+
+// The converter a run uses: Noesis when `noesis_exe` is given (ConvertError if it isn't there), else the built-in one.
+std::unique_ptr<ITextureConverter> make_converter(const std::filesystem::path& noesis_exe);
 
 }  // namespace remod

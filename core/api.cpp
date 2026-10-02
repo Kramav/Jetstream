@@ -92,6 +92,11 @@ json statuses(const std::map<int, NodeStatus>& nodes) {
     for (const auto& [id, st] : nodes) {
         json n{{"node", id}, {"state", state_name(st.state)}, {"message", st.message}};
         if (!st.file.empty()) n["file"] = st.file.string();
+        for (const ItemStatus& it : st.items) {  // a block repeated for a list: each item
+            json item{{"name", it.name}, {"item", it.key}, {"state", state_name(it.state)}, {"message", it.message}};
+            if (!it.file.empty()) item["file"] = it.file.string();
+            n["items"].push_back(std::move(item));
+        }
         out.push_back(std::move(n));
     }
     return out;
@@ -167,14 +172,17 @@ std::string ApiSession::call(const std::string& request) {
         } else if (op == "plan" || op == "run") {
             // Guardrails (CLAUDE.md §10 M2): a run only after a plan, and only against that plan.
             if (file_.empty()) throw GraphError("save the graph first: a run's folder and relative paths come from its file");
-            const fs::path noesis = path_of(r.at("noesis"));
+            // Optional: Noesis converts the textures when given; game_files names the extracted game files when
+            // Noesis's RE plugin doesn't (its NativesPath.txt).
+            const fs::path noesis = r.contains("noesis") ? path_of(r.at("noesis")) : fs::path();
             const fs::path profiles = find_profiles_dir();
             if (profiles.empty()) throw GraphError("no profiles folder found");
             const Profile profile = load_profile_by_id(profiles, graph_.profile);
             const fs::path base = fs::absolute(file_).parent_path();
             Guard guard{.graph_dir = base};
+            if (r.contains("game_files")) guard.read_only.push_back(path_of(r.at("game_files")));
             if (const fs::path game = game_files_dir(noesis, profile); !game.empty()) guard.read_only.push_back(game);
-            guard.read_only.push_back(noesis.parent_path());  // Noesis and its plugins
+            if (!noesis.empty()) guard.read_only.push_back(noesis.parent_path());  // Noesis and its plugins
 
             const ChangePlan plan = plan_changes(graph_, base);
             json changes = json::array();
@@ -210,8 +218,8 @@ std::string ApiSession::call(const std::string& request) {
                 if (!to_approve.empty() && !r.value("approve", false))
                     throw GraphError("the plan has changes that need the user's approval (approve: true once they agree)");
                 guard.approved = to_approve;
-                NoesisConverter converter(noesis);
-                const RunOptions options{.profile = profile, .converter = converter, .base_dir = base,
+                const auto converter = make_converter(noesis);
+                const RunOptions options{.profile = profile, .converter = *converter, .base_dir = base,
                                          .cache_dir = default_cache_dir(),
                                          .check_change = [&guard](const FileChange& c) { return guard.check(c); }};
                 try {
@@ -228,7 +236,7 @@ std::string ApiSession::call(const std::string& request) {
         } else if (op == "edit_done") {
             const Node& n = node_of(graph_, r);
             if (n.type != "EditImage") throw GraphError("block " + std::to_string(n.id) + " isn't an Edit image step");
-            set_edit_done(graph_, n.id, r.value("done", true));
+            set_edit_done(graph_, n.id, r.value("done", true), r.value("item", std::string()));
         } else if (op == "validate") {
             reply["problems"] = graph_.validate();
         } else if (op == "preview") {

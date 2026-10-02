@@ -56,14 +56,15 @@ fs::path find_noesis(const std::string& saved) {
 
 NoesisCheck check_noesis(const fs::path& exe) {
     if (exe.empty())
-        return {false, "Noesis not found. Install it (winget install -e --id RichWhitehouse.Noesis) or pick "
-                       "Noesis64.exe with the ... button."};
+        return {false, "Noesis not set (optional: the 3D mesh view, or converting textures with it). To use it, "
+                       "install it (winget install -e --id RichWhitehouse.Noesis) and pick Noesis64.exe with the ... "
+                       "button."};
     if (!is_file(exe)) return {false, "Noesis not found at " + exe.string() + "."};
     const fs::path plugin = exe.parent_path() / "plugins" / "python" / "fmt_RE_MESH.py";
     if (!is_file(plugin))
         return {false, "Noesis is there, but the RE Engine plugin isn't: put fmt_RE_MESH.py into " +
                            plugin.parent_path().string() + " (download: " + kPluginUrl + ")."};
-    return {true, "Noesis OK, RE Engine plugin found."};
+    return {true, "Noesis OK, RE Engine plugin found (optional: 3D mesh view; textures if chosen)."};
 }
 
 fs::path game_files_dir(const fs::path& exe, const Profile& profile) {

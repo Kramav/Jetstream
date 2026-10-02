@@ -8,7 +8,8 @@ namespace remod {
 
 struct Settings {
     std::string graph_path;
-    std::string noesis_path;
+    std::string noesis_path;     // optional: the 3D mesh view, and texture conversion if noesis_textures
+    bool noesis_textures = false;  // convert textures with Noesis instead of the built-in converter
     bool show_help = true;
     std::string game_files_dir;  // extracted game files (REtool); empty = ask the RE plugin's NativesPath.txt
     bool build_mode = false;     // app: Build layout (edit blocks and links) vs Use layout (fill in and run)

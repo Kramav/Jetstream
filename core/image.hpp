@@ -20,6 +20,10 @@ std::vector<std::uint8_t> read_image_bgra(const std::filesystem::path& file, uns
 void save_png_bgra(const std::filesystem::path& out, unsigned width, unsigned height,
                    const std::vector<std::uint8_t>& bgra);
 
+// Writes 32-bit BGRA pixels as PNG, TGA (32-bit, uncompressed) or JPG (no alpha), by `out`'s extension.
+void save_image_bgra(const std::filesystem::path& out, unsigned width, unsigned height,
+                     const std::vector<std::uint8_t>& bgra);
+
 // ---- Image operations for the image blocks (Adjust colour, Resize image, Overlay image) ----
 
 struct Bgra {

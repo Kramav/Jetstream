@@ -3,7 +3,9 @@
 #include "process.hpp"
 
 #define NOMINMAX
-#include <DirectXTex.h>  // decode_tex: decompresses and converts the pixel data (never reads the file)
+#include <d3d11.h>  // before DirectXTex.h: declares its GPU (DirectCompute) encoder
+#include <wrl/client.h>
+#include <DirectXTex.h>  // decodes, converts and encodes the pixel data (never reads or writes a file itself)
 
 #include <algorithm>
 #include <array>
@@ -11,6 +13,7 @@
 #include <fstream>
 #include <map>
 #include <random>
+#include <set>
 #include <sstream>
 
 namespace remod {
@@ -83,7 +86,76 @@ void require_absent(const fs::path& out) {
     if (fs::exists(out)) throw ConvertError("output already exists, refusing to overwrite: " + out.string());
 }
 
+// Bytes per pixel, or per 4x4 block (block = true), by DXGI_FORMAT [official D3D docs].
+struct Layout {
+    std::uint32_t bytes;
+    bool block;
+};
+const Layout* layout_of(std::uint32_t format) {
+    static const std::map<std::uint32_t, Layout> layouts{
+        {2, {16, false}}, {10, {8, false}}, {28, {4, false}}, {29, {4, false}}, {49, {2, false}}, {61, {1, false}},
+        {71, {8, true}},  {72, {8, true}},  {77, {16, true}}, {78, {16, true}}, {80, {8, true}},  {83, {16, true}},
+        {87, {4, false}}, {91, {4, false}}, {95, {16, true}}, {96, {16, true}}, {98, {16, true}}, {99, {16, true}}};
+    const auto it = layouts.find(format);
+    return it == layouts.end() ? nullptr : &it->second;
+}
+
+// The .tex header, by version [REE-Lib TexFile.cs, MIT: Header.ReadWrite and its Versions table]. Both layouts start
+// magic@0, version@4, width@8, height@10, depth@12 and have the format@16, and are followed by one 16-byte entry per
+// image and mip, image 0's mips first: {u64 offset, u32 row pitch, u32 size}.
+//   legacy (RE7, RE2, DMC5, RE3): 32 bytes, mip count@14, image count@15.
+//   modern (MH Rise and later):   40 bytes, image count@14, mip table bytes@15 (16 per mip).
+// GDeflate games (MH Wilds, RE9, Pragmata) compress the mip data: not read here.
+struct TexHeader {
+    std::uint32_t version = 0, width = 0, height = 0, depth = 0, images = 0, mips = 0, format = 0;
+    std::uint32_t size = 0;  // header bytes; the mip table follows
+};
+
+constexpr size_t kTexHeaderMax = 40;
+
+TexHeader parse_tex_header(const std::string& b, const fs::path& tex) {
+    if (b.size() < 32 || le32(b, 0) != 0x00584554) throw ConvertError(tex.string() + " is not an RE Engine .tex file");
+    TexHeader h;
+    h.version = le32(b, 4);
+    switch (h.version) {
+        case 8: case 10: case 11: case 190820018:  // RE7, RE2, DMC5, RE3
+            h.size = 32;
+            h.mips = std::uint8_t(b[14]);
+            h.images = std::uint8_t(b[15]);
+            break;
+        case 28: case 30: case 34: case 35: case 143221013:                  // MH Rise, RE8, RE2/3 RT, RE7 RT, RE4R/SF6
+        case 760230703: case 251211553: case 240606151: case 240701001:      // DD2 (old), DD2, DR, Onimusha 2
+            if (b.size() < 40) throw ConvertError(tex.string() + " is cut short");
+            h.size = 40;
+            h.images = std::uint8_t(b[14]);
+            h.mips = std::uint8_t(b[15]) / 16u;
+            break;
+        case 241106027: case 250813143: case 251111100:  // MH Wilds, RE9, Pragmata / MH Stories 3
+            throw ConvertError(tex.string() + ": tex version " + std::to_string(h.version) +
+                               " stores its pixels compressed (GDeflate), which the built-in converter can't read. "
+                               "Use the Noesis converter (Pipeline panel) for it.");
+        default:
+            throw ConvertError(tex.string() + ": unknown tex version " + std::to_string(h.version));
+    }
+    h.width = le16(b, 8);
+    h.height = le16(b, 10);
+    h.depth = le16(b, 12);
+    h.format = le32(b, 16);
+    return h;
+}
+
+TexHeader read_tex_header(const fs::path& tex) { return parse_tex_header(read_prefix(tex, kTexHeaderMax), tex); }
+
 }  // namespace
+
+bool is_tex_name(const std::string& name) {
+    if (name.ends_with(".tex")) return true;
+    const size_t at = name.rfind(".tex.");
+    if (at == std::string::npos || at + 5 == name.size() || name.find('.', at + 5) != std::string::npos) return false;
+    // ponytail: an image exported from a texture ("x.tex.png") isn't one; a list, since suffixes are free text.
+    static const std::set<std::string, std::less<>> images{"bmp", "dds", "jpeg", "jpg", "png", "tga", "tif", "tiff"};
+    return !images.contains(std::string_view(name).substr(at + 5));
+}
 
 std::optional<std::uint32_t> read_tex_version(const fs::path& tex) {
     std::error_code ec;
@@ -102,56 +174,38 @@ const Profile* profile_for_texture(const fs::path& tex, const std::vector<Profil
 }
 
 TexMeta read_tex_meta(const fs::path& tex, const Profile& profile) {
-    // [plugin source] magic@0 "TEX\0", version@4, width@8, height@10, images@14, mip header bytes@15 (16 per mip),
-    // DXGI format@16. ponytail: this is the layout for tex versions > 27 (RE4R); other games need the plugin's
-    // other branch, so the version is pinned to the profile's suffix.
-    const std::string b = read_prefix(tex, 20);
-    if (b.size() < 20 || le32(b, 0) != 0x00584554)
-        throw ConvertError(tex.string() + " is not an RE Engine .tex file");
-    if (std::to_string(le32(b, 4)) != profile.tex_suffix)
+    const std::string b = read_prefix(tex, kTexHeaderMax);  // the game first: a clearer message than the layout's
+    if (b.size() >= 8 && le32(b, 0) == 0x00584554 && std::to_string(le32(b, 4)) != profile.tex_suffix)
         throw ConvertError(tex.string() + " is an RE Engine texture of version " + std::to_string(le32(b, 4)) +
                            ", but the graph's game is " + profile.name + " (version " + profile.tex_suffix +
                            "). Pick the matching game, or a texture from " + profile.name + ".");
+    const TexHeader h = parse_tex_header(b, tex);
     TexMeta m;
     m.game_profile = profile.id;
-    m.width = le16(b, 8);
-    m.height = le16(b, 10);
-    m.array_count = std::uint8_t(b[14]);
-    m.mip_count = std::uint8_t(b[15]) / 16u;
-    m.format = format_name(le32(b, 16));
+    m.width = h.width;
+    m.height = h.height;
+    m.array_count = h.images;
+    m.mip_count = h.mips;
+    m.format = format_name(h.format);
     return m;
 }
 
 TexPixels read_tex_pixels(const fs::path& tex, std::uint32_t max_side) {
-    // [plugin source] for versions > 27: a 40-byte header, then per image and mip {u64 offset, u32 pitch, u32 size}.
-    // RE3R's 190820018 is the plugin's exception (it reads it as version 10, the older layout).
-    std::string b = read_prefix(tex, 40);
-    if (b.size() < 40 || le32(b, 0) != 0x00584554) throw ConvertError(tex.string() + " is not an RE Engine .tex file");
-    const std::uint32_t version = le32(b, 4);
-    if (version <= 27 || version == 190820018)
-        throw ConvertError("tex version " + std::to_string(version) + " uses an older layout (not supported yet)");
-    const std::uint32_t mips = std::uint8_t(b[15]) / 16u;
-    if (b[14] == 0 || mips == 0) throw ConvertError(tex.string() + " holds no images");
+    const TexHeader h = read_tex_header(tex);
+    if (h.images == 0 || h.mips == 0) throw ConvertError(tex.string() + " holds no images");
+    const Layout* layout = layout_of(h.format);
+    if (!layout) throw ConvertError("can't preview " + format_name(h.format));
+    const auto [bytes, block] = *layout;
 
-    // Bytes per pixel, or per 4x4 block (block = true), by DXGI_FORMAT [official D3D docs].
-    struct Layout { std::uint32_t bytes; bool block; };
-    static const std::map<std::uint32_t, Layout> layouts{
-        {2, {16, false}}, {10, {8, false}}, {28, {4, false}}, {29, {4, false}}, {49, {2, false}}, {61, {1, false}},
-        {71, {8, true}},  {72, {8, true}},  {77, {16, true}}, {78, {16, true}}, {80, {8, true}},  {83, {16, true}},
-        {87, {4, false}}, {91, {4, false}}, {95, {16, true}}, {96, {16, true}}, {98, {16, true}}, {99, {16, true}}};
-    const auto layout = layouts.find(le32(b, 16));
-    if (layout == layouts.end()) throw ConvertError("can't preview " + format_name(le32(b, 16)));
-    const auto [bytes, block] = layout->second;
-
-    const std::uint32_t width = le16(b, 8), height = le16(b, 10);
+    const std::uint32_t width = h.width, height = h.height, mips = h.mips;
     std::uint32_t mip = 0;
     while (mip + 1 < mips && std::max(width >> mip, height >> mip) > max_side) ++mip;
-    b = read_prefix(tex, 40 + 16 * (mip + 1));
-    if (b.size() < 40 + 16 * (mip + 1)) throw ConvertError(tex.string() + " is cut short");
-    const size_t entry = 40 + 16 * mip;
+    const std::string b = read_prefix(tex, h.size + 16 * (mip + 1));
+    if (b.size() < h.size + 16 * (mip + 1)) throw ConvertError(tex.string() + " is cut short");
+    const size_t entry = h.size + 16 * mip;
     const std::uint64_t offset = std::uint64_t(le32(b, entry)) | (std::uint64_t(le32(b, entry + 4)) << 32);
     TexPixels p;
-    p.format = layout->first;
+    p.format = h.format;
     p.width = std::max(1u, width >> mip);
     p.height = std::max(1u, height >> mip);
     p.row_pitch = le32(b, entry + 8);
@@ -175,9 +229,9 @@ TexPixels read_tex_pixels(const fs::path& tex, std::uint32_t max_side) {
 Bgra decode_tex(const fs::path& tex, std::uint32_t max_side, unsigned* full_width, unsigned* full_height) {
     TexPixels p = read_tex_pixels(tex, max_side);
     if (full_width || full_height) {
-        const std::string b = read_prefix(tex, 12);
-        if (full_width) *full_width = le16(b, 8);
-        if (full_height) *full_height = le16(b, 10);
+        const TexHeader h = read_tex_header(tex);
+        if (full_width) *full_width = h.width;
+        if (full_height) *full_height = h.height;
     }
     // sRGB formats read as their linear twins: the bytes kept as they are, as the browser shows them.
     const auto format = DirectX::MakeLinear(DXGI_FORMAT(p.format));
@@ -233,6 +287,118 @@ std::pair<std::uint32_t, std::uint32_t> image_size(const fs::path& file) {
     if (lower_extension(file) == ".tga" && (type == 2 || type == 3 || type == 10 || type == 11))
         return {le16(b, 12), le16(b, 14)};
     throw ConvertError(file.string() + " is not a PNG, TGA or JPG file");
+}
+
+namespace {
+
+// The checks both converters make before writing a .tex: one image, an edit image of the original's size, no file
+// at tex_out yet.
+TexMeta check_save(const fs::path& image, const fs::path& original_tex, const fs::path& tex_out, const Profile& profile) {
+    const TexMeta original = read_tex_meta(original_tex, profile);
+    if (original.array_count != 1)
+        throw ConvertError("multi-image textures (arrays, cubemaps) are not supported: " + original_tex.string());
+    if (!is_edit_image(image))
+        throw ConvertError(image.string() + " must be an image ending in " + kEditFormatsText);
+    if (image_size(image) != std::pair{original.width, original.height})
+        throw ConvertError(image.string() + " must be " + std::to_string(original.width) + "x" +
+                           std::to_string(original.height) + " to match " + original_tex.string());
+    require_absent(tex_out);
+    return original;
+}
+
+}  // namespace
+
+TexMeta NativeConverter::load_tex(const fs::path& tex, const fs::path& png_out, const Profile& profile) {
+    const TexMeta meta = read_tex_meta(tex, profile);
+    if (!is_edit_image(png_out))
+        throw ConvertError(std::string("image output path must end in ") + kEditFormatsText + ": " + png_out.string());
+    require_absent(png_out);
+    const Bgra image = decode_tex(tex, UINT32_MAX);  // mip 0 at its visible size: row padding cut off
+    try {
+        save_image_bgra(png_out, image.width, image.height, image.pixels);
+    } catch (const std::runtime_error& e) {
+        std::error_code ec;
+        fs::remove(png_out, ec);
+        throw ConvertError(std::string("couldn't write ") + png_out.string() + ": " + e.what());
+    }
+    return meta;
+}
+
+TexMeta NativeConverter::save_tex(const fs::path& png, const fs::path& original_tex, const fs::path& tex_out,
+                                  const Profile& profile) {
+    const TexMeta original = check_save(png, original_tex, tex_out, profile);
+    std::string file = read_prefix(original_tex, size_t(fs::file_size(original_tex)));
+    const TexHeader h = parse_tex_header(file, original_tex);
+    if (h.depth > 1) throw ConvertError("volume textures are not supported: " + original_tex.string());
+    if (!layout_of(h.format)) throw ConvertError("can't write " + format_name(h.format) + " textures");
+    if (file.size() < h.size + 16 * size_t(h.mips)) throw ConvertError(original_tex.string() + " is cut short");
+
+    Bgra edit;
+    try {
+        edit = load_image(png);
+    } catch (const std::runtime_error& e) {
+        throw ConvertError(std::string("couldn't read ") + png.string() + ": " + e.what());
+    }
+    // sRGB targets: the edit's bytes are sRGB (as decode_tex wrote them), so it's tagged sRGB and its mips are
+    // averaged in linear light.
+    using namespace DirectX;
+    const auto target = DXGI_FORMAT(h.format);
+    const bool srgb = IsSRGB(target);
+    const Image source{edit.width, edit.height, srgb ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM,
+                       size_t(edit.width) * 4, edit.pixels.size(), edit.pixels.data()};
+    const TEX_FILTER_FLAGS filter = TEX_FILTER_FORCE_NON_WIC | (srgb ? TEX_FILTER_SRGB : TEX_FILTER_DEFAULT);
+    ScratchImage mips, encoded;
+    HRESULT hr = h.mips > 1 ? GenerateMipMaps(source, filter, h.mips, mips) : mips.InitializeFromImage(source);
+    // BC6H / BC7 on the CPU take minutes in a Debug build (188 s for one 512x512), so they go to the GPU
+    // (DirectXTex's DirectCompute encoder) when there is one; the CPU otherwise.
+    const bool gpu_format = target == DXGI_FORMAT_BC6H_UF16 || target == DXGI_FORMAT_BC6H_SF16 ||
+                            target == DXGI_FORMAT_BC7_UNORM || target == DXGI_FORMAT_BC7_UNORM_SRGB;
+    Microsoft::WRL::ComPtr<ID3D11Device> gpu;
+    if (SUCCEEDED(hr) && gpu_format) {
+        const D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL_11_0;  // compute shaders as the encoder needs them
+        if (SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, &level, 1, D3D11_SDK_VERSION,
+                                        &gpu, nullptr, nullptr)) &&
+            FAILED(Compress(gpu.Get(), mips.GetImages(), mips.GetImageCount(), mips.GetMetadata(), target,
+                            TEX_COMPRESS_DEFAULT, TEX_ALPHA_WEIGHT_DEFAULT, encoded)))
+            gpu.Reset();  // fall back to the CPU
+    }
+    if (SUCCEEDED(hr) && !gpu) {
+        if (IsCompressed(target))
+            hr = Compress(mips.GetImages(), mips.GetImageCount(), mips.GetMetadata(), target, TEX_COMPRESS_PARALLEL,
+                          TEX_THRESHOLD_DEFAULT, encoded);
+        else if (target != source.format)
+            hr = Convert(mips.GetImages(), mips.GetImageCount(), mips.GetMetadata(), target, filter,
+                         TEX_THRESHOLD_DEFAULT, encoded);
+        else
+            encoded = std::move(mips);
+    }
+    if (FAILED(hr) || encoded.GetImageCount() != h.mips)
+        throw ConvertError("couldn't encode " + png.string() + " as " + format_name(h.format));
+
+    // Each mip goes over the original's bytes: its rows at the original's pitch, the padding zeroed.
+    for (std::uint32_t mip = 0; mip < h.mips; ++mip) {
+        const size_t entry = h.size + 16 * size_t(mip);
+        const std::uint64_t offset = std::uint64_t(le32(file, entry)) | (std::uint64_t(le32(file, entry + 4)) << 32);
+        const std::uint32_t pitch = le32(file, entry + 8), size = le32(file, entry + 12);
+        const Image* img = encoded.GetImage(mip, 0, 0);
+        const size_t rows = img->slicePitch / img->rowPitch;
+        if (pitch == 0 || img->rowPitch > pitch || rows > size / pitch || offset + size > file.size())
+            throw ConvertError(original_tex.string() + ": mip " + std::to_string(mip) +
+                               " doesn't fit its place in the file (unexpected layout)");
+        std::fill_n(file.begin() + std::ptrdiff_t(offset), size, '\0');
+        for (size_t y = 0; y < rows; ++y)
+            std::copy_n(img->pixels + y * img->rowPitch, img->rowPitch, file.begin() + std::ptrdiff_t(offset + y * pitch));
+    }
+    {
+        std::ofstream out(tex_out, std::ios::binary);
+        out.write(file.data(), std::streamsize(file.size()));
+        if (!out) throw ConvertError("cannot write " + tex_out.string());
+    }
+    const TexMeta result = read_tex_meta(tex_out, profile);
+    if (!same_texture(result, original) || result.mip_count != original.mip_count)
+        throw ConvertError("the written texture doesn't match the original: got " + describe(result) + ", expected " +
+                           describe(original));
+    return result;
 }
 
 NoesisConverter::NoesisConverter(fs::path noesis_exe, std::chrono::milliseconds timeout)
@@ -310,19 +476,10 @@ MeshModel NoesisConverter::load_mesh(const fs::path& mesh) {
 
 TexMeta NoesisConverter::save_tex(const fs::path& png, const fs::path& original_tex, const fs::path& tex_out,
                                   const Profile& profile) {
-    if (profile.noesis_export == "TBD")
-        throw ConvertError("profile " + profile.id + " has noesis_export = \"TBD\"; the Noesis export options "
-                           "for this game are not known yet");
-    const TexMeta original = read_tex_meta(original_tex, profile);
-    if (original.array_count != 1)
-        throw ConvertError("multi-image textures are not supported: the plugin asks which image to replace "
-                           "in a dialog (CLAUDE.md §9)");
-    if (!is_edit_image(png))
-        throw ConvertError(png.string() + " must be an image ending in " + kEditFormatsText);
-    if (image_size(png) != std::pair{original.width, original.height})
-        throw ConvertError(png.string() + " must be " + std::to_string(original.width) + "x" +
-                           std::to_string(original.height) + " to match " + original_tex.string());
-    require_absent(tex_out);
+    if (profile.noesis_export.empty() || profile.noesis_export == "TBD")
+        throw ConvertError("profile " + profile.id + " has no noesis_export: the Noesis export options for this game "
+                           "are not known. Use the built-in converter.");
+    const TexMeta original = check_save(png, original_tex, tex_out, profile);
 
     // With -b the plugin injects into "<X>.tex.<v>" when the output is named "<X>out.tex.<v>" (CLAUDE.md §9).
     // Fixed names in a private folder keep that name matching predictable. The edit keeps its extension: Noesis
@@ -348,6 +505,11 @@ TexMeta NoesisConverter::save_tex(const fs::path& png, const fs::path& original_
                            describe(original));
     fs::copy_file(out, tex_out);
     return result;
+}
+
+std::unique_ptr<ITextureConverter> make_converter(const fs::path& noesis_exe) {
+    if (noesis_exe.empty()) return std::make_unique<NativeConverter>();
+    return std::make_unique<NoesisConverter>(noesis_exe);
 }
 
 }  // namespace remod

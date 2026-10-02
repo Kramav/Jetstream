@@ -724,7 +724,7 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
     if (!mesh_loading_.valid() && !mesh_.empty() && shown_mesh_ != mesh_) {
         shown_mesh_ = loading_mesh_ = mesh_;
         if (!fs::is_regular_file(noesis_exe, ec)) {
-            model_error_ = "Set Noesis64.exe in the Pipeline panel to see meshes in 3D.";
+            model_error_ = "The 3D view needs Noesis (optional, installed by you): set Noesis64.exe in the Pipeline panel.";
         } else {
             mesh_loading_ = std::async(std::launch::async, [exe = fs::path(noesis_exe), file = fs::path(mesh_)] {
                 return remod::NoesisConverter(exe).load_mesh(file);

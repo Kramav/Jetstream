@@ -16,6 +16,7 @@
 #include <iterator>
 #include <optional>
 #include <regex>
+#include <sstream>
 
 namespace remod {
 
@@ -116,6 +117,93 @@ NodeSpec load_tex() {
     };
 }
 
+// Files in folder's patterns: "*" any run of characters, "?" one; ";" or "," between several; ignoring case. Empty:
+// every texture (is_tex_name).
+bool name_matches(const std::string& name, const std::string& patterns) {
+    auto low = [](std::string s) {
+        std::ranges::transform(s, s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+    const std::string n = low(name);
+    if (patterns.find_first_not_of(" ;,") == std::string::npos) return is_tex_name(n);
+    std::function<bool(size_t, const std::string&, size_t)> match = [&](size_t i, const std::string& p, size_t j) {
+        if (j == p.size()) return i == n.size();
+        if (p[j] == '*') return match(i, p, j + 1) || (i < n.size() && match(i + 1, p, j));
+        return i < n.size() && (p[j] == '?' || p[j] == n[i]) && match(i + 1, p, j + 1);
+    };
+    std::string list = low(patterns);
+    std::ranges::replace(list, ';', ',');
+    std::istringstream items(list);
+    for (std::string pattern; std::getline(items, pattern, ',');) {
+        pattern.erase(0, pattern.find_first_not_of(' '));
+        pattern.erase(pattern.find_last_not_of(' ') + 1);
+        if (!pattern.empty() && match(0, pattern, 0)) return true;
+    }
+    return false;
+}
+
+// An item's {name}: a texture's name before ".tex" (x.tex.143221013 -> x), else the name without its extension.
+std::string item_name(const fs::path& file) {
+    std::string name = file.filename().string(), low = name;
+    std::ranges::transform(low, low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return is_tex_name(low) ? name.substr(0, low.rfind(".tex")) : file.stem().string();
+}
+
+NodeSpec files_in_folder() {
+    return {
+        .type = "FilesInFolder",
+        .title = "Files in folder",
+        .summary = "Every matching file in a folder, as a list: each block it feeds runs once per file. Put {name} "
+                   "in their file names (e.g. edits\\{name}.png) so each file gets its own. A block taking many "
+                   "(Package's textures) gets them all.",
+        .inputs = {{.name = "folder", .label = "Folder", .type = Folder, .widget = Widget::Path, .required = true,
+                    .hint = "Where the files are, e.g. a natives\\STM\\... folder of your REtool files.",
+                    .path = PathKind::Folder},
+                   {.name = "pattern", .label = "Files", .type = Text, .widget = Widget::Text,
+                    .hint = "Which files: * stands for anything, ; between several, e.g. *_iam.tex* or *.png;*.tga. "
+                            "Empty: every texture."},
+                   {.name = "subfolders", .label = "Include subfolders", .type = Text, .widget = Widget::Checkbox},
+                   {.name = "on_fail", .label = "If a file fails", .type = Text, .widget = Widget::Choice,
+                    .required = true,
+                    .hint = "Stop the run, or leave that file out and go on with the rest (it's listed as failed).",
+                    .initial = "stop", .options = {{"stop", "Stop the run"}, {"skip", "Skip that file"}}}},
+        .outputs = {{.name = "files", .type = Any, .label = "each file", .list = true}},
+        .family = Family::Source,
+        .pure = true,
+        .run = [](NodeRun& r) {
+            const fs::path folder = r.resolve(r.text("folder"));
+            std::error_code ec;
+            if (!fs::is_directory(folder, ec)) throw GraphError("no folder " + folder.string());
+            std::vector<fs::path> files;
+            auto take = [&](const fs::directory_entry& e) {
+                if (e.is_regular_file(ec) && name_matches(e.path().filename().string(), r.text("pattern")))
+                    files.push_back(e.path());
+            };
+            if (r.text("subfolders") == "true")
+                for (auto it = fs::recursive_directory_iterator(folder, fs::directory_options::skip_permission_denied, ec);
+                     !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+                    take(*it);
+            else
+                for (const auto& e : fs::directory_iterator(folder, ec)) take(e);
+            if (files.empty()) throw GraphError("no files in " + folder.string() + " match");
+            std::vector<std::pair<std::string, fs::path>> keyed;  // sorted by their path in the folder, ignoring case
+            for (const auto& f : files) keyed.emplace_back(f.lexically_relative(folder).generic_string(), f);
+            std::ranges::sort(keyed, [](const auto& a, const auto& b) {
+                return std::lexicographical_compare(a.first.begin(), a.first.end(), b.first.begin(), b.first.end(),
+                                                    [](unsigned char x, unsigned char y) { return std::tolower(x) < std::tolower(y); });
+            });
+            std::vector<Value> values;
+            std::vector<ListItem> items;
+            for (const auto& [key, f] : keyed) {
+                const auto natives = split_natives(f, r.profile().natives_root);
+                values.push_back(file_value(f, natives ? natives->second : ""));
+                items.push_back({item_name(f), key});
+            }
+            r.output_list("files", std::move(values), std::move(items));
+        },
+    };
+}
+
 // Whether an Export image's file is for the user to edit: it goes (through Splits) to an Edit image step. Otherwise it's
 // a working file (e.g. for Replace photo; user, 2026-10-02) that nobody edits: exported again every run.
 // A file's last write time as text ("" if it isn't there), to notice a file changed outside the tool.
@@ -151,28 +239,29 @@ NodeSpec export_image() {
         .run = [](NodeRun& r) {
             const Value tex = r.input("tex");
             const fs::path png = r.resolve(r.text("png"));
+            r.claim(png);  // each item its own file, kept or not
             // A file for editing is kept, unless it's from another texture (user, 2026-10-02: overwrite it; the old
             // one would go into the mod). No record (older graphs, the CLI): it's taken to be from this texture.
             // A working file is kept only while it's the one exported last from this texture (user: no needless
             // writes): same texture, the file's write time unchanged.
-            const auto from = r.node.params.find("exported_from"), at = r.node.params.find("exported_time");
+            const std::string *from = r.state("exported_from"), *at = r.state("exported_time");
             const bool editing = for_editing(r.run.graph, r.node.id);
-            const bool stale = from != r.node.params.end() && from->second != tex.path.string();
-            const bool untouched = from != r.node.params.end() && !stale && at != r.node.params.end() &&
-                                   at->second == write_time(png);
+            const bool stale = from && *from != tex.path.string();
+            const bool untouched = from && !stale && at && *at == write_time(png);
             if (!fs::exists(png) || (editing ? stale : !untouched)) r.change(ChangeKind::Write, png);
             if (fs::exists(png) && (editing ? stale : !untouched)) {
-                if (editing) r.log(png.filename().string() + " is from another texture (" + from->second + "): exporting again");
+                if (editing) r.log(png.filename().string() + " is from another texture (" + *from + "): exporting again");
                 fs::remove(png);
             }
             if (!fs::exists(png)) {
                 r.run.options.converter.load_tex(tex.path, png, r.profile());
-                r.run.fresh_exports.insert(r.node.id);
+                r.run.fresh_exports.insert({r.node.id, r.run.item});
                 r.done("exported " + png.filename().string(), png);
             } else {
                 r.done((editing ? "kept your " : "kept ") + png.filename().string(), png);
             }
-            r.run.result.state[r.node.id] = {{"exported_from", tex.path.string()}, {"exported_time", write_time(png)}};
+            r.set_state("exported_from", tex.path.string());
+            r.set_state("exported_time", write_time(png));
             r.output("png", file_value(png, tex.game_path));
         },
         .preview = [](NodeRun& r) {
@@ -202,10 +291,14 @@ NodeSpec edit_image() {
         .run = [](NodeRun& r) {
             const Value png = r.input("png");
             const Graph& g = r.run.graph;
-            const bool re_exported = r.run.fresh_exports.contains(g.links[g.links_into(r.node.id, "png").at(0)].from_node);
-            if (re_exported) r.run.result.reset_edits.push_back(r.node.id);  // a new image: an earlier "done" doesn't count
-            const auto flag = r.node.params.find("done");
-            if (r.run.options.edits_done || (!re_exported && flag != r.node.params.end() && flag->second == "true")) {
+            const bool re_exported =
+                r.run.fresh_exports.contains({g.links[g.links_into(r.node.id, "png").at(0)].from_node, r.run.item});
+            if (re_exported) {  // a new image: an earlier "done" doesn't count
+                r.set_state("done", "");
+                if (!r.item()) r.run.result.reset_edits.push_back(r.node.id);
+            }
+            const std::string* flag = r.state("done");
+            if (r.run.options.edits_done || (!re_exported && flag && *flag == "true")) {
                 r.output("image", png);
                 r.done("edited " + png.path.filename().string(), png.path);
             } else {
@@ -256,9 +349,9 @@ std::string hash_hex(const std::string& bytes) {
     return hex;
 }
 
-// The texture made from this image and original, with this game's export options.
-std::string cache_name(const fs::path& image, const fs::path& original, const Profile& p) {
-    return hash_hex(file_bytes(image) + '\0' + file_bytes(original) + '\0' + p.noesis_export) + ".tex." + p.tex_suffix;
+// The texture made from this image and original, by this converter (and its options for this game).
+std::string cache_name(const fs::path& image, const fs::path& original, const Profile& p, const std::string& converter) {
+    return hash_hex(file_bytes(image) + '\0' + file_bytes(original) + '\0' + converter) + ".tex." + p.tex_suffix;
 }
 
 // Oldest first (a reuse touches its file) until the cache is under its limit; `keep` (just written) stays.
@@ -296,8 +389,9 @@ NodeSpec save_tex() {
             // A texture converted before from the same bytes is reused (user, 2026-10-02: an unchanged run writes
             // nothing; Noesis also takes seconds). Written as .part, then renamed, so a cut-off write is never reused.
             const fs::path out = cache.empty()
-                                     ? r.run.work_dir / (std::to_string(r.node.id) + ".tex." + r.profile().tex_suffix)
-                                     : cache / cache_name(image, original.path, r.profile());
+                                     ? r.temp_file(".tex." + r.profile().tex_suffix)
+                                     : cache / cache_name(image, original.path, r.profile(),
+                                                                  r.run.options.converter.id(r.profile()));
             std::error_code ec;
             TexMeta m;
             if (!cache.empty() && fs::is_regular_file(out, ec)) {
@@ -326,7 +420,7 @@ NodeSpec save_tex() {
             if (m.mip_count != original_mips)
                 r.warn(original.path.filename().string() + " has " + std::to_string(original_mips) +
                        " mip level(s), the new texture has " + std::to_string(m.mip_count) +
-                       " (Noesis always writes them down to 8x8). It may work in game; if the texture looks wrong or "
+                       " (the Noesis converter writes them down to 8x8). It may work in game; if the texture looks wrong or "
                        "the game misbehaves, this is the likely cause.");
         },
     };
@@ -361,7 +455,7 @@ InputSpec save_to_input() {
 // Where an image block writes: its Save to (folders made), else the run's temporary folder.
 fs::path image_out(NodeRun& r) {
     const std::string to = r.text("save_to");
-    if (to.empty()) return r.run.work_dir / (std::to_string(r.node.id) + ".png");
+    if (to.empty()) return r.temp_file(".png");
     const fs::path out = clean_path(to, r.run.options.base_dir);
     r.change(ChangeKind::Write, out);
     if (out.has_parent_path()) fs::create_directories(long_path(out.parent_path()));
@@ -682,6 +776,7 @@ NodeSpec package_mod() {
             if (previews.size() == 1 && !has_extension(previews[0].string(), "tga")) {
                 spec.screenshot = previews[0];
             } else if (!previews.empty()) {
+                // Its file name is the mod's screenshot name (a repeated Package writes it again for each item).
                 spec.screenshot = r.run.work_dir / "preview.png";
                 tile_images(previews, spec.screenshot);
                 if (previews.size() > 1) r.log("combined " + std::to_string(previews.size()) + " previews");
@@ -1150,8 +1245,8 @@ NodeSpec require_file() {
 const std::vector<NodeSpec>& node_specs() {
     static const std::vector<NodeSpec> specs{
         // The main steps: the texture pipeline, then file steps.
-        load_tex(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(), resize_image_node(),
-        overlay_image_node(), replace_photo_node(), preview_node(), package_mod(),
+        load_tex(), files_in_folder(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
+        resize_image_node(), overlay_image_node(), replace_photo_node(), preview_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(),
         // Utilities.
         value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),

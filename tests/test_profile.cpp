@@ -69,3 +69,11 @@ TEST_CASE("profile errors list every problem at once") {
     const std::string bad = replace(replace(kValid, "\"X\"", "\"\""), "[\"pak\"]", "[]");
     CHECK_THROWS_WITH(remod::parse_profile(bad), ContainsSubstring("'name'") && ContainsSubstring("'packaging'"));
 }
+
+TEST_CASE("the Noesis keys are optional; empty, they're still refused") {
+    const auto p = remod::parse_profile(replace(replace(kValid, "noesis_export = \"TBD\"", ""), "noesis_game   = \"X\"", ""));
+    CHECK(p.noesis_export.empty());
+    CHECK(p.noesis_game.empty());
+    CHECK_THROWS_WITH(remod::parse_profile(replace(kValid, "noesis_game   = \"X\"", "noesis_game = \"\"")),
+                      ContainsSubstring("noesis_game"));
+}

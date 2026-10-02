@@ -1,6 +1,7 @@
 #include "package.hpp"
 
 #include "process.hpp"
+#include "texture_converter.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -94,16 +95,12 @@ fs::path package_path(const Profile& profile, const std::string& mod_name, const
     if (!is_safe_relative(game_path))
         throw PackageError("game path '" + game_path.generic_string() + "' must be relative to the natives root, without '..'");
 
-    // [guide] In the game, textures are named <name>.tex.<tex_suffix>. A plain ".tex" gets the profile's suffix
-    // added, so users never have to type it; any other suffix is a different game's texture.
+    // [guide] In the game, textures are named <name>.tex.<tex_suffix>. Any other ending (a plain ".tex", or a tool's
+    // ".tex.re2remake") becomes the profile's suffix, so users never have to type it. Which game a texture is for
+    // is its header's business: build_package checks that.
     fs::path in_game = game_path;
-    const std::string file = lower(game_path.filename().string());
-    if (file.ends_with(".tex")) {
-        in_game += "." + profile.tex_suffix;
-    } else if (file.find(".tex.") != std::string::npos && !file.ends_with(".tex." + profile.tex_suffix)) {
-        throw PackageError("texture '" + game_path.generic_string() + "' has a different game's suffix; " +
-                           profile.name + " textures end in .tex." + profile.tex_suffix);
-    }
+    const std::string file = game_path.filename().string(), low = lower(file);
+    if (is_tex_name(low)) in_game.replace_filename(file.substr(0, low.rfind(".tex") + 4) + "." + profile.tex_suffix);
     return (fs::path(mod_name) / profile.natives_root / in_game).lexically_normal();
 }
 
@@ -179,6 +176,9 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec, bool* un
     std::set<fs::path> seen;
     for (const auto& f : spec.files) {
         if (!fs::is_regular_file(f.source)) throw PackageError("input file not found: " + f.source.string());
+        if (const auto version = read_tex_version(f.source); version && std::to_string(*version) != profile.tex_suffix)
+            throw PackageError(f.source.string() + " is a texture of version " + std::to_string(*version) + ", not " +
+                               profile.name + "'s (" + profile.tex_suffix + ")");
         fs::path dest = spec.out_dir / package_path(profile, spec.mod_name, f.game_path);
         if (!seen.insert(dest).second)
             throw PackageError("game path listed twice: " + f.game_path.generic_string());

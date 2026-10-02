@@ -39,7 +39,7 @@ TEST_CASE("game path maps to <mod>/<natives_root>/<game path>") {
     CHECK(remod::package_path(kProfile, "MyMod", "a/b.bin") == fs::path("MyMod/natives/STM/a/b.bin").lexically_normal());
 }
 
-TEST_CASE("path mapping rejects unsafe paths, bad mod names and wrong tex suffix") {
+TEST_CASE("path mapping rejects unsafe paths and bad mod names") {
     CHECK_THROWS_AS(remod::package_path(kProfile, "M", "C:/x.tex.143221013"), PackageError);
     CHECK_THROWS_AS(remod::package_path(kProfile, "M", "/x.tex.143221013"), PackageError);
     CHECK_THROWS_AS(remod::package_path(kProfile, "M", "../x.tex.143221013"), PackageError);
@@ -47,12 +47,15 @@ TEST_CASE("path mapping rejects unsafe paths, bad mod names and wrong tex suffix
     CHECK_THROWS_AS(remod::package_path(kProfile, "M", ""), PackageError);
     for (const char* bad : {"", ".", "..", "a/b", "a\\b", "a:b", "a?", "a*", "a<", "a|", "a\"", "trailing.", "trailing "})
         CHECK_THROWS_AS(remod::package_path(kProfile, bad, "x.tex.143221013"), PackageError);
-    CHECK_THROWS_WITH(remod::package_path(kProfile, "M", "ui/x.tex.999"), ContainsSubstring(".tex.143221013"));
 }
 
-TEST_CASE("a plain .tex game path gets the profile's suffix") {
+TEST_CASE("any texture name gets the profile's suffix in game") {
     CHECK(remod::package_path(kProfile, "M", "ui/x.tex") == fs::path("M/natives/STM/ui/x.tex.143221013").lexically_normal());
     CHECK(remod::package_path(kProfile, "M", "ui/X.TEX") == fs::path("M/natives/STM/ui/X.TEX.143221013").lexically_normal());
+    CHECK(remod::package_path(kProfile, "M", "ui/x.tex.re2remake") ==
+          fs::path("M/natives/STM/ui/x.tex.143221013").lexically_normal());
+    CHECK(remod::package_path(kProfile, "M", "ui/x.tex.999") == fs::path("M/natives/STM/ui/x.tex.143221013").lexically_normal());
+    CHECK(remod::package_path(kProfile, "M", "ui/x.rtex.5") == fs::path("M/natives/STM/ui/x.rtex.5").lexically_normal());
 }
 
 TEST_CASE("modinfo.ini contents") {
@@ -202,5 +205,10 @@ TEST_CASE("build_package validates before writing anything") {
                       ContainsSubstring("screenshot not found"));
     CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, std::string(300, 'a') + ".tex.143221013"}}})),
                       ContainsSubstring("exceeds"));
+    // Another game's texture by its header (version 10, RE2), whatever its name says.
+    const fs::path re2 = tmp.path / "other.tex.143221013";
+    write_file(re2, std::string("TEX\0\x0a\0\0\0", 8));
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{re2, "a.tex"}}})),
+                      ContainsSubstring("version 10"));
     CHECK_FALSE(fs::exists(out));
 }

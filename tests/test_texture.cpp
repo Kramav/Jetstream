@@ -1,10 +1,13 @@
 #include "texture_converter.hpp"
 
+#include "image.hpp"
+
 #include "helpers.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 
 using Catch::Matchers::ContainsSubstring;
@@ -39,6 +42,62 @@ fs::path fake_png(const fs::path& dir, std::uint32_t w, std::uint32_t h) {
     const fs::path p = test::unique(dir, ".png");
     test::write_fake_png(p, w, h);
     return p;
+}
+
+// A complete single-image .tex: header (legacy layout for version 10, else modern), mip table, then each mip's
+// pixels, filled with a byte pattern. RGBA8 (28) rows get `extra` padding bytes; BC formats (99) are whole 4x4 blocks.
+fs::path real_tex(const fs::path& p, std::uint32_t version, std::uint16_t w, std::uint16_t h, std::uint8_t mips,
+                  std::uint32_t dxgi, std::uint32_t extra = 0) {
+    const bool legacy = version == 10;
+    const size_t header = legacy ? 32 : 40;
+    std::string b(header + 16 * size_t(mips), '\0');
+    test::put_le(b, 0, 0x00584554, 4);
+    test::put_le(b, 4, version, 4);
+    test::put_le(b, 8, w, 2);
+    test::put_le(b, 10, h, 2);
+    test::put_le(b, 12, 1, 2);  // depth
+    b[14] = char(legacy ? mips : 1);
+    b[15] = char(legacy ? 1 : mips * 16);
+    test::put_le(b, 16, dxgi, 4);
+    for (std::uint8_t m = 0; m < mips; ++m) {
+        const std::uint32_t mw = std::max(1, w >> m), mh = std::max(1, h >> m);
+        const bool block = dxgi != 28;
+        const std::uint32_t pitch = block ? (mw + 3) / 4 * 16 : mw * 4 + extra, rows = block ? (mh + 3) / 4 : mh;
+        const size_t at = header + 16 * size_t(m);
+        test::put_le(b, at, std::uint32_t(b.size()), 4);  // offset (high half 0)
+        test::put_le(b, at + 8, pitch, 4);
+        test::put_le(b, at + 12, pitch * rows, 4);
+        for (std::uint32_t i = 0; i < pitch * rows; ++i) b += char(i * 7 + m);
+    }
+    test::write_file(p, b);
+    return p;
+}
+
+// w x h BGRA pixels in a smooth pattern, alpha varying (never 0).
+remod::Bgra pattern(unsigned w, unsigned h) {
+    remod::Bgra img{w, h, std::vector<std::uint8_t>(size_t(w) * h * 4)};
+    for (unsigned y = 0; y < h; ++y)
+        for (unsigned x = 0; x < w; ++x) {
+            std::uint8_t* p = img.pixels.data() + (size_t(y) * w + x) * 4;
+            p[0] = std::uint8_t(x * 255 / std::max(1u, w - 1));
+            p[1] = std::uint8_t(y * 255 / std::max(1u, h - 1));
+            p[2] = 128;
+            p[3] = std::uint8_t(64 + (x + y) * 191 / std::max(1u, w + h - 2));
+        }
+    return img;
+}
+
+int max_difference(const remod::Bgra& a, const remod::Bgra& b) {
+    REQUIRE(a.width == b.width);
+    REQUIRE(a.height == b.height);
+    int most = 0;
+    for (size_t i = 0; i < a.pixels.size(); ++i) most = std::max(most, std::abs(int(a.pixels[i]) - int(b.pixels[i])));
+    return most;
+}
+
+// The header and mip table: everything before the first mip's pixels.
+std::string head_of(const fs::path& tex, size_t header, std::uint8_t mips) {
+    return test::read_file(tex).substr(0, header + 16 * size_t(mips));
 }
 
 }  // namespace
@@ -85,6 +144,74 @@ TEST_CASE("textures are recognised by content, whatever their name") {
     CHECK(remod::profile_for_texture(other, profiles) == nullptr);
     CHECK_THROWS_WITH(remod::read_tex_meta(other, re4r()), ContainsSubstring("version 36"));
     CHECK(remod::read_tex_meta(re4, re4r()).width == 64);
+}
+
+TEST_CASE("NativeConverter: the new .tex keeps the original's header, mip table and padded rows") {
+    TempDir tmp;
+    remod::NativeConverter conv;
+    // 8x4 RGBA8, 2 mips, 16 bytes of padding per row; named the way some tools name textures.
+    const fs::path original = real_tex(tmp.path / "ui.tex.re2remake", 143221013, 8, 4, 2, 28, 16);
+    const remod::Bgra edit = pattern(8, 4);
+    remod::save_image_bgra(tmp.path / "edit.png", edit.width, edit.height, edit.pixels);
+
+    const auto made = conv.save_tex(tmp.path / "edit.png", original, tmp.path / "new.tex.re2remake", re4r());
+    CHECK(made.mip_count == 2);
+    CHECK(fs::file_size(tmp.path / "new.tex.re2remake") == fs::file_size(original));
+    CHECK(bool(head_of(tmp.path / "new.tex.re2remake", 40, 2) == head_of(original, 40, 2)));
+    CHECK(max_difference(remod::decode_tex(tmp.path / "new.tex.re2remake", 8), edit) == 0);
+
+    // Back to an image at the visible size (8 wide, not the padded 12), in each edit format.
+    for (const char* ext : {".png", ".tga"}) {
+        CAPTURE(ext);
+        const fs::path out = tmp.path / (std::string("back") + ext);
+        CHECK(conv.load_tex(tmp.path / "new.tex.re2remake", out, re4r()).width == 8);
+        CHECK(max_difference(remod::load_image(out), edit) == 0);
+    }
+    CHECK(conv.load_tex(original, tmp.path / "back.jpg", re4r()).width == 8);
+    CHECK(remod::image_size(tmp.path / "back.jpg") == std::pair<std::uint32_t, std::uint32_t>{8, 4});
+}
+
+TEST_CASE("NativeConverter: BC7 sRGB keeps the mip count and comes back close") {
+    TempDir tmp;
+    remod::NativeConverter conv;
+    const fs::path original = real_tex(tmp.path / "a.tex.143221013", 143221013, 16, 16, 3, 99);
+    const remod::Bgra edit = pattern(16, 16);
+    remod::save_image_bgra(tmp.path / "edit.png", edit.width, edit.height, edit.pixels);
+    const fs::path out = tmp.path / "b.tex";
+    CHECK(conv.save_tex(tmp.path / "edit.png", original, out, re4r()).mip_count == 3);
+    CHECK(bool(head_of(out, 40, 3) == head_of(original, 40, 3)));
+    CHECK(fs::file_size(out) == fs::file_size(original));
+    CHECK(max_difference(remod::decode_tex(out, 16), edit) <= 24);  // BC7 is lossy (16 seen on this pattern)
+    CHECK(conv.id(re4r()) != remod::NoesisConverter("C:/Windows/System32/cmd.exe").id(re4r()));
+}
+
+TEST_CASE("NativeConverter: older games' layout, and what it refuses") {
+    TempDir tmp;
+    remod::NativeConverter conv;
+    remod::Profile re2 = re4r();
+    re2.tex_suffix = "10";
+    const fs::path original = real_tex(tmp.path / "x.tex.10", 10, 4, 4, 1, 28);
+    CHECK(remod::read_tex_meta(original, re2).mip_count == 1);
+    const remod::Bgra edit = pattern(4, 4);
+    remod::save_image_bgra(tmp.path / "edit.png", 4, 4, edit.pixels);
+    conv.save_tex(tmp.path / "edit.png", original, tmp.path / "y.tex.10", re2);
+    CHECK(bool(head_of(tmp.path / "y.tex.10", 32, 1) == head_of(original, 32, 1)));
+    CHECK(max_difference(remod::decode_tex(tmp.path / "y.tex.10", 4), edit) == 0);
+
+    remod::Profile wilds = re4r();
+    wilds.tex_suffix = "241106027";
+    CHECK_THROWS_WITH(remod::read_tex_meta(real_tex(tmp.path / "w.tex", 241106027, 4, 4, 1, 28), wilds),
+                      ContainsSubstring("GDeflate") && ContainsSubstring("Noesis"));
+    CHECK_THROWS_WITH(conv.save_tex(tmp.path / "edit.png", original, tmp.path / "y.tex.10", re2),
+                      ContainsSubstring("already exists"));
+    CHECK_THROWS_WITH(conv.save_tex(fake_png(tmp.path, 2, 2), original, tmp.path / "z.tex.10", re2),
+                      ContainsSubstring("must be 4x4"));
+}
+
+TEST_CASE("is_tex_name: .tex with any suffix, not .rtex") {
+    for (const char* name : {"a.tex", "a.tex.143221013", "a.tex.re2remake", "a.b.tex.re3remake"})
+        CHECK(remod::is_tex_name(name));
+    for (const char* name : {"a.rtex", "a.rtex.5", "a.tex.", "a.png", "a.tex.1.2", "a.tex.png", "a.tex.tga"}) CHECK_FALSE(remod::is_tex_name(name));
 }
 
 TEST_CASE("load_profiles lists every valid profile and reports broken ones") {
@@ -149,7 +276,8 @@ TEST_CASE("a failed Noesis conversion reports what Noesis said") {
     CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(30));  // not the 2-minute timeout
 }
 
-// CLAUDE.md §8: needs local fixtures + Noesis, never committed. Skips unless both env vars are set.
+// The optional Noesis converter. CLAUDE.md §8: needs local fixtures + Noesis, never committed. Skips unless both env
+// vars are set.
 //   REMOD_FIXTURES = folder of original *.tex.143221013 files
 //   REMOD_NOESIS   = path to Noesis64.exe (with the fmt_RE_MESH plugin installed)
 TEST_CASE("round trip: tex -> png -> tex reproduces the original's TexMeta") {
@@ -161,6 +289,9 @@ TEST_CASE("round trip: tex -> png -> tex reproduces the original's TexMeta") {
     int count = 0;
     for (const auto& e : fs::directory_iterator(fixtures)) {
         if (!e.path().string().ends_with(".tex." + re4r().tex_suffix)) continue;
+        // Padded rows: Noesis exports the padded width and the size check refuses it (CLAUDE.md §9). The built-in
+        // converter handles these.
+        if (const auto p = remod::read_tex_pixels(e.path(), 1u << 16); p.stored_width != p.width) continue;
         CAPTURE(e.path().string());
         const auto stem = std::to_string(count++);
         const auto loaded = conv.load_tex(e.path(), tmp.path / (stem + ".png"), re4r());
@@ -170,7 +301,7 @@ TEST_CASE("round trip: tex -> png -> tex reproduces the original's TexMeta") {
         CHECK(saved.width == loaded.width);
         CHECK(saved.height == loaded.height);
         CHECK(saved.format == loaded.format);
-        CHECK(saved.mip_count == loaded.mip_count);
+        // Mips aren't compared: Noesis writes them down to 8x8 whatever the original has (CLAUDE.md §9; a run warns).
         // Pixels aren't compared: BC7 re-encoding is lossy, so exact image data can't round-trip.
 
         // The same texture named plain ".tex" must convert too.
@@ -186,8 +317,43 @@ TEST_CASE("round trip: tex -> png -> tex reproduces the original's TexMeta") {
             CHECK(remod::image_size(img) == std::pair{loaded.width, loaded.height});
             const auto back = conv.save_tex(img, e.path(), tmp.path / (stem + ext + ".tex." + re4r().tex_suffix), re4r());
             CHECK(back.format == loaded.format);
-            CHECK(back.mip_count == loaded.mip_count);
         }
+    }
+    REQUIRE(count > 0);
+}
+
+// The built-in converter on real textures (REMOD_FIXTURES only, no Noesis): the new file is the original with only its
+// pixels changed, so its header and mip table match byte for byte, padded rows included.
+TEST_CASE("round trip, built in: tex -> png -> tex keeps the original's header and mip table") {
+    const std::string fixtures = env("REMOD_FIXTURES");
+    if (fixtures.empty()) SKIP("set REMOD_FIXTURES to run");
+    remod::NativeConverter conv;
+    TempDir tmp;
+    int count = 0;
+    for (const auto& e : fs::directory_iterator(fixtures)) {
+        if (!remod::profile_for_texture(e.path(), {re4r()})) continue;
+        CAPTURE(e.path().string());
+        const auto stem = std::to_string(count++);
+        const auto start = std::chrono::steady_clock::now();
+        const auto loaded = conv.load_tex(e.path(), tmp.path / (stem + ".png"), re4r());
+        CHECK(remod::image_size(tmp.path / (stem + ".png")) == std::pair{loaded.width, loaded.height});
+        const fs::path out = tmp.path / (stem + ".tex");
+        const auto saved = conv.save_tex(tmp.path / (stem + ".png"), e.path(), out, re4r());
+        UNSCOPED_INFO(loaded.width << "x" << loaded.height << " " << loaded.format << ": "
+                                   << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
+                                   << " s");
+        CHECK(saved.mip_count == loaded.mip_count);
+        CHECK(fs::file_size(out) == fs::file_size(e.path()));
+        const bool same_head =  // a bool: Catch can't print the binary strings
+            head_of(out, 40, std::uint8_t(loaded.mip_count)) == head_of(e.path(), 40, std::uint8_t(loaded.mip_count));
+        CHECK(same_head);
+        // The pixels survive: re-encoding what was decoded from the same format loses little.
+        const remod::Bgra before = remod::decode_tex(e.path(), 4096), after = remod::decode_tex(out, 4096);
+        double total = 0;
+        for (size_t i = 0; i < before.pixels.size(); ++i) total += std::abs(int(before.pixels[i]) - int(after.pixels[i]));
+        const double mean = total / double(before.pixels.size());
+        UNSCOPED_INFO("mean difference " << mean);
+        CHECK(mean < 2);
     }
     REQUIRE(count > 0);
 }

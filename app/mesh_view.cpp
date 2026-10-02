@@ -14,7 +14,7 @@ namespace {
 
 // Colour texture times the material's colour, with a light at the camera; both faces lit, since meshes are drawn
 // without culling. The sRGB texture bytes are used as they are, like the 2D previews. A cut-out mask discards pixels
-// below 0.05, as Noesis's alpha test for these materials [fmt_RE_MESH: setAlphaTest(0.05)].
+// below 0.05, to match how Noesis shows these materials.
 constexpr char kShader[] = R"(
 cbuffer Constants : register(b0) {
     float4x4 view_proj; float4 tint; float4 uv_scale; float4 eye; float4 base_color; float4 cut;

@@ -37,10 +37,13 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
     last tag Oct 2023, vcpkg patches it for ImGui 1.92). Issue #230's fix (#205, commit 3fdb8e3) is in v0.9.3.
   - **Adopted for the graph file:** nlohmann/json 3.12.0#2 (MIT), core-private.
   - **Adopted for the app's file pickers:** nativefiledialog-extended 1.4.0 (Zlib), app-only (never in core).
-  - **Adopted for decoding texture pixels (user, 2026-10-01):** DirectXTex 2026-05-07 (MIT), core-private
-    (`default-features: false`). Only decompresses / converts the pixel data our own reader extracts
-    (`decode_tex` over `read_tex_pixels`); it never reads a `.tex` file. Uses its own converter, not WIC's
-    (`TEX_FILTER_FORCE_NON_WIC`), so any thread can call it.
+  - **Adopted for texture pixels (user, 2026-10-01; encoding 2026-10-02):** DirectXTex 2026-05-07 (MIT),
+    core-private (`default-features: false`, feature `dx11`). It works only on pixel data: our own code reads and
+    writes the `.tex` files (`read_tex_pixels`, `NativeConverter`). It decodes (`decode_tex`), makes mips and
+    encodes (`NativeConverter::save_tex`). Uses its own converter, not WIC's (`TEX_FILTER_FORCE_NON_WIC`), so any
+    thread can call it. BC6H / BC7 encode on the GPU (DirectCompute, a D3D11 device per conversion), falling back
+    to the CPU when there's no GPU: CPU BC7 took 188 s for one 512x512 in the Debug build, the GPU 0.6 s for a
+    1024x1024 (load and save).
   - GoogleTest verified but not used.
 - Images (combining preview PNGs): **WIC**, built into Windows, used from core. No image library dependency.
 - Build (Developer PowerShell for VS 2026, which sets `VCPKG_ROOT`):
@@ -74,15 +77,29 @@ One generic runtime is shipped once; each mod ships **data only** (manifest + as
 
 A streamlined pipeline, no AI:
 
-1. **LoadTex** — game `.tex` → image + `TexMeta` (via Noesis).
+1. **LoadTex** — game `.tex` → image + `TexMeta`.
 2. **ExportImage / ImportImage** — write a PNG for external editing; read the edited PNG back.
-3. **SaveTex** — image + `TexMeta` → `.tex` matching the original's dimensions/format (via Noesis;
-   texconv fallback only if Noesis can't encode).
+3. **SaveTex** — image + `TexMeta` → `.tex` matching the original's dimensions/format.
 4. **PackageMod** — write `ModName/natives/STM/...` + `modinfo.ini` + screenshot → archive.
 
-Implementation note: Noesis converts `.tex` ↔ PNG file-to-file, so LoadTex writes the PNG directly and
-ExportImage/ImportImage reduce to handing that PNG to the user and checking the edited one (same size).
-Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png2tex` and `package`.
+Implementation note: a converter (`ITextureConverter`) turns `.tex` ↔ PNG/TGA/JPG file to file, so LoadTex writes the
+image directly and ExportImage/ImportImage reduce to handing that file to the user and checking the edited one (same
+size). The CLI exposes the steps as `tex2png`, `png2tex` and `package`.
+
+**Noesis is optional (user, 2026-10-02: no dependency on, or exposure to, Rich Whitehouse or the plugin's
+authors).** `make_converter` picks one:
+- **Built in (default), `NativeConverter`.**
+  - Load: `decode_tex` at full size, written by `save_image_bgra` (PNG / JPG via WIC, TGA by our own writer).
+  - Save: the edit gets the original's mip count (`GenerateMipMaps`) and format (DirectXTex), then is written
+    **over a copy of the original, each mip at its table entry's pitch and size** (padding zeroed). So the header,
+    flags, mip table and file length stay the original's, by construction.
+  - Checked on 7 real RE4R textures (BC7 and BC7 sRGB, BC4, the 468-wide padded `stamp_im`, 1-mip UI frames): the
+    header and mip table come out byte-identical, and the mean pixel difference after a round trip is 0.1-1.5 of 255.
+  - Not checked in game yet.
+- **Noesis (optional), `NoesisConverter`.** The app's "Convert textures with Noesis" (`Settings::noesis_textures`);
+  `--noesis` in the CLI; `noesis` in the API. Its behaviour is in §9.
+- **The run cache** keys each texture on `ITextureConverter::id`, so switching converters converts again.
+- **Still Noesis-only:** the Browser's 3D mesh view (no native `.mesh` reader yet, §10).
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
@@ -270,11 +287,12 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   with the same bytes, the same modinfo.ini, nothing else in the folder, its zip there: left as it is).
   **Run cache (2026-10-02): an unchanged run writes nothing** (`RunOptions::cache_dir`, app and CLI:
   `%LOCALAPPDATA%\remod\run_cache`, `default_cache_dir()`; empty = the run's temporary folder, as in most tests).
-  Convert image to texture names its `.tex` by a hash of the image's and the original's bytes (and the game's export
-  options) and reuses one already there ("unchanged: reused ..."; Noesis isn't started, which also saves seconds); an
+  Convert image to texture names its `.tex` by a hash of the image's and the original's bytes (and the converter's
+  `id`) and reuses one already there ("unchanged: reused ..."; nothing is converted, which also saves seconds); an
   image block without Save to names its PNG by a hash of its pixels. Written as `.part` then renamed, so a cut-off
   write is never reused; a reuse touches the file; oldest files go past 512 MB. ponytail: `std::hash` (64-bit
-  FNV-1a), not a cryptographic hash. A Noesis update doesn't clear the cache (older results were valid). Downstream
+  FNV-1a), not a cryptographic hash. A Noesis update doesn't clear the cache (older results were valid); a change to
+  the built-in converter's output should bump its `id` ("native1"). Downstream
   steps get the cache file's path (a Move of it just means a fresh conversion next time).
   **A file for editing whose texture changed (user, 2026-10-02: a new frame texture still previewed, and would have packaged,
   the old frame's PNG; overwrite chosen over a backup or a refusal):** each run records the texture the file is from
@@ -304,7 +322,8 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   exists (it may hold an edit), else its texture, which the app's loader decodes (`decode_tex`, DirectXTex); Edit
   image and Use existing image hand on theirs. So a fresh graph shows thumbnails before any run. Checked in the app
   on a test graph (Original texture → Export image, nothing exported → Adjust colour: thumbnail made from the
-  texture). Padded-width textures decode at their visible width, where Noesis exports the padded one (§9).
+  texture). Padded-width textures decode at their visible width, as the built-in converter exports them (Noesis
+  exports the padded one, §9).
   **Larger previews (user, 2026-10-02: "pop out any and all preview images"; and "it just shows up in the existing
   mesh and texture preview area"):**
   - Clicking a block's thumbnail: Use layout shows it in the Browser's viewer (`Browser::show_in_viewer`, until a
@@ -378,8 +397,51 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   or path after / before / from / up to a marker, at its first or last occurrence (core `cut_text`), ignoring case and
   treating `\` and `/` alike; a missing marker fails the run. E.g. a texture path cut after `natives/STM/` gives the
   in-game path for LoadTex's `game_path` when the file isn't inside a natives tree.
+- **Fan-out (2026-10-02, priority 1, §10): Files in folder repeats the blocks it feeds, once per file.**
+  - **The block:** `FilesInFolder`, Source family, pure, so previews list the folder. Fields:
+    - Folder.
+    - Files: patterns with `*` and `?`, `;` between several; empty = every texture by name.
+    - Include subfolders.
+    - If a file fails: Stop the run (default) / Skip that file (user).
+
+    Its output is a **list** (`PortSpec::list`), of the kind it feeds, like Value. Items are sorted by their path in
+    the folder. Textures under a natives tree carry their game path.
+  - **The engine repeats; node code doesn't know.**
+    - `list_source`: a block is repeated for the list that reaches one of its single-value inputs.
+    - A block taking a list only into `multiple` inputs (Package's textures and previews) runs once and gets every
+      item.
+    - Outputs are kept per item (`RunState::outputs`, key (node, port, item)), and `NodeRun::values` hands a
+      repeated block the current item's value.
+    - The run goes block by block, every item in turn, so one run still exports every image to edit, then waits.
+    - Two different lists meeting at one block is refused by validate.
+  - **`{name}` (user):** in a repeated block, `NodeRun::text` fills `{name}` with the item's name. That's a texture's
+    name before `.tex` (`x.tex.143221013` -> `x`), else the name without its extension. A Value holding it may feed
+    a repeated block. Elsewhere, validate refuses it.
+    - Two items writing one file fail the run, with the hint to put `{name}` in the file name (`NodeRun::claim`,
+      called by every Write change and by Export image even when it keeps its file).
+    - Temporary files are per item (`NodeRun::temp_file`).
+  - **Done per item (user):** state a repeated block keeps is per item (`NodeRun::state` / `set_state`: node param
+    `<name>@<item key>`, e.g. `done@ui/a.tex.143221013`, `exported_from@...`; apply_run removes a state set to "").
+    - Items marked done go on to the next steps; the others wait.
+    - A block that isn't repeated waits while any item of its list waits (`blocked`): Package never packages part of
+      a list.
+    - The app: the YOUR STEP card lists each waiting image with Open and Done / Undo, plus "Done editing all"; the
+      block's button marks them all; "Edit again" clears all.
+    - API: `edit_done` takes an `item`.
+  - **Failures:**
+    - Stop: a RunError naming the item, e.g. "Original texture (node 2) (bad): ...".
+    - Skip (`RunState::skipped`): the item is left out of every later block and of collecting inputs, with a warning;
+      the block shows Failed.
+  - **Statuses:** `NodeStatus::items` (name, key, state, message, file). The block's own state and message sum them
+    up: waiting > failed > not reached > done, e.g. "3 items: 1 done, 2 waiting for you". The API's run reply gives
+    each node's `items`.
+  - **Previews and the plan** run every item, so `plan_changes` lists every item's writes. RunValues, link values and
+    thumbnails show the first item.
+  - **Not done:** see §10 Batch.
+  - Checked: tests (a 3-texture pipeline with per-item edits, one file name for all, stop / skip on a bad texture,
+    plan and validate, an API copy of two files). **Not checked by eye** (the YOUR STEP list, the block buttons).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
-- Runs from `remod run --graph <file> --noesis <exe>` and from the app's Run button. Programs edit graphs through
+- Runs from `remod run --graph <file> [--noesis <exe>]` and from the app's Run button. Programs edit graphs through
   `remod api` (core `ApiSession`, §10 M2).
 
 **Status: M1 complete (2026-09-30).** All three criteria below are met; the user confirmed the tool-built mod
@@ -406,9 +468,22 @@ array_count
 SaveTex must reproduce the original's width/height/format/mips.
 
 Texture identity comes from **content, not names**: the header's version number (e.g. 143221013) equals a
-profile's `tex_suffix`, which identifies the game (`profile_for_texture`). Files may be named `.tex` or
-`.tex.<version>`. LoadTex feeds Noesis a temp copy named `src.tex.<version>`, and packaging appends the suffix
-to a plain `.tex` game path.
+profile's `tex_suffix`, which identifies the game (`profile_for_texture`). **Files may be named anything ending in
+`.tex` or `.tex.<suffix>` (user, 2026-10-02: tools also use `.tex.re2remake`, `.tex.re3remake`): `is_tex_name`.**
+An image suffix (`x.tex.png`) isn't a texture. The built-in converter never looks at the name; the Noesis one
+feeds Noesis a temp copy named `src.tex.<version>`. Packaging names every texture `<name>.tex.<profile suffix>` in
+the mod, whatever its suffix was, and refuses a file whose header is another game's version (`build_package`).
+The game-files index lists suffixed names only (materials find textures by the suffix).
+
+**Header layout by version** (`parse_tex_header`, [REE-Lib TexFile.cs, MIT]). Both layouts have the same 16-byte
+mip entries `{u64 offset, u32 row pitch, u32 size}` per image and mip, image 0's first:
+- **Legacy, 32 bytes** (8 RE7, 10 RE2, 11 DMC5, 190820018 RE3): mip count @14, image count @15.
+- **Modern, 40 bytes** (28, 30, 34, 35, 143221013, 760230703, 251211553, 240606151, 240701001): image count @14,
+  mip table bytes @15.
+- **GDeflate** (241106027 MH Wilds, 250813143 RE9, 251111100): compressed mip data; refused, pointing to Noesis.
+- **Unknown versions:** refused.
+
+Only RE4R is tested on real files; the legacy layout only on a synthetic one.
 
 ### Manifest v0
 ```json
@@ -443,11 +518,12 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 
 | Tool | Role | License status | Handling |
 |---|---|---|---|
-| Noesis | TEX ↔ image conversion | Freeware, no redistribution terms found | Don't bundle. Offer `winget install -e --id RichWhitehouse.Noesis`, or detect existing install |
-| fmt_RE_MESH Noesis plugin | RE Engine format support | Fork checked had **no license file** (all rights reserved by default); original repo not checked | Don't bundle. Download from repo at setup with consent, into `Noesis/plugins/python` |
+| Noesis | **Optional** (2026-10-02): the 3D mesh view; texture conversion if chosen | Freeware, no redistribution terms found | Don't bundle. Offer `winget install -e --id RichWhitehouse.Noesis`, or detect existing install |
+| fmt_RE_MESH Noesis plugin | **Optional**, with Noesis | Fork checked had **no license file** (all rights reserved by default); original repo not checked | Don't bundle, don't copy from it; the user installs it. Format knowledge is cited from REE-Lib (MIT) instead |
+| REE-Lib (kagenocookie/RE-Engine-Lib) | Reference only: `.tex` and `.mdf2` layouts (`TexFile.cs`, `MdfFile.cs`); later `.mesh` (`MeshFile.cs`) | MIT [official] | Not linked (C#). No code copied; if any ever is, add its MIT notice |
 | REtool | PAK extraction / optional PAK creation | No license found | Don't bundle. Detect path; guide manual install |
 | Fluffy Mod Manager | Install/test mods | No license found | Don't bundle. User selects path |
-| texconv (DirectXTex) | Fallback DDS encoding | MIT [official] | May bundle, include license notice. The DirectXTex library itself is a vcpkg dependency (preview decoding, §2) |
+| texconv (DirectXTex) | Not needed: the DirectXTex library does the encoding (§2, §4) | MIT [official] | — |
 | tar.exe (bsdtar) | Mod `.zip` creation | Ships with Windows 10 1803+ | Not bundled; run from System32 via `run_process` |
 | REFramework | Tiers 2/3 only | Not checked | Not needed in M1. Detect via `dinput8.dll` in game dir [guide] |
 
@@ -531,7 +607,10 @@ Fill these in from the manual spike before implementing the affected code:
 - [ ] Text encoding Fluffy expects in `modinfo.ini` for non-ASCII text (ASCII vs UTF-8).
       **Confirmed (spike 2026-09-30):** a `modinfo.ini` written by `remod package` (flat lowercase `key=value`,
       CRLF line endings, ASCII-only values) shows name/version/description/author/screenshot correctly in Fluffy.
-- [ ] **Waiting (user, 2026-09-30): parked until it causes a real problem; no in-game test planned.**
+- [x] **Built-in converter (2026-10-02): no mismatch.** It keeps the original's mip count and layout (§4), so the
+      two items below apply to the optional Noesis converter only. Still to check in game: listed under "In-game
+      checks" below.
+- [ ] **Noesis only. Waiting (user, 2026-09-30): parked until it causes a real problem; no in-game test planned.**
       SaveTex no longer refuses a different mip count: the run succeeds with a warning (`RunResult::warnings`,
       a popup in the app, `WARNING:` in the CLI). Checked: a 1-mip 256x256 UI texture converts to 6 mips.
       **Mip count mismatch (used to block most UI textures).** The plugin's writer always generates mips down to 8x8
@@ -540,9 +619,9 @@ Fill these in from the manual spike before implementing the affected code:
       chain ends at 8x8 convert today. Open: does the game accept a texture with *more* mips than the original?
       If not, the extra mips must be dropped after export (header + mip table rewrite per the plugin's layout),
       which needs an in-game check before relying on it.
-- [ ] **Padded width on export.** `cs_ui3200_stamp_im` (468x440) exports as a **512x440** PNG: the plugin decodes
-      the stored (pitch-padded) rows. Converting back would write a 512-wide texture. Open: crop to 468 on export
-      and pad on import, or does the game need the padded layout? Needs a spike.
+- [ ] **Padded width on export (Noesis only).** `cs_ui3200_stamp_im` (468x440) exports as a **512x440** PNG: the
+      plugin decodes the stored (pitch-padded) rows, and the size check refuses it. The built-in converter exports
+      the visible 468 and writes back at the original's padded pitch (checked: header and mip table byte-identical).
 - [ ] **Streaming textures.** 17,728 of 38,331 RE4R textures have a high-resolution copy under
       `natives/STM/streaming/<same path>`. Does replacing a texture require replacing its streaming copy too?
       LoadTex logs a note when one exists.
@@ -589,13 +668,43 @@ Fill these in from the manual spike before implementing the affected code:
 
       Still open: whether these meanings are right (a shader or in-game test).
 
+### In-game checks, for when mod-making starts
+**User, 2026-10-02:** the tools are being built now; these get checked once real mods are made with them. Don't
+propose them as next steps before then.
+
+- [ ] **Built-in converter (§4).** Build one mod with it and load it through Fluffy. Ideally include:
+  - a 1-mip UI texture (e.g. `cs_ui3210_file_039_00_iam`);
+  - the padded `cs_ui3200_stamp_im` (468 visible, stored 512).
+
+  Look for a correct image, nothing shifted or skewed (padding), no mip shimmer.
+- [ ] **Streaming copies (§9).** Does replacing a texture also need its `streaming/` copy? This decides what
+  character / AI textures must target.
+- [ ] **Channel meanings (§9 table).** Are the inferred meanings right (e.g. `albd` alpha = dielectric vs metal,
+  `nrrc` normal in G/A)?
+- [ ] **Noesis converter only:** does the game accept a texture with more mips than the original (§9, parked)?
+
 ## 10. Later milestones (do not start)
 
+- **Priority order (user, 2026-10-02). See also the M2 "Order" below.**
+  1. **Fan-out over many textures:** Batch, below. **First version done 2026-10-02** (§4 Fan-out).
+  2. **Native TEX handling** to remove the Noesis requirement for textures. **Done 2026-10-02** (§4).
+  3. **A generic external-process node:** `claude -p`, scripts, a possible ComfyUI bridge. Its file changes are
+     invisible to the guardrails' plan (§10 M2), so it needs its own rule there.
+  4. **Caching and subgraphs.** Caching partly exists: the run cache means an unchanged run writes nothing (§4).
+     Subgraphs aren't started.
 - **Future work (user, 2026-10-01; "we are building the engine, not the implementation yet"):**
   - **Batch:** lists through links: an output can carry a list, a block fed one runs per item, collecting inputs
     (Package's textures) take them all; a "Files in folder" source (folder, pattern, subfolders); Export image would
-    need a per-item name (e.g. a folder field). User: not yet, "dumb rebuilding textures isn't really helpful" until
-    there's more to do per texture.
+    need a per-item name (e.g. a folder field). User (2026-10-01): not yet, "dumb rebuilding textures isn't really
+    helpful" until there's more to do per texture. **Now priority 1 (2026-10-02). First version built (§4 Fan-out):
+    lists through links, Files in folder, `{name}`, done per item, stop / skip.** Not done yet:
+    - thumbnails, link values and the viewer show the first item only (an item picker);
+    - list links look like any other (a doubled line?);
+    - two lists meeting (zip or cross product) is refused;
+    - other list sources (the Browser's selection, a typed list);
+    - a game path for textures outside a natives tree (e.g. `{name}` in LoadTex's In-game path works, but only for
+      one folder);
+    - a Package repeated per item shares one temporary preview file (sequential, so it works).
   - **Channel tools:** split / merge channels, so colour can be edited without touching data packed in another
     channel. Which RE4R textures pack what: §9 (spike 2026-10-02; meanings inferred, layouts observed).
   - **Mod options:** one mod with variants to choose in Fluffy.
@@ -637,6 +746,9 @@ Fill these in from the manual spike before implementing the affected code:
 - **Far future (user, 2026-10-01): drop a Browser path on empty canvas to add a block holding it** (.tex → Original
   texture, image → Use existing image, anything else → Value), as an option in an options menu. Not started; today
   a drop only fills a field.
+- **Later (user, 2026-10-02): a native `.mesh` reader**, so the 3D view needs no Noesis either (the last thing
+  that does). Reference: REE-Lib `MeshFile.cs` (MIT). Several layouts by game version; the material side
+  (`read_mdf2`, `mesh_textures`) is already ours.
 
 - M2: AI backend as a separate local process (not in the app). GPU/VRAM detection at install.
   img2img/ControlNet for textures, never plain text-to-image for UV-mapped textures.
@@ -679,7 +791,7 @@ Fill these in from the manual spike before implementing the affected code:
        "waiting for the user" and its file. The program hands control back, and `edit_done` marks the step done once
        the user has finished.
     5. Block descriptions for an AI (when to use, when not, examples) beside the tooltip text.
-  - **Order (2026-10-02):** the orchestrator first, over the existing blocks (no generation needed: "replace this
+  - **Order (2026-10-02; see also the priority order at the top of §10):** the orchestrator first, over the existing blocks (no generation needed: "replace this
     frame's photo with my picture and package it" works with today's blocks), then the generation block. The texture
     tools below move from "before M2" to "before the generation block".
   - **Tools the AI's results must pass through, to have before the generation block (user, 2026-10-02: "give the AI as
@@ -727,12 +839,12 @@ Fill these in from the manual spike before implementing the affected code:
     a 163k-triangle character; 24 of 26 sampled meshes load (2 hit plugin Python errors, reported). Every sampled
     part name matched a material. Highest LOD only; the main material file only (costume variants such as
     `cha000_00b.mdf2` aren't offered yet).
-    Mesh groups: the plugin names OBJ groups `LOD_1_Group_<id>_...` [plugin source]; parts are kept per (group,
+    Mesh groups: the plugin names OBJ groups `LOD_1_Group_<id>_...` (seen in its OBJ); parts are kept per (group,
     material) and the view has a checkbox per group (Leon's `cha000_00`: 0 shirt and gloves, 1 pants, 2 bare
     forearms, 3-4 weapons). Which groups the game shows isn't in the mesh (not read), so all start shown.
     Noesis's OBJ writes texture v top-down already (D3D style); flipping it again mirrored every texture and put
     Leon's shirt on the skin above it in his texture sheet (fixed 2026-10-01).
-    Materials follow the plugin's Noesis rules (`mesh_textures`, [plugin source]): colour texture × `BaseColor`
+    Materials match how Noesis shows them (`mesh_textures`, observed): colour texture × `BaseColor`
     parameter (solid `BaseColor` without a texture); no `_alb` texture falls back to the first `Base…Map`; alpha test
     at 0.05 only for `_hair`/`_decal`/`_dirt` master materials (ALBA alpha, ATOS/ATOC red, or an `AlphaMap`); eye
     shells without textures, tear lines, lenses and "destroy" parts aren't drawn. Layout checked on all 6,392 RE4R

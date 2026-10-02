@@ -80,3 +80,50 @@ TEST_CASE("api: a run needs a plan, the user's approval where it asks for it, an
                ContainsSubstring("refused changes"));
     CHECK_FALSE(std::filesystem::exists(tmp.path / "noesis" / "a.txt"));
 }
+
+TEST_CASE("api: Noesis is optional; game_files is refused like Noesis's folder") {
+    test::TempDir tmp;
+    const auto g = tmp.path / "g", game = tmp.path / "game";
+    test::write_file(g / "a.txt", "a");
+    std::filesystem::create_directories(game);
+
+    remod::ApiSession api;
+    api.call(R"({"op":"new"})");
+    api.call(R"({"op":"add","type":"CopyFile"})");
+    api.call(R"({"op":"set","id":1,"input":"source","value":"a.txt"})");
+    api.call(R"({"op":"set","id":1,"input":"dest","value":"b.txt"})");
+    api.call(R"({"op":"save","file":")" + (g / "g.json").generic_string() + R"("})");
+    const std::string plan = api.call(R"({"op":"plan"})");
+    CHECK_THAT(plan, ContainsSubstring(R"("verdict":"ok")"));
+    const std::string id = plan.substr(plan.find(R"("plan":")") + 8, 16);
+    CHECK_THAT(api.call(R"({"op":"run","plan":")" + id + R"("})"), StartsWith(R"({"message":"Done.")"));
+    CHECK(std::filesystem::exists(g / "b.txt"));
+
+    api.call(R"({"op":"set","id":1,"input":"dest","value":")" + (game / "a.txt").generic_string() + R"("})");
+    CHECK_THAT(api.call(R"({"op":"plan","game_files":")" + game.generic_string() + R"("})"),
+               ContainsSubstring(R"("verdict":"refused")"));
+}
+
+TEST_CASE("api: a list repeats the blocks it feeds; the plan and the run's nodes show each item") {
+    test::TempDir tmp;
+    const auto g = tmp.path / "g";
+    for (const char* name : {"a.txt", "b.txt"}) test::write_file(g / "in" / name, name);
+
+    remod::ApiSession api;
+    api.call(R"({"op":"new"})");
+    api.call(R"({"op":"add","type":"FilesInFolder"})");
+    api.call(R"({"op":"set","id":1,"input":"folder","value":"in"})");
+    api.call(R"({"op":"set","id":1,"input":"pattern","value":"*.txt"})");
+    api.call(R"({"op":"add","type":"CopyFile"})");
+    CHECK(api.call(R"({"op":"link","from":1,"from_port":"files","to":2,"to_port":"source"})") == R"({"ok":true})");
+    api.call(R"({"op":"set","id":2,"input":"dest","value":"out/{name}.copy"})");
+    api.call(R"({"op":"save","file":")" + (g / "g.json").generic_string() + R"("})");
+
+    const std::string plan = api.call(R"({"op":"plan"})");
+    CHECK_THAT(plan, ContainsSubstring("a.copy") && ContainsSubstring("b.copy"));
+    const std::string id = plan.substr(plan.find(R"("plan":")") + 8, 16);
+    const std::string run = api.call(R"({"op":"run","plan":")" + id + R"("})");
+    CHECK_THAT(run, ContainsSubstring(R"("items":[{)") && ContainsSubstring(R"("name":"b")"));
+    CHECK(std::filesystem::exists(g / "out" / "a.copy"));
+    CHECK(std::filesystem::exists(g / "out" / "b.copy"));
+}

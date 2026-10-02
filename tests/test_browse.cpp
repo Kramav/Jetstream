@@ -160,10 +160,10 @@ TEST_CASE("read_tex_pixels matches read_tex_meta on real textures") {
 TEST_CASE("index_assets lists textures and meshes, sorted, without streaming copies") {
     TempDir dir;
     for (const char* f : {"b/x.tex.143221013", "M/y.mesh.221108797", "a/c.TEX.143221013", "streaming/b/x.tex.143221013",
-                          "a/readme.txt", "a/plain.tex", "a/m.mdf2.32"})
+                          "a/readme.txt", "a/plain.tex", "a/m.mdf2.32", "a/d.tex.re2remake", "a/d.tex.png"})
         test::write_file(dir.path / f, "x");
     const auto index = remod::index_assets(dir.path);
-    CHECK(index.textures == std::vector<std::string>{"a/c.TEX.143221013", "b/x.tex.143221013"});
+    CHECK(index.textures == std::vector<std::string>{"a/c.TEX.143221013", "a/d.tex.re2remake", "b/x.tex.143221013"});
     CHECK(index.meshes == std::vector<std::string>{"M/y.mesh.221108797"});
     CHECK(remod::index_assets(dir.path / "").textures == index.textures);  // a root with a final slash
 }
@@ -409,6 +409,8 @@ TEST_CASE("file_kind and list_folder: any folder, folders first, sorted ignoring
     CHECK(remod::file_kind("shot.PNG") == FileKind::Image);
     CHECK(remod::file_kind("notes.txt") == FileKind::Other);
     CHECK(remod::file_kind("a.tex.png") == FileKind::Image);
+    CHECK(remod::file_kind("a.tex.re3remake") == FileKind::Texture);
+    CHECK(remod::file_kind("a.rtex") == FileKind::Other);
 
     TempDir tmp;
     fs::create_directories(tmp.path / "zeta");

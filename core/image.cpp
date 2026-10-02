@@ -51,24 +51,49 @@ ComPtr<IWICImagingFactory> factory() {
     return f;
 }
 
-void encode_png(IWICImagingFactory* wic, const fs::path& out, unsigned w, unsigned h, const std::uint8_t* bgra) {
+// PNG keeps 32-bit BGRA; JPEG has no alpha, so it gets 24-bit BGR (its encoder refuses 32-bit).
+void encode_image(IWICImagingFactory* wic, const fs::path& out, const GUID& container, unsigned w, unsigned h,
+                  const std::uint8_t* bgra) {
+    const bool jpeg = container == GUID_ContainerFormatJpeg;
+    std::vector<std::uint8_t> bgr;
+    if (jpeg) {
+        bgr.resize(size_t(w) * h * 3);
+        for (size_t i = 0, n = size_t(w) * h; i < n; ++i) std::copy_n(bgra + i * 4, 3, bgr.data() + i * 3);
+    }
+    const unsigned bytes = jpeg ? 3 : 4;
     ComPtr<IWICStream> stream;
     check(wic->CreateStream(&stream), "CreateStream");
     check(stream->InitializeFromFilename(out.c_str(), GENERIC_WRITE), "opening " + out.string() + " for writing");
     ComPtr<IWICBitmapEncoder> encoder;
-    check(wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder), "CreateEncoder");
+    check(wic->CreateEncoder(container, nullptr, &encoder), "CreateEncoder");
     check(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache), "encoder Initialize");
     ComPtr<IWICBitmapFrameEncode> frame;
     ComPtr<IPropertyBag2> props;
     check(encoder->CreateNewFrame(&frame, &props), "CreateNewFrame");
     check(frame->Initialize(props.Get()), "frame Initialize");
     check(frame->SetSize(w, h), "SetSize");
-    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    const WICPixelFormatGUID wanted = jpeg ? GUID_WICPixelFormat24bppBGR : GUID_WICPixelFormat32bppBGRA;
+    WICPixelFormatGUID format = wanted;
     check(frame->SetPixelFormat(&format), "SetPixelFormat");
-    if (format != GUID_WICPixelFormat32bppBGRA) throw std::runtime_error("PNG encoder refused 32-bit BGRA");
-    check(frame->WritePixels(h, w * 4, w * h * 4, const_cast<BYTE*>(bgra)), "WritePixels");
+    if (format != wanted) throw std::runtime_error("the image encoder refused " + std::to_string(bytes * 8) + "-bit pixels");
+    check(frame->WritePixels(h, w * bytes, w * h * bytes, const_cast<BYTE*>(jpeg ? bgr.data() : bgra)), "WritePixels");
     check(frame->Commit(), "frame Commit");
     check(encoder->Commit(), "encoder Commit");
+}
+
+void encode_png(IWICImagingFactory* wic, const fs::path& out, unsigned w, unsigned h, const std::uint8_t* bgra) {
+    encode_image(wic, out, GUID_ContainerFormatPng, w, h, bgra);
+}
+
+// Uncompressed 32-bit TGA (type 2), top-left origin, 8 alpha bits. WIC has no TGA codec.
+void write_tga(const fs::path& out, unsigned w, unsigned h, const std::vector<std::uint8_t>& bgra) {
+    if (w > 0xFFFF || h > 0xFFFF) throw std::runtime_error("image too large for TGA");
+    const std::uint8_t header[18] = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, std::uint8_t(w), std::uint8_t(w >> 8),
+                                     std::uint8_t(h), std::uint8_t(h >> 8), 32, 0x28};
+    std::ofstream file(out, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(header), sizeof header);
+    file.write(reinterpret_cast<const char*>(bgra.data()), std::streamsize(bgra.size()));
+    if (!file) throw std::runtime_error("cannot write " + out.string());
 }
 
 // TGA -> 32-bit BGRA, top-down. WIC has no TGA codec. Handles types 2/3 (true-colour/grey) and 10/11 (their RLE
@@ -137,6 +162,18 @@ void save_png_bgra(const fs::path& out, unsigned width, unsigned height, const s
     if (bgra.size() != size_t(width) * height * 4) throw std::runtime_error("save_png_bgra: wrong pixel count");
     ComScope com;
     encode_png(factory().Get(), out, width, height, bgra.data());
+}
+
+void save_image_bgra(const fs::path& out, unsigned width, unsigned height, const std::vector<std::uint8_t>& bgra) {
+    if (bgra.size() != size_t(width) * height * 4) throw std::runtime_error("save_image_bgra: wrong pixel count");
+    std::string ext = out.extension().string();
+    for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (ext == ".tga") return write_tga(out, width, height, bgra);
+    if (ext != ".png" && ext != ".jpg" && ext != ".jpeg")
+        throw std::runtime_error(out.string() + ": can only write .png, .tga, .jpg or .jpeg");
+    ComScope com;
+    encode_image(factory().Get(), out, ext == ".png" ? GUID_ContainerFormatPng : GUID_ContainerFormatJpeg, width, height,
+                 bgra.data());
 }
 
 std::vector<std::uint8_t> read_image_bgra(const fs::path& file, unsigned& width, unsigned& height) {
