@@ -49,13 +49,14 @@ void overlay_image(Bgra& base, const Bgra& top, int x, int y, float opacity);
 // the photo's edge (the photo's own content doesn't line up with the outline, so it averages out). The outline is
 // then snapped to the actual edge within a band around that ring (closed contour, dynamic programming over angles).
 // Rectangles, ovals and arches work. `frame_width` > 0 skips the search (distance from the outline, pixels); `grow`
-// moves the edge outwards (negative: inwards); `feather` softens it (pixels).
+// moves the edge outwards (negative: inwards); `feather` softens it (pixels). `scale` (pixels per real pixel, e.g. on a
+// thumbnail) only puts error messages in real pixels.
 struct PhotoArea {
     std::vector<std::uint8_t> mask;             // per pixel, 0-255
     std::vector<std::array<float, 2>> outline;  // the edge found, a closed polygon (x, y)
     float frame_width = 0;                      // used (found, when asked for 0)
 };
-PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float feather);
+PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float feather, float scale = 1);
 
 // How much of the old photo's ageing goes onto the new picture, 0-1 each: its tone (brightness, contrast, colour
 // cast), its darkening towards its edge (the frame's shadow), its colour damage (stains: colour its toning doesn't

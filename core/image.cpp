@@ -391,7 +391,7 @@ float sample(const Plane& p, unsigned w, unsigned h, float x, float y) {  // bil
 
 }  // namespace
 
-PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float feather) {
+PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float feather, float scale) {
     const unsigned w = frame.width, h = frame.height;
     if (w < 8 || h < 8) throw std::runtime_error("the frame image is too small");
     const Plane dist = distance_to_outline(frame);
@@ -457,7 +457,13 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
     for (unsigned y = 0; y < h; ++y)
         for (unsigned x = 0; x < w; ++x)
             if (dist[size_t(y) * w + x] >= fw) cx += x, cy += y, n += 1;
-    if (n == 0) throw std::runtime_error("Frame width is wider than the frame");
+    if (n == 0) {  // in real pixels (a thumbnail's are fewer)
+        const float deepest = *std::max_element(dist.begin(), dist.end());
+        throw std::runtime_error("Frame width " + std::to_string(std::lround(fw / scale)) +
+                                 " px reaches past the frame's middle: at most " +
+                                 std::to_string(std::max(0L, std::lround(std::floor(deepest - 1) / scale))) +
+                                 " px here (0 = auto)");
+    }
     cx /= n;
     cy /= n;
     constexpr int A = 720;  // rays, half a degree apart

@@ -321,7 +321,11 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   Checked on the real texture with a flat grey picture, each term alone (images saved and looked at): no faces in
   any; jacket pattern and a few buttons remain faint in Scratches at 100. Test: a sepia photo with a dark disc,
   specks and a stain: no edge where the disc was, specks and a darker stain carried. "Show edge" draws the found
-  outline on the thumbnail only. Checked on the real texture (images saved and
+  outline on the thumbnail only.
+  **Frame width on auto shows what was found (user, 2026-10-02: "a frame of reference"):** "auto (~91 px)", from the
+  thumbnail's search (core `ImagePreview::found`, real pixels; ~ because a thumbnail pixel is several real ones), and a
+  drag starts there (a click alone stays on auto). Larger moves the edge inwards; past the frame's middle the
+  thumbnail says so with the limit (`preview_image`'s `why`, shown red under any block whose preview fails). Checked on the real texture (images saved and
   looked at, not screenshots). Thumbnails shrink one-mip textures (most RE4R UI textures) to 256 px.
 - **Cut text (CutText, user 2026-10-01: "truncate text based on the character content"):** keeps the part of a text
   or path after / before / from / up to a marker, at its first or last occurrence (core `cut_text`), ignoring case and

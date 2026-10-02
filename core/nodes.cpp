@@ -443,8 +443,9 @@ NodeSpec replace_photo_node() {
         .inputs = {image_input("frame", "Frame image", "The framed photo, e.g. Export image of the frame's texture."),
                    image_input("picture", "Picture", "The new picture. It's cropped to fill the photo's area."),
                    number_input("frame_width", "Frame width",
-                                "How far the photo's edge is from the frame's outline, in pixels. 0 (auto): found "
-                                "(the innermost ring that runs all the way round).",
+                                "Where the old photo starts: its distance in from the frame's outer outline, in "
+                                "pixels. Larger moves the edge inwards (a smaller picture). 0 (auto): found, the "
+                                "innermost ring all the way round. To nudge the found edge, use Grow instead.",
                                 "0", 0, 4096, "%.0f px", "auto"),
                    number_input("grow", "Grow", "Pixels to move the edge outwards (slides the picture under the "
                                 "frame's lip); negative moves it in.", "2", -40, 40, "%.0f px"),
@@ -1062,7 +1063,8 @@ std::string fill_template(const std::string& text, const std::vector<std::string
 }
 
 std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& preview, int id, const fs::path& base_dir,
-                                          unsigned max_side, const ImageLoader& load, const Profile* profile) {
+                                          unsigned max_side, const ImageLoader& load, const Profile* profile,
+                                          std::string* why) {
     const Node* n = g.find(id);
     const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
     if (!spec) return std::nullopt;
@@ -1072,7 +1074,7 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
     };
     if (n->type == "Split") {  // passes on what comes in
         const Link* l = source("in");
-        return l ? preview_image(g, preview, l->from_node, base_dir, max_side, load, profile) : std::nullopt;
+        return l ? preview_image(g, preview, l->from_node, base_dir, max_side, load, profile, why) : std::nullopt;
     }
     auto text = [&](const char* input) -> std::optional<std::string> {  // typed, or what the link holds
         if (const Link* l = source(input)) {
@@ -1088,7 +1090,7 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
     };
     auto image = [&](const char* input) -> std::optional<ImagePreview> {  // an image block's result, else the file
         if (const Link* l = source(input))
-            if (auto from_block = preview_image(g, preview, l->from_node, base_dir, max_side, load, profile))
+            if (auto from_block = preview_image(g, preview, l->from_node, base_dir, max_side, load, profile, why))
                 return from_block;
         const auto t = text(input);
         if (!t || t->empty()) return std::nullopt;
@@ -1156,10 +1158,11 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
             if (!frame || !picture || !fw || !grow || !feather || !tone || !shading || !stains || !detail)
                 return std::nullopt;
             const float k = frame->scale;  // sizes on the thumbnail
-            const PhotoArea area = photo_area(frame->image, *fw > 0 ? *fw * k : 0, *grow * k, *feather * k);
+            const PhotoArea area = photo_area(frame->image, *fw > 0 ? *fw * k : 0, *grow * k, *feather * k, k);
             ImagePreview out{replace_photo(frame->image, picture->image, area.mask,
                                            {*tone / 100, *shading / 100, *stains / 100, *detail / 100}, k),
                              k};
+            if (*fw <= 0) out.found["frame_width"] = area.frame_width / k;  // auto: the edge found
             if (text("show_outline") == "true")  // the edge as found, in cyan
                 for (const auto& p : area.outline) {
                     const long x = std::lround(p[0]), y = std::lround(p[1]);
@@ -1184,8 +1187,8 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
             overlay_image(base->image, top->image, int(std::lround(*x * k)), int(std::lround(*y * k)), *opacity / 100);
             return base;
         }
-    } catch (const std::exception&) {
-        // A file that can't be read, a size that can't be: no thumbnail.
+    } catch (const std::exception& e) {
+        if (why) *why = e.what();  // a file that can't be read, a size that can't be: no thumbnail
     }
     return std::nullopt;
 }

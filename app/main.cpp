@@ -406,15 +406,16 @@ struct State {
     remod::RunValues preview;
     remod::Graph preview_of;
     // Live thumbnails of the image blocks (core preview_image), worked out in the background when the graph changes
-    // (positions aside); a change meanwhile starts the next job once this one is done. `no_thumb`: blocks whose input
-    // image isn't known yet.
+    // (positions aside); a change meanwhile starts the next job once this one is done. `no_thumb`: blocks without one,
+    // and why when that's known.
     struct Thumb {
         ID3D11ShaderResourceView* srv = nullptr;
         float width = 0, height = 0;
+        std::map<std::string, float> found;  // what its "auto" fields came to (core ImagePreview::found)
     };
     std::map<int, Thumb> thumbs;
-    std::set<int> no_thumb;
-    std::future<std::map<int, std::optional<remod::ImagePreview>>> thumbs_job;
+    std::map<int, std::string> no_thumb;
+    std::future<std::map<int, std::pair<std::optional<remod::ImagePreview>, std::string>>> thumbs_job;
     remod::Graph thumbs_of;
     std::string thumbs_path = "\x01";
     // Files shrunk for thumbnails, by path and write time: only the job thread uses it, one job at a time.
@@ -1792,9 +1793,10 @@ void update_thumbs(State& s) {
             it = s.thumbs.erase(it);
         }
         s.no_thumb.clear();
-        for (const auto& [id, result] : results) {
+        for (const auto& [id, made] : results) {
+            const auto& [result, why] = made;
             if (!result) {
-                s.no_thumb.insert(id);
+                s.no_thumb[id] = why;
                 continue;
             }
             const remod::Bgra& img = result->image;
@@ -1808,7 +1810,7 @@ void update_thumbs(State& s) {
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
             const D3D11_SUBRESOURCE_DATA data{img.pixels.data(), img.width * 4, 0};
             ID3D11Texture2D* tex = nullptr;
-            State::Thumb thumb{nullptr, float(img.width), float(img.height)};
+            State::Thumb thumb{nullptr, float(img.width), float(img.height), result->found};
             if (SUCCEEDED(g_device->CreateTexture2D(&desc, &data, &tex))) {
                 g_device->CreateShaderResourceView(tex, nullptr, &thumb.srv);
                 tex->Release();
@@ -1856,9 +1858,12 @@ void update_thumbs(State& s) {
             return cached.image;
         };
         const remod::RunValues preview = remod::preview_values(graph, base);
-        std::map<int, std::optional<remod::ImagePreview>> out;
-        for (const int id : ids)
-            out[id] = remod::preview_image(graph, preview, id, base, kThumbSide, load, profile ? &*profile : nullptr);
+        std::map<int, std::pair<std::optional<remod::ImagePreview>, std::string>> out;
+        for (const int id : ids) {
+            std::string why;
+            auto made = remod::preview_image(graph, preview, id, base, kThumbSide, load, profile ? &*profile : nullptr, &why);
+            out[id] = {std::move(made), std::move(why)};
+        }
         return out;
     });
 }
@@ -1868,9 +1873,12 @@ void update_thumbs(State& s) {
 void draw_thumb(State& s, int node, float width, std::string& hint) {
     const auto it = s.thumbs.find(node);
     if (it == s.thumbs.end()) {
-        ImGui::TextDisabled(s.no_thumb.contains(node)
-                                ? "No preview: an input image or texture can't be read, or a value isn't set."
-                                : "Working out the preview...");
+        const auto none = s.no_thumb.find(node);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);  // within the block
+        if (none == s.no_thumb.end()) ImGui::TextDisabled("Working out the preview...");
+        else if (none->second.empty()) ImGui::TextDisabled("No preview: an input image or texture isn't known yet, or a value isn't set.");
+        else ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "No preview: %s", none->second.c_str());
+        ImGui::PopTextWrapPos();
         return;
     }
     const State::Thumb& t = it->second;
@@ -2119,7 +2127,19 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                         }
                         ImGui::SetNextItemWidth(field_width);
                         const float speed = ImMax(0.1f, (in.max - in.min) / 400);
-                        if (ImGui::DragFloat("##v", &v, speed, in.min, in.max, v == 0 && in.zero ? in.zero : in.format,
+                        // On "auto", what it came to (e.g. "auto (~91 px)", worked out with the thumbnail, so ~), and
+                        // dragging starts from there; a click alone leaves it on auto.
+                        std::string shown = v == 0 && in.zero ? in.zero : in.format;
+                        if (const auto t = s.thumbs.find(n.id); v == 0 && in.zero && t != s.thumbs.end())
+                            if (const auto f = t->second.found.find(in.name); f != t->second.found.end()) {
+                                char buf[64];
+                                std::snprintf(buf, sizeof buf, in.format, std::round(f->second));
+                                shown = std::string(in.zero) + " (~" + buf + ")";
+                                for (size_t i = 0; (i = shown.find('%', i)) != std::string::npos; i += 2)
+                                    shown.insert(i, "%");  // literal text for DragFloat's format
+                                v = std::round(f->second);
+                            }
+                        if (ImGui::DragFloat("##v", &v, speed, in.min, in.max, shown.c_str(),
                                              ImGuiSliderFlags_AlwaysClamp)) {
                             v = std::round(v);  // ponytail: whole numbers; a step setting if a field needs fractions
                             value = std::to_string(int(v));

@@ -1436,6 +1436,13 @@ TEST_CASE("run: Replace photo puts the picture in the frame's photo; its preview
     const auto thumb = remod::preview_image(g, remod::preview_values(g, tmp.path), 1, tmp.path, 256, load);
     REQUIRE(thumb);
     CHECK(thumb->image.width == 120);
+    CHECK(thumb->found.at("frame_width") >= 23);  // auto: the edge found, 25 px in from the outline (at 5)
+    CHECK(thumb->found.at("frame_width") <= 27);
+
+    g.find(1)->params["frame_width"] = "500";  // past the middle: no thumbnail, and why
+    std::string why;
+    CHECK_FALSE(remod::preview_image(g, remod::preview_values(g, tmp.path), 1, tmp.path, 256, load, nullptr, &why));
+    CHECK_THAT(why, ContainsSubstring("Frame width 500 px") && ContainsSubstring("at most"));
 }
 
 TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {

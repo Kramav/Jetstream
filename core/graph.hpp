@@ -157,15 +157,18 @@ RunValues preview_values(const Graph& graph, const std::filesystem::path& base_d
 // Use existing image hand on theirs. `scale` = thumbnail
 // pixels per real pixel, so sizes and positions are scaled to match. `load` gives a file's image already shrunk to at
 // most max_side, with its scale (front ends cache it). `profile` reads a texture's size for Resize's "Match size of"
-// (none: unknown). nullopt if an input image isn't known yet (e.g. not exported) or a value isn't usable.
+// (none: unknown). nullopt if an input image isn't known yet (e.g. not exported) or a value isn't usable; `why` then
+// gets the reason when there is one (a file that can't be read, a Frame width past the frame's middle).
 struct ImagePreview {
     Bgra image;
     float scale = 1;
+    std::map<std::string, float> found;  // what a field left on "auto" (0) came to, in its own units (real pixels)
 };
 using ImageLoader = std::function<std::optional<ImagePreview>(const std::filesystem::path&)>;
 std::optional<ImagePreview> preview_image(const Graph& graph, const RunValues& preview, int node,
                                           const std::filesystem::path& base_dir, unsigned max_side,
-                                          const ImageLoader& load, const Profile* profile = nullptr);
+                                          const ImageLoader& load, const Profile* profile = nullptr,
+                                          std::string* why = nullptr);
 
 // What link `link` holds: its source's preview value (`preview`, from preview_values: the graph as it is now), else
 // what the source gave in the last run (`last_run`, RunResult::values; `*from_run` set); "" if neither.
