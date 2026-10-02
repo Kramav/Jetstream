@@ -1446,6 +1446,27 @@ TEST_CASE("run: Replace photo puts the picture in the frame's photo; its preview
     CHECK_THAT(why, ContainsSubstring("Frame width 500 px") && ContainsSubstring("at most"));
 }
 
+TEST_CASE("a Preview block shows what comes in, before and during a run, and changes nothing") {
+    TempDir tmp;
+    remod::save_png(tmp.path / "pic.png", remod::Bgra{3, 2, std::vector<std::uint8_t>(3 * 2 * 4, 200)});
+    Graph g;
+    g.add_node("AdjustColour").params["image"] = "pic.png";  // 1
+    g.add_node("Preview");                                    // 2
+    REQUIRE(g.connect({1, "image", 2, "in"}).empty());
+    const remod::ImageLoader load = [](const fs::path& f) -> std::optional<remod::ImagePreview> {
+        return remod::ImagePreview{remod::load_image(f), 1};
+    };
+    const auto shown = remod::preview_image(g, remod::preview_values(g, tmp.path), 2, tmp.path, 256, load);
+    REQUIRE(shown);
+    CHECK(shown->image.width == 3);
+    CHECK(remod::find_spec("Preview")->view_size == std::string("size"));
+
+    const auto r = run_in(g, tmp.path);
+    CHECK(r.nodes.at(2).state == NodeState::Done);
+    g.add_node("Preview");  // 3: nothing linked in: still fine
+    CHECK(run_in(g, tmp.path).nodes.at(3).message == "nothing linked in");
+}
+
 TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {
     auto result = [](const char* type, const char* input) {
         const char* r = remod::find_input(*remod::find_spec(type), input)->result;

@@ -91,6 +91,7 @@ struct NodeSpec {
     // doing anything. Neither: its outputs are known only in a run.
     bool pure = false;
     bool thumbnail = false;  // an image block: front ends show a live thumbnail of its result (preview_image)
+    const char* view_size = nullptr;  // its picture is the point (Preview): shown as large as this input says (px)
     void (*run)(NodeRun&) = nullptr;      // what it does in a run; throws to fail the run
     void (*preview)(NodeRun&) = nullptr;  // a step's outputs as far as known before running it; throws if unknown
 };

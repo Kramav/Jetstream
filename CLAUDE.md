@@ -86,7 +86,7 @@ Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
-  OverlayImage, ReplacePhoto, PackageMod; file steps CopyFile,
+  OverlayImage, ReplacePhoto, Preview, PackageMod; file steps CopyFile,
   MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
   CutText, RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
   utility.**
@@ -293,6 +293,22 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   image and Use existing image hand on theirs. So a fresh graph shows thumbnails before any run. Checked in the app
   on a test graph (Original texture → Export image, nothing exported → Adjust colour: thumbnail made from the
   texture). Padded-width textures decode at their visible width, where Noesis exports the padded one (§9).
+  **Larger previews (user, 2026-10-02: "pop out any and all preview images"; and "it just shows up in the existing
+  mesh and texture preview area"):**
+  - Clicking a block's thumbnail: Use layout shows it in the Browser's viewer (`Browser::show_in_viewer`, until a
+    texture or mesh is picked there again), with a Pop out button; Build layout (no viewer) pops it out at once.
+  - Popped-out windows: one per block, any size, closed with their X or with the block.
+  - Larger previews are worked out at 1024 px (`State::big`, a second preview set beside the 256 px thumbnails, its
+    own job and file cache), only for blocks in the viewer or popped out; the thumbnail stands in meanwhile.
+  - Browser textures and images: right-click → Pop out (outside the game files too), or the viewer's Pop out button.
+  - Every one zooms and pans like the viewer (app `zoom_area`: wheel, drag, double-click fits).
+  - In-app windows, not OS windows: ImGui's multi-viewport mode isn't on. They never dock
+    (`ImGuiWindowFlags_NoDocking`): docked into the Graph's slot, dragging the slot moved the graph with them (user).
+  - **Preview block (user, 2026-10-02: "place the image preview output onto my graph directly"):** one input of any
+    kind (an image, a texture, or a path to one: `preview_image` passes it through), a Size field (px at 100% zoom;
+    `NodeSpec::view_size` names it, so the app sizes the block and its picture from it and uses the 1024 px preview).
+    Output family, pure, no outputs; a run marks it done and touches nothing. A value that also goes on needs a Split
+    (an output feeds one input).
 - **Replace photo (ReplacePhoto, user 2026-10-01: frames "filled end to end, fit with the curve, keeping the dirt"):**
   a picture in place of the photo in an opaque frame (RE4R UI frames such as `ui3200/.../cs_ui3210_file_039_00_iam`:
   alpha is only the frame's outline; the old photo is opaque, its ageing baked in). Core `photo_area`: a frame's inner

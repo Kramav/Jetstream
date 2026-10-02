@@ -433,6 +433,28 @@ NodeSpec overlay_image_node() {
     };
 }
 
+// A picture on the graph (user, 2026-10-02: "place the image preview output onto my graph directly"): whatever is
+// linked in, an image or a texture (or a path to one), shown as large as Size. Changes nothing.
+NodeSpec preview_node() {
+    return {
+        .type = "Preview",
+        .title = "Preview",
+        .summary = "Shows an image or texture on the graph, as large as you like; it follows the values live. Changes "
+                   "nothing. Click the picture to enlarge it. To preview something that also goes on to a step, put a "
+                   "Split on its link.",
+        .inputs = {{.name = "in", .label = "picture", .type = Any},
+                   number_input("size", "Size", "How large the picture shows on the graph, in pixels at 100% zoom.",
+                                "320", 120, 1600, "%.0f px")},
+        .family = Family::Output,
+        .pure = true,
+        .thumbnail = true,
+        .view_size = "size",
+        .run = [](NodeRun& r) {
+            r.done(r.run.graph.links_into(r.node.id, "in").empty() ? "nothing linked in" : "shown on the graph");
+        },
+    };
+}
+
 NodeSpec replace_photo_node() {
     return {
         .type = "ReplacePhoto",
@@ -977,7 +999,7 @@ const std::vector<NodeSpec>& node_specs() {
     static const std::vector<NodeSpec> specs{
         // The main steps: the texture pipeline, then file steps.
         load_tex(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(), resize_image_node(),
-        overlay_image_node(), replace_photo_node(), package_mod(),
+        overlay_image_node(), replace_photo_node(), preview_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(),
         // Utilities.
         value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),
@@ -1110,6 +1132,7 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
             return image("tex");
         }
         if (n->type == "EditImage" || n->type == "ImportImage") return image("png");
+        if (n->type == "Preview") return image("in");  // what comes in, as it is
         if (n->type == "AdjustColour") {
             auto img = image("image");
             const auto hue = number_of("hue"), sat = number_of("saturation"), bri = number_of("brightness"),

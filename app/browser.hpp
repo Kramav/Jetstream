@@ -4,11 +4,13 @@
 #include "browse.hpp"
 #include "mesh_view.hpp"
 #include "profile.hpp"
+#include "zoom_view.hpp"
 
 #include <d3d11.h>
 #include <imgui.h>
 
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <map>
 #include <optional>
@@ -34,6 +36,11 @@ public:
     std::string draw(const std::string& natives_root, const std::string& noesis_exe,
                      const std::vector<remod::Profile>& profiles, const std::string& game,
                      std::vector<std::string>& pinned, bool browser_only = false);
+
+    // Something of the caller's in the viewer (e.g. a block's preview, user 2026-10-02): `draw_view` fills the viewer
+    // window ("Preview") until a texture or mesh is picked in the Browser again.
+    void show_in_viewer(std::function<void()> draw_view) { external_ = std::move(draw_view); }
+    bool viewer_shows_external() const { return bool(external_); }
 
 private:
     struct Index {
@@ -75,6 +82,8 @@ private:
     void draw_textures(const std::vector<remod::Profile>& profiles, std::string& chosen);
     void draw_viewer(const std::string& noesis_exe);
     void put_image(const Image& img, ImVec2 at, ImVec2 box);
+    void show_zoomed(const Image& img, ZoomPan& view);  // fills the rest of the window, zoomable
+    void draw_popouts();
     void select_texture(const std::string& abs, const std::vector<remod::Profile>& profiles);
     void select_mesh(const std::string& abs);
 
@@ -105,8 +114,9 @@ private:
     bool mesh_focus_ = false;  // the Textures window shows mesh_'s textures (else the place's)
     bool view_open_ = false;   // the viewer shows mesh_ in 3D (else the selected texture)
     std::string preview_of_;   // the texture the zoom and pan below belong to
-    float preview_zoom_ = 1;   // 1: fits the viewer
-    ImVec2 preview_pan_;       // the picture's centre from the viewer's, in screen pixels
+    ZoomPan preview_view_;
+    std::map<std::string, ZoomPan> popped_;  // pictures popped out into their own windows (absolute path)
+    std::function<void()> external_;         // show_in_viewer's, while it's shown
     std::optional<remod::MeshTextures> mesh_textures_;  // its textures as absolute paths
     std::string mesh_error_;
     MeshView view_;

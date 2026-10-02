@@ -9,6 +9,7 @@
 #include "settings.hpp"
 #include "setup.hpp"
 #include "texture_converter.hpp"
+#include "zoom_view.hpp"
 
 #include <nfd.h>
 
@@ -405,25 +406,37 @@ struct State {
     // What links hold before a run (core preview_values), worked out again when the graph or its file changes.
     remod::RunValues preview;
     remod::Graph preview_of;
-    // Live thumbnails of the image blocks (core preview_image), worked out in the background when the graph changes
-    // (positions aside); a change meanwhile starts the next job once this one is done. `no_thumb`: blocks without one,
-    // and why when that's known.
+    // Live previews of the image blocks (core preview_image) at one size, worked out in the background when the graph
+    // (positions aside) or the blocks wanted change; a change meanwhile starts the next job once this one is done.
+    // `none`: blocks without one, and why when that's known.
     struct Thumb {
         ID3D11ShaderResourceView* srv = nullptr;
         float width = 0, height = 0;
         std::map<std::string, float> found;  // what its "auto" fields came to (core ImagePreview::found)
     };
-    std::map<int, Thumb> thumbs;
-    std::map<int, std::string> no_thumb;
-    std::future<std::map<int, std::pair<std::optional<remod::ImagePreview>, std::string>>> thumbs_job;
-    remod::Graph thumbs_of;
-    std::string thumbs_path = "\x01";
-    // Files shrunk for thumbnails, by path and write time: only the job thread uses it, one job at a time.
     struct ShrunkFile {
         std::filesystem::file_time_type time;
         remod::ImagePreview image;
     };
-    std::shared_ptr<std::map<std::string, ShrunkFile>> shrunk = std::make_shared<std::map<std::string, ShrunkFile>>();
+    struct PreviewSet {
+        unsigned side = 256;  // pixels, the longer side at most
+        std::map<int, Thumb> images;
+        std::map<int, std::string> none;
+        std::future<std::map<int, std::pair<std::optional<remod::ImagePreview>, std::string>>> job;
+        remod::Graph of;
+        std::string of_path = "\x01";
+        std::vector<int> of_ids;
+        // Files shrunk to `side`, by path and write time: only this set's job thread uses it, one job at a time.
+        std::shared_ptr<std::map<std::string, ShrunkFile>> shrunk = std::make_shared<std::map<std::string, ShrunkFile>>();
+    };
+    PreviewSet thumbs{256};  // under every image block
+    PreviewSet big{1024};    // the popped-out ones (user, 2026-10-02: "pop out any and all preview images")
+    std::map<int, ZoomPan> popouts;  // image blocks popped out into their own windows, with their zoom
+    // Use layout: a clicked thumbnail shows in the Browser's viewer (user, 2026-10-02), until a texture or mesh is
+    // picked there again (`viewer_on_block`, read from the Browser each frame).
+    int viewer_block = 0;
+    ZoomPan viewer_view;
+    bool want_viewer = false, viewer_on_block = false;
     std::string preview_path = "\x01";
     std::future<remod::RunResult> run;
     std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
@@ -1773,8 +1786,6 @@ void draw_minimap(State& s, ImVec2 view_min, ImVec2 view_size) {
     ImGui::EndChild();
 }
 
-constexpr unsigned kThumbSide = 256;
-
 // The graph without block positions: what values, previews and thumbnails depend on (moving a block changes none).
 remod::Graph shape_of(const remod::Graph& g) {
     remod::Graph out = g;
@@ -1782,21 +1793,23 @@ remod::Graph shape_of(const remod::Graph& g) {
     return out;
 }
 
-// Starts working out the image blocks' thumbnails when the graph has changed (in the background), and takes the
-// finished ones onto the GPU.
-void update_thumbs(State& s) {
+void release(State::PreviewSet& set) {
+    for (auto& [_, image] : set.images) image.srv->Release();
+    set.images.clear();
+}
+
+// Starts working out `ids`' previews for `set` (in the background) when the graph or the ids have changed, and takes
+// the finished ones onto the GPU.
+void update_previews(State& s, State::PreviewSet& set, std::vector<int> ids) {
     using namespace std::chrono_literals;
-    if (s.thumbs_job.valid() && s.thumbs_job.wait_for(0s) == std::future_status::ready) {
-        const auto results = s.thumbs_job.get();
-        for (auto it = s.thumbs.begin(); it != s.thumbs.end();) {  // gone, or about to be replaced
-            it->second.srv->Release();
-            it = s.thumbs.erase(it);
-        }
-        s.no_thumb.clear();
+    if (set.job.valid() && set.job.wait_for(0s) == std::future_status::ready) {
+        const auto results = set.job.get();
+        release(set);  // gone, or about to be replaced
+        set.none.clear();
         for (const auto& [id, made] : results) {
             const auto& [result, why] = made;
             if (!result) {
-                s.no_thumb[id] = why;
+                set.none[id] = why;
                 continue;
             }
             const remod::Bgra& img = result->image;
@@ -1815,20 +1828,22 @@ void update_thumbs(State& s) {
                 g_device->CreateShaderResourceView(tex, nullptr, &thumb.srv);
                 tex->Release();
             }
-            if (thumb.srv) s.thumbs[id] = thumb;
+            if (thumb.srv) set.images[id] = thumb;
         }
     }
-    if (s.thumbs_job.valid()) return;  // one job at a time
+    if (set.job.valid()) return;  // one job at a time
     remod::Graph shape = shape_of(s.graph);
-    if (shape == s.thumbs_of && s.graph_path == s.thumbs_path) return;
-    s.thumbs_of = std::move(shape);
-    s.thumbs_path = s.graph_path;
-    std::vector<int> ids;
-    for (const auto& n : s.graph.nodes)
-        if (const remod::NodeSpec* spec = remod::find_spec(n.type); spec && spec->thumbnail) ids.push_back(n.id);
-    if (ids.empty()) return;
+    if (shape == set.of && s.graph_path == set.of_path && ids == set.of_ids) return;
+    set.of = std::move(shape);
+    set.of_path = s.graph_path;
+    set.of_ids = ids;
+    if (ids.empty()) {
+        release(set);
+        set.none.clear();
+        return;
+    }
     const auto p = std::ranges::find(s.profiles, s.graph.profile, &remod::Profile::id);
-    s.thumbs_job = std::async(std::launch::async, [graph = s.graph, ids, shrunk = s.shrunk,
+    set.job = std::async(std::launch::async, [graph = s.graph, ids, shrunk = set.shrunk, side = set.side,
                                                    profile = p == s.profiles.end() ? std::optional<remod::Profile>()
                                                                                    : std::optional<remod::Profile>(*p),
                                                    base = std::filesystem::absolute(s.graph_path).parent_path()] {
@@ -1843,12 +1858,12 @@ void update_thumbs(State& s) {
                 unsigned real_width = 0;
                 remod::Bgra full;
                 if (remod::file_kind(file.filename().string()) == remod::FileKind::Texture) {
-                    full = remod::decode_tex(file, kThumbSide, &real_width);
+                    full = remod::decode_tex(file, side, &real_width);
                 } else {
                     full = remod::load_image(file);
                     real_width = full.width;
                 }
-                const float shrink = ImMin(1.0f, float(kThumbSide) / float(ImMax(full.width, full.height)));
+                const float shrink = ImMin(1.0f, float(side) / float(ImMax(full.width, full.height)));
                 if (shrink < 1)
                     full = remod::resize_image(full, ImMax(1u, unsigned(full.width * shrink)),
                                                ImMax(1u, unsigned(full.height * shrink)), remod::Fit::Stretch);
@@ -1861,39 +1876,141 @@ void update_thumbs(State& s) {
         std::map<int, std::pair<std::optional<remod::ImagePreview>, std::string>> out;
         for (const int id : ids) {
             std::string why;
-            auto made = remod::preview_image(graph, preview, id, base, kThumbSide, load, profile ? &*profile : nullptr, &why);
+            auto made = remod::preview_image(graph, preview, id, base, side, load, profile ? &*profile : nullptr, &why);
             out[id] = {std::move(made), std::move(why)};
         }
         return out;
     });
 }
 
+// Every image block's thumbnail, and the popped-out ones larger.
+void update_thumbs(State& s) {
+    std::vector<int> all, popped;
+    for (const auto& n : s.graph.nodes)
+        if (const remod::NodeSpec* spec = remod::find_spec(n.type); spec && spec->thumbnail) {
+            all.push_back(n.id);
+            if (spec->view_size || s.popouts.contains(n.id) || (s.viewer_on_block && s.viewer_block == n.id))
+                popped.push_back(n.id);  // shown larger: worked out larger
+        }
+    update_previews(s, s.thumbs, all);
+    update_previews(s, s.big, popped);
+}
+
+// A picture over a checkerboard (its transparency shows), within the clip rect.
+void checkered_image(ImDrawList* d, ID3D11ShaderResourceView* srv, ImVec2 at, ImVec2 size) {
+    const float cell = ImGui::GetFontSize() * 0.5f;
+    const ImRect clip(d->GetClipRectMin(), d->GetClipRectMax());
+    const ImVec2 from = ImMax(at, clip.Min), to = ImMin(at + size, clip.Max);  // only the visible cells
+    for (float y = std::floor((from.y - at.y) / cell) * cell; at.y + y < to.y; y += cell)
+        for (float x = std::floor((from.x - at.x) / cell) * cell; at.x + x < to.x; x += cell)
+            d->AddRectFilled(at + ImVec2(x, y), at + ImVec2(ImMin(x + cell, size.x), ImMin(y + cell, size.y)),
+                             (int(x / cell) + int(y / cell)) % 2 ? pal::raised : pal::line);
+    d->AddImage(ImTextureRef(srv), at, at + size);
+}
+
+// An image block's preview filling the rest of the window, zoomable: the larger one (State::big) once it's worked out,
+// the thumbnail meanwhile. It follows the values live, like the thumbnail.
+void block_picture(State& s, int id, ZoomPan& view) {
+    const auto big = s.big.images.find(id), thumb = s.thumbs.images.find(id);
+    const State::Thumb* shown = big != s.big.images.end() ? &big->second
+                                : thumb != s.thumbs.images.end() ? &thumb->second
+                                                                 : nullptr;
+    if (const auto none = s.big.none.find(id); none != s.big.none.end())
+        ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "No preview: %s",
+                           none->second.empty() ? "an input image or texture isn't known yet, or a value isn't set"
+                                                : none->second.c_str());
+    else if (big == s.big.images.end())
+        ImGui::TextDisabled("Working out the larger preview...");
+    if (!shown) return;
+    const ZoomPlace at = zoom_area("##picture", shown->width, shown->height, view);
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    d->PushClipRect(at.area_min, at.area_max, true);
+    checkered_image(d, shown->srv, at.corner, at.size);
+    d->PopClipRect();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Worked out at %.0fx%.0f from a smaller copy of the image; Run makes the full-size one.\n"
+                          "Wheel to zoom, drag to move, double-click to fit.",
+                          shown->width, shown->height);
+}
+
+// The viewer's contents while it shows a block (Browser::show_in_viewer).
+void draw_block_view(State& s) {
+    const remod::Node* n = s.graph.find(s.viewer_block);
+    if (!n) {
+        ImGui::TextDisabled("That block was removed.");
+        return;
+    }
+    if (ImGui::SmallButton("Pop out")) s.popouts.try_emplace(n->id);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open it in its own window, to enlarge it further.");
+    ImGui::SameLine();
+    ImGui::TextUnformatted(remod::block_title(*n).c_str());
+    block_picture(s, n->id, s.viewer_view);
+}
+
+// Image blocks popped out (a thumbnail clicked in Build layout, or the viewer's Pop out): a window each, any size,
+// zoomable. Closed with its X, or with the block.
+void draw_popouts(State& s) {
+    for (auto it = s.popouts.begin(); it != s.popouts.end();) {
+        const remod::Node* n = s.graph.find(it->first);
+        bool open = n != nullptr;
+        if (open) {
+            const float font = ImGui::GetFontSize();
+            ImGui::SetNextWindowSize(ImVec2(font * 32, font * 32), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_FirstUseEver);
+            const std::string title = remod::block_title(*n) + "###popout " + std::to_string(n->id);
+            // Floats, never docks: docked into the Graph's slot, dragging the slot moved the graph with it.
+            if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoDocking)) block_picture(s, n->id, it->second);
+            ImGui::End();
+        }
+        it = open ? std::next(it) : s.popouts.erase(it);
+    }
+}
+
 // An image block's thumbnail, fitted to the block's width and at most eight lines tall, over a checkerboard (its
 // transparency shows); or why there's none yet.
-void draw_thumb(State& s, int node, float width, std::string& hint) {
-    const auto it = s.thumbs.find(node);
-    if (it == s.thumbs.end()) {
-        const auto none = s.no_thumb.find(node);
+// A Preview block's picture size on the graph: its Size field (px at 100% zoom, for the default 16 px font).
+float picture_size(const remod::Node& n, const remod::NodeSpec& spec) {
+    float v = 320;
+    try {
+        v = std::stof(n.params.at(spec.view_size));
+    } catch (const std::exception&) {
+    }
+    return ImClamp(v, 60.0f, 4000.0f) * ImGui::GetFontSize() / 16;
+}
+
+// `height`: the most it may take; `large`: the larger preview (State::big) when it's there (a Preview block).
+void draw_thumb(State& s, int node, float width, float height, bool large, std::string& hint) {
+    auto it = s.thumbs.images.find(node);
+    if (const auto big = s.big.images.find(node); large && big != s.big.images.end()) it = big;
+    if (it == s.thumbs.images.end()) {
+        const auto none = s.thumbs.none.find(node);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);  // within the block
-        if (none == s.no_thumb.end()) ImGui::TextDisabled("Working out the preview...");
+        if (none == s.thumbs.none.end()) ImGui::TextDisabled("Working out the preview...");
         else if (none->second.empty()) ImGui::TextDisabled("No preview: an input image or texture isn't known yet, or a value isn't set.");
         else ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "No preview: %s", none->second.c_str());
         ImGui::PopTextWrapPos();
         return;
     }
     const State::Thumb& t = it->second;
-    const float font = ImGui::GetFontSize(), k = ImMin(width / t.width, font * 8 / t.height);
+    const float k = ImMin(width / t.width, height / t.height);
     const ImVec2 size(t.width * k, t.height * k), at = ImGui::GetCursorScreenPos();
-    ImDrawList* d = ImGui::GetWindowDrawList();
-    const float cell = font * 0.5f;
-    for (float y = 0; y < size.y; y += cell)
-        for (float x = 0; x < size.x; x += cell)
-            d->AddRectFilled(at + ImVec2(x, y), at + ImVec2(ImMin(x + cell, size.x), ImMin(y + cell, size.y)),
-                             (int(x / cell) + int(y / cell)) % 2 ? pal::raised : pal::line);
-    ImGui::Image(ImTextureRef(t.srv), size);
-    if (ImGui::IsItemHovered())
+    ImGui::InvisibleButton("##thumb", size);
+    if (ImGui::IsItemClicked()) {
+        if (s.build_mode) {
+            s.popouts.try_emplace(node);  // no viewer in Build layout: its own window (again: the same one)
+        } else {
+            s.viewer_block = node;  // Use layout: in the viewer
+            s.viewer_view = {};
+            s.want_viewer = true;
+        }
+    }
+    checkered_image(ImGui::GetWindowDrawList(), t.srv, at, size);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         hint = "The result, worked out from a small copy of the image. It follows the values as you change them; Run "
-               "makes the full-size one.";
+               "makes the full-size one. Click to see it larger" +
+               std::string(s.build_mode ? ", in its own window." : " in the viewer (its Pop out button gives it a window).");
+    }
 }
 
 void draw_canvas(State& s, ed::EditorContext* editor) {
@@ -1981,8 +2098,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         const bool fields = spec && (std::ranges::any_of(spec->inputs, &remod::InputSpec::editable) ||
                                      std::ranges::any_of(spec->outputs, [](const auto& o) { return o.field != nullptr; }));
         const float label_width = utility ? font * 4 : font * 7, field_width = utility ? font * 8 : font * 14;
-        const float node_width = utility && !fields ? font * 7
-                                                    : label_width + field_width + style.ItemSpacing.x + button_width;
+        float node_width = utility && !fields ? font * 7 : label_width + field_width + style.ItemSpacing.x + button_width;
+        if (spec && spec->view_size) node_width = ImMax(node_width, picture_size(n, *spec));  // as wide as its picture
         const float x0 = ImGui::GetCursorPosX();
         const float left_edge = ImGui::GetCursorScreenPos().x - padding.x;  // node border, where pins sit
         const Outline o{family, ImVec2(left_edge, top), last_size, u, state == remod::NodeState::NotReached};
@@ -2130,7 +2247,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                         // On "auto", what it came to (e.g. "auto (~91 px)", worked out with the thumbnail, so ~), and
                         // dragging starts from there; a click alone leaves it on auto.
                         std::string shown = v == 0 && in.zero ? in.zero : in.format;
-                        if (const auto t = s.thumbs.find(n.id); v == 0 && in.zero && t != s.thumbs.end())
+                        if (const auto t = s.thumbs.images.find(n.id); v == 0 && in.zero && t != s.thumbs.images.end())
                             if (const auto f = t->second.found.find(in.name); f != t->second.found.end()) {
                                 char buf[64];
                                 std::snprintf(buf, sizeof buf, in.format, std::round(f->second));
@@ -2286,7 +2403,11 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             for (size_t slot = 0; slot < spec->inputs.size(); ++slot)
                 if (spec->inputs[slot].multiple) draw_input(slot);
         }
-        if (!far_view && spec && spec->thumbnail) folding(detail, [&] { draw_thumb(s, n.id, node_width, hovered_hint); });
+        if (!far_view && spec && spec->thumbnail)
+            folding(detail, [&] {
+                const bool large = spec->view_size != nullptr;
+                draw_thumb(s, n.id, node_width, large ? picture_size(n, *spec) : font * 8, large, hovered_hint);
+            });
         if (!far_view) ImGui::Dummy(ImVec2(node_width, 0));  // fixes the node width so the right edge (and its pins) line up
         ImGui::PopID();
         ed::EndNode();
@@ -2951,14 +3072,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             ImGui::DockBuilderFinish(dockspace);
         }
         if (state.build_mode) draw_nodes_panel(state);
+        if (state.want_viewer) {
+            browser->show_in_viewer([&state] { draw_block_view(state); });
+            state.want_viewer = false;
+        }
         if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles,
                                                      state.graph.profile, state.pinned, state.build_mode);
             !picked.empty())
             state.pending_texture = picked;
         if (state.pinned != state.saved.pinned_folders) remember_paths(state);  // a folder was pinned or unpinned
         if (state.build_mode || state.show_pipeline) draw_side_panel(state);
+        state.viewer_on_block = !state.build_mode && browser->viewer_shows_external();
         update_thumbs(state);
         draw_canvas(state, editor);
+        draw_popouts(state);
         // Undo steps and the unsaved-changes baseline, once the graph is settled: nothing dragged or typed, no block
         // still being placed. After a load or New, the graph as the editor placed it is the baseline.
         if (state.baseline_pending) {
@@ -2991,8 +3118,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (state.run.valid()) state.run.wait();  // let a running graph finish (every tool call has a timeout)
     remember_paths(state);
     browser.reset();  // its GPU textures, before the device goes
-    if (state.thumbs_job.valid()) state.thumbs_job.wait();
-    for (auto& [_, thumb] : state.thumbs) thumb.srv->Release();
+    for (State::PreviewSet* set : {&state.thumbs, &state.big}) {
+        if (set->job.valid()) set->job.wait();
+        release(*set);
+    }
     if (nfd_ok) NFD_Quit();
     ed::DestroyEditor(editor);
     ImGui_ImplDX11_Shutdown();

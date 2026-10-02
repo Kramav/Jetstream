@@ -194,6 +194,35 @@ void Browser::release_unused() {
     });
 }
 
+// The picture filling the rest of the window: wheel zooms, drag moves, double-click fits (zoom_area).
+void Browser::show_zoomed(const Image& img, ZoomPan& view) {
+    const ZoomPlace at = zoom_area("##zoomed", img.width, img.height, view);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->PushClipRect(at.area_min, at.area_max, true);
+    put_image(img, at.corner, at.size);
+    draw->PopClipRect();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%.0f%%. Wheel to zoom, drag to move, double-click to fit.", at.scale * 100);
+}
+
+// Pictures popped out (right-click → Pop out, or the viewer's button): a window each, any size, until closed.
+void Browser::draw_popouts() {
+    for (auto it = popped_.begin(); it != popped_.end();) {
+        bool open = true;
+        const float font = ImGui::GetFontSize();
+        ImGui::SetNextWindowSize(ImVec2(font * 32, font * 32), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin((display_name(it->first) + "###pop " + it->first).c_str(), &open, ImGuiWindowFlags_NoDocking)) {
+            const Image& img = image(it->first, kPreviewSide, true);
+            ImGui::Checkbox("Transparency", &alpha_);
+            if (!img.error.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "Can't preview: %s", img.error.c_str());
+            if (img.srv && img.width > 0 && img.height > 0) show_zoomed(img, it->second);
+        }
+        ImGui::End();
+        it = open ? std::next(it) : popped_.erase(it);
+    }
+}
+
 void Browser::put_image(const Image& img, ImVec2 at, ImVec2 box) {
     if (!img.srv || img.width <= 0 || img.height <= 0) return;
     const float scale = std::min(box.x / img.width, box.y / img.height);
@@ -245,8 +274,14 @@ int Browser::draw_tile(const std::string& abs, bool found, float size, bool sele
 // so the nicknames file holds just the game's names), saved at once. Empty removes the nickname.
 void Browser::item_menu(const std::string& abs, bool folder) {
     const std::string rel = rel_in_game(abs);
-    if (!folder && rel.empty()) return;  // a file outside the game files: nothing to offer
+    const bool picture = !folder && (kind_of(abs) == FileKind::Texture || kind_of(abs) == FileKind::Image);
+    if (!folder && rel.empty() && !picture) return;  // a file outside the game files: nothing to offer
     if (!ImGui::BeginPopupContextItem()) return;
+    if (picture) {
+        if (ImGui::MenuItem("Pop out")) popped_.try_emplace(abs);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open it in its own window, to enlarge it.");
+        if (!rel.empty()) ImGui::Separator();
+    }
     if (folder && pinned_) {
         const auto pin = std::ranges::find(*pinned_, abs);
         if (pin == pinned_->end() ? ImGui::MenuItem("Pin") : ImGui::MenuItem("Unpin")) {
@@ -386,6 +421,7 @@ void Browser::draw_places(const std::string& natives_root) {
 }
 
 void Browser::select_texture(const std::string& abs, const std::vector<remod::Profile>& profiles) {
+    external_ = nullptr;  // the viewer shows the texture again
     texture_ = abs;
     info_.clear();
     if (kind_of(abs) != FileKind::Texture) return;  // an image: the viewer shows it
@@ -409,6 +445,7 @@ void Browser::select_texture(const std::string& abs, const std::vector<remod::Pr
 }
 
 void Browser::select_mesh(const std::string& abs) {
+    external_ = nullptr;
     mesh_focus_ = view_open_ = true;
     if (abs == mesh_) return;  // picked again: shows it again
     mesh_ = abs;
@@ -505,6 +542,7 @@ std::string Browser::draw(const std::string& natives_root, const std::string& no
                             "the Pipeline panel, or pick any folder above.");
     ImGui::End();
 
+    draw_popouts();  // both layouts
     if (browser_only) return chosen;
     draw_textures(profiles, chosen);
     draw_viewer(noesis_exe);
@@ -695,7 +733,14 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
         }
     }
 
-    // One window, same place: the 3D view while a picked mesh is open (closing it shows the texture again).
+    // One window, same place: the caller's picture (show_in_viewer), else the 3D view while a picked mesh is open
+    // (closing it shows the texture again), else the texture.
+    if (external_) {
+        ImGui::Begin("Preview###viewer");
+        external_();
+        ImGui::End();
+        return;
+    }
     const bool in_3d = view_open_ && !mesh_.empty();
     ImGui::Begin(in_3d ? "3D view###viewer" : "Texture###viewer", in_3d ? &view_open_ : nullptr);
     if (!in_3d) {
@@ -704,43 +749,13 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
         if (texture_.empty()) ImGui::TextDisabled("Select a texture or a mesh in the Browser.");
         if (!big.error.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "Can't preview: %s", big.error.c_str());
         if (big.srv && big.width > 0 && big.height > 0) {
-            // Zoom and pan: the wheel zooms about the mouse, any button drags, double-click fits it again.
-            const ImVec2 box(std::max(ImGui::GetContentRegionAvail().x, 1.0f), std::max(ImGui::GetContentRegionAvail().y, 1.0f));
-            const ImVec2 at = ImGui::GetCursorScreenPos();
-            ImGui::InvisibleButton("##preview", box,
-                                   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
-                                       ImGuiButtonFlags_MouseButtonMiddle);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the wheel zooms instead of scrolling
-            if (preview_of_ != texture_ || (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))) {
+            if (ImGui::SmallButton("Pop out")) popped_.try_emplace(texture_);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open it in its own window, to enlarge it.");
+            if (preview_of_ != texture_) {
                 preview_of_ = texture_;
-                preview_zoom_ = 1;
-                preview_pan_ = ImVec2(0, 0);
+                preview_view_ = {};
             }
-            const ImGuiIO& io = ImGui::GetIO();
-            const float fit = std::min(box.x / big.width, box.y / big.height);
-            const ImVec2 middle(at.x + box.x * 0.5f, at.y + box.y * 0.5f);
-            if (ImGui::IsItemHovered() && io.MouseWheel != 0) {
-                const float before = preview_zoom_;  // up to 32 screen pixels per texel
-                preview_zoom_ = std::clamp(preview_zoom_ * std::pow(1.25f, io.MouseWheel), 1.0f, std::max(1.0f, 32 / fit));
-                const float k = 1 - preview_zoom_ / before;  // keeps the texel under the mouse where it is
-                preview_pan_.x += (io.MousePos.x - middle.x - preview_pan_.x) * k;
-                preview_pan_.y += (io.MousePos.y - middle.y - preview_pan_.y) * k;
-            }
-            if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0) ||
-                                          ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0) ||
-                                          ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0))) {
-                preview_pan_.x += io.MouseDelta.x;
-                preview_pan_.y += io.MouseDelta.y;
-            }
-            const float scale = fit * preview_zoom_;
-            const ImVec2 size(big.width * scale, big.height * scale);
-            const ImVec2 corner(middle.x + preview_pan_.x - size.x * 0.5f, middle.y + preview_pan_.y - size.y * 0.5f);
-            ImDrawList* draw = ImGui::GetWindowDrawList();
-            draw->PushClipRect(at, ImVec2(at.x + box.x, at.y + box.y), true);
-            put_image(big, corner, size);
-            draw->PopClipRect();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%.0f%%. Wheel to zoom, drag to move, double-click to fit.", scale * 100);
+            show_zoomed(big, preview_view_);
         }
         ImGui::End();
         return;
