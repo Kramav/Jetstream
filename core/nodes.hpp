@@ -80,7 +80,12 @@ struct NodeSpec {
     bool manual = false;                  // a step the user does by hand (front ends mark it clearly)
     bool utility = false;  // a simple helper (Split, Text): front ends draw it small and list it after the main steps
     Family family = Family::Transform;
+    // Values before a run (preview_values, graph.hpp): a pure type's run only computes (no files read or written), so
+    // a preview runs it; a step gives its predictable outputs through `preview` (e.g. the path it will write), without
+    // doing anything. Neither: its outputs are known only in a run.
+    bool pure = false;
     void (*run)(NodeRun&) = nullptr;      // what it does in a run; throws to fail the run
+    void (*preview)(NodeRun&) = nullptr;  // a step's outputs as far as known before running it; throws if unknown
 };
 
 // LoadTex, ExportImage, EditImage, ImportImage, SaveTex, PackageMod, CopyFile; utilities Value (a value kept in the

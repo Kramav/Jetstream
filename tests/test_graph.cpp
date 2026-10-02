@@ -1143,31 +1143,63 @@ TEST_CASE("run: Cut text passes on the part it keeps, and stops clearly without 
     CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("'streaming/' isn't in"));
 }
 
-TEST_CASE("link_value: the last run's value of the source, else a Value's through Splits") {
+TEST_CASE("preview_values: what links hold before a run; link_value prefers it to the last run's") {
     TempDir tmp;
     Graph g;
-    g.add_node("Value").params["value"] = "D:/GIMP/gimp.exe";  // 1
-    g.add_node("Split");                                       // 2
-    g.add_node("EditImage");                                    // 3
-    auto& text = g.add_node("Text");                            // 4
-    text.params["text"] = "Clean HUD";
-    g.add_node("Text");  // 5
-    REQUIRE(g.connect({1, "value", 2, "in"}).empty());
-    REQUIRE(g.connect({2, "out", 3, "editor"}).empty());
-    REQUIRE(g.connect({4, "text", 5, "text"}).empty());
+    auto& load = g.add_node("LoadTex");  // 1
+    load.params["tex"] = "tex/ui_main.tex.143221013";
+    auto& exp = g.add_node("ExportImage");  // 2
+    exp.params["png"] = "work/ui_main.png";
+    g.add_node("EditImage");  // 3
+    g.add_node("SaveTex");    // 4
+    auto& pkg = g.add_node("PackageMod");  // 5
+    pkg.params["name"] = "CleanHUD";
+    pkg.params["out"] = "build";
+    auto& cut = g.add_node("CutText");  // 6
+    cut.params["marker"] = "tex/";
+    auto& copy = g.add_node("CopyFile");  // 7
+    copy.params["dest"] = "backup\\";  // a folder: the copy keeps the source's name
+    g.add_node("Split");  // 8: the texture to Export image, Save texture's original and Cut text
+    REQUIRE(g.connect({1, "tex", 8, "in"}).empty());
+    REQUIRE(g.connect({8, "out", 2, "tex"}).empty());
+    REQUIRE(g.connect({8, "out", 4, "original"}).empty());
+    REQUIRE(g.connect({8, "out", 6, "text"}).empty());
+    REQUIRE(g.connect({2, "png", 3, "png"}).empty());
+    REQUIRE(g.connect({3, "image", 4, "image"}).empty());
+    REQUIRE(g.connect({4, "tex", 5, "tex"}).empty());
+    auto& note = g.add_node("Text");  // 9
+    note.params["text"] = "x";
+    REQUIRE(g.connect({9, "text", 7, "source"}).empty());
+
+    const remod::RunValues v = remod::preview_values(g, tmp.path);
+    auto at = [&](int node, const char* port) {
+        const auto it = v.find({node, port});
+        return it == v.end() ? std::string("(unknown)") : it->second;
+    };
+    CHECK(at(1, "tex") == (tmp.path / "tex/ui_main.tex.143221013").lexically_normal().string());
+    CHECK(at(8, "out") == at(1, "tex"));                                       // through the Split
+    CHECK(at(2, "png") == (tmp.path / "work/ui_main.png").lexically_normal().string());
+    CHECK(at(3, "image") == at(2, "png"));                                   // Edit image passes it on
+    CHECK(at(4, "tex") == "(unknown)");                                      // a temporary file, only in a run
+    CHECK(at(5, "mod") == (tmp.path / "build" / "CleanHUD").lexically_normal().string() + ".zip");  // name + folder
+    CHECK(at(6, "text") == "ui_main.tex.143221013");                         // Cut text runs for real
+    CHECK(at(7, "path") == (tmp.path / "backup" / "x").lexically_normal().string());
+    CHECK(fs::is_empty(tmp.path));                                 // and nothing was written
+
+    remod::RunValues last{{{4, "tex"}, "C:/temp/run/4.tex.143221013"}, {{2, "png"}, "old.png"}};
     bool from_run = true;
-    CHECK(remod::link_value(g, {}, 1, &from_run) == "D:/GIMP/gimp.exe");  // Split -> Edit image: the Value's, via the Split
+    const size_t export_to_edit = g.links_into(3, "png").at(0), save_to_package = g.links_into(5, "tex").at(0);
+    CHECK(remod::link_value(g, v, last, export_to_edit, &from_run) == at(2, "png"));  // the preview is current
     CHECK_FALSE(from_run);
-    CHECK(remod::link_value(g, {}, 2).empty());  // a step's result: unknown before a run
+    CHECK(remod::link_value(g, v, last, save_to_package, &from_run) == "C:/temp/run/4.tex.143221013");
+    CHECK(from_run);
+    CHECK(remod::link_value(g, v, {}, save_to_package).empty());
 
     Graph texts;  // a run records what every output gave
     texts.add_node("Text").params["text"] = "Clean HUD";
     texts.add_node("Text");
     REQUIRE(texts.connect({1, "text", 2, "text"}).empty());
-    const auto r = run_in(texts, tmp.path);
-    CHECK(r.values.at({1, "text"}) == "Clean HUD");
-    CHECK(remod::link_value(texts, r.values, 0, &from_run) == "Clean HUD");
-    CHECK(from_run);
+    CHECK(run_in(texts, tmp.path).values.at({1, "text"}) == "Clean HUD");
 }
 
 TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {

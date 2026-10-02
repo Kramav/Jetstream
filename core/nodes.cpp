@@ -106,6 +106,9 @@ NodeSpec load_tex() {
                 r.log("note: the game also has a high-resolution streaming/" + natives->second +
                       "; if your change doesn't show in game, that copy may need replacing too (CLAUDE.md §9)");
         },
+        .preview = [](NodeRun& r) {
+            r.output("tex", file_value(r.resolve(r.text("tex"))));
+        },
     };
 }
 
@@ -132,6 +135,10 @@ NodeSpec export_image() {
                 r.done("kept your " + png.filename().string(), png);
             }
             r.output("png", file_value(png, tex.game_path));
+        },
+        .preview = [](NodeRun& r) {
+            r.input("tex");  // known only if its texture is
+            r.output("png", file_value(r.resolve(r.text("png"))));
         },
     };
 }
@@ -166,6 +173,9 @@ NodeSpec edit_image() {
                 r.log("waiting for you to edit " + png.path.string());
             }
         },
+        .preview = [](NodeRun& r) {
+            r.output("image", r.input("png"));
+        },
     };
 }
 
@@ -184,6 +194,9 @@ NodeSpec import_image() {
             if (!fs::is_regular_file(png)) throw GraphError("image not found: " + png.string());
             r.output("image", file_value(png));
             r.done("using " + png.filename().string(), png);
+        },
+        .preview = [](NodeRun& r) {
+            r.output("image", file_value(r.resolve(r.text("png"))));
         },
     };
 }
@@ -272,6 +285,11 @@ NodeSpec package_mod() {
                        ".zip",
                    fs::path(root) += ".zip");
         },
+        .preview = [](NodeRun& r) {
+            const std::string name = r.text("name");
+            if (name.empty()) throw GraphError("no mod name yet");
+            r.output("mod", file_value(fs::absolute(r.resolve(r.text("out")) / name) += ".zip"));  // as build_package
+        },
     };
 }
 
@@ -288,6 +306,7 @@ NodeSpec text_node() {
         .outputs = {{"text", Text, "text"}},
         .utility = true,
         .family = Family::Value,
+        .pure = true,
         .run = [](NodeRun& r) {
             std::vector<std::string> parts;
             for (const auto& v : r.values("parts")) parts.push_back(v.text);
@@ -382,6 +401,10 @@ NodeSpec copy_file() {
             transfer(r, source, destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir)),
                      Transfer::Copy);
         },
+        .preview = [](NodeRun& r) {
+            const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
+            r.output("path", file_value(destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir))));
+        },
     };
 }
 
@@ -406,6 +429,10 @@ NodeSpec move_file() {
             transfer(r, source, destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir)),
                      Transfer::Move);
         },
+        .preview = [](NodeRun& r) {
+            const fs::path source = clean_path(r.text("source"), r.run.options.base_dir);
+            r.output("path", file_value(destination_for(source, clean_path(r.text("dest"), r.run.options.base_dir))));
+        },
     };
 }
 
@@ -428,6 +455,9 @@ NodeSpec rename_file() {
             if (name.has_parent_path() || name.has_root_path() || name == "." || name == "..")
                 throw GraphError("New name must be just a name, not a path: " + name.string());
             transfer(r, source, source.parent_path() / name, Transfer::Rename);
+        },
+        .preview = [](NodeRun& r) {
+            r.output("path", file_value(clean_path(r.text("source"), r.run.options.base_dir).parent_path() / r.text("name")));
         },
     };
 }
@@ -502,6 +532,9 @@ NodeSpec make_folder() {
             r.output("folder", file_value(folder));
             r.done((existed ? "already there: " : "made ") + folder.string(), folder);
         },
+        .preview = [](NodeRun& r) {
+            r.output("folder", file_value(clean_path(r.text("folder"), r.run.options.base_dir)));
+        },
     };
 }
 
@@ -519,6 +552,7 @@ NodeSpec value() {
                      .hint = "Kept in the graph file. Its kind follows what it's connected to."}},
         .utility = true,
         .family = Family::Value,
+        .pure = true,
         .run = [](NodeRun& r) {
             const std::string text = r.node.params.at("value");  // validate(): required
             const PortType kind = r.run.graph.output_type(r.node.id, "value");
@@ -540,6 +574,7 @@ NodeSpec split() {
         .outputs = {{.name = "out", .type = Any, .label = "out", .multiple = true}},
         .utility = true,
         .family = Family::Flow,
+        .pure = true,
         .run = [](NodeRun& r) {
             r.output("out", r.input("in"));  // as is: a texture keeps its game path
             r.done("passed on to " + std::to_string(r.run.graph.links_from(r.node.id, "out").size()) + " step(s)");
@@ -562,6 +597,7 @@ NodeSpec join_path() {
         .outputs = {{.name = "path", .type = Any, .label = "path"}},
         .utility = true,
         .family = Family::Value,
+        .pure = true,
         .run = [](NodeRun& r) {
             const fs::path folder = clean_path(r.text("folder"), r.run.options.base_dir);
             const fs::path add(r.text("add"));
@@ -587,6 +623,7 @@ NodeSpec path_parts() {
                     {"extension", Text, "extension"}},
         .utility = true,
         .family = Family::Value,
+        .pure = true,
         .run = [](NodeRun& r) {
             const fs::path path = clean_path(r.text("path"), r.run.options.base_dir);
             r.output("folder", file_value(path.parent_path()));
@@ -611,6 +648,7 @@ NodeSpec change_extension() {
         .outputs = {{"path", Path, "path"}},
         .utility = true,
         .family = Family::Value,
+        .pure = true,
         .run = [](NodeRun& r) {
             fs::path path = clean_path(r.text("path"), r.run.options.base_dir);
             std::string ext = r.text("ext");
@@ -644,6 +682,7 @@ NodeSpec cut_text_node() {
         .outputs = {{"text", Text, "text"}},
         .utility = true,
         .family = Family::Value,
+        .pure = true,
         .run = [](NodeRun& r) {
             const std::string text = r.text("text"), marker = r.text("marker"), keep = r.text("keep");
             const CutKeep how = keep == "before" ? CutKeep::Before
@@ -674,6 +713,9 @@ NodeSpec require_file() {
             if (!fs::is_regular_file(long_path(file))) throw GraphError("required file missing: " + file.string());
             r.output("file", file_value(file, linked.empty() ? std::string() : linked[0].game_path));
             r.done("found " + file.filename().string(), file);
+        },
+        .preview = [](NodeRun& r) {
+            r.output("file", file_value(clean_path(r.text("file"), r.run.options.base_dir)));
         },
     };
 }

@@ -669,21 +669,44 @@ void NodeRun::warn(const std::string& warning) {
     if (run.options.log) run.options.log("warning: " + run.result.warnings.back());
 }
 
-std::string link_value(const Graph& g, const RunValues& last_run, size_t link, bool* from_run) {
+RunValues preview_values(const Graph& g, const fs::path& base_dir) {
+    struct NoConverter : ITextureConverter {  // previews convert nothing
+        TexMeta load_tex(const fs::path&, const fs::path&, const Profile&) override { throw GraphError("not in a preview"); }
+        TexMeta save_tex(const fs::path&, const fs::path&, const fs::path&, const Profile&) override {
+            throw GraphError("not in a preview");
+        }
+    } converter;
+    const Profile profile;
+    const RunOptions options{.profile = profile, .converter = converter, .base_dir = base_dir};
+    RunState run{.graph = g, .options = options, .work_dir = {}};
+    for (const Node* n : topo_order(g)) {
+        const NodeSpec* spec = find_spec(n->type);
+        void (*fn)(NodeRun&) = !spec ? nullptr : spec->pure ? spec->run : spec->preview;
+        if (!fn) continue;
+        try {
+            NodeRun node_run(run, *n);
+            fn(node_run);
+        } catch (const std::exception&) {
+            // Not known yet: an input isn't (its source can't be previewed), or a value isn't usable.
+        }
+    }
+    RunValues out;
+    for (const auto& [key, value] : run.outputs) out[key] = value.text;
+    return out;
+}
+
+std::string link_value(const Graph& g, const RunValues& preview, const RunValues& last_run, size_t link,
+                       bool* from_run) {
     if (from_run) *from_run = false;
     if (link >= g.links.size()) return "";
     const Link& l = g.links[link];
+    if (const auto it = preview.find({l.from_node, l.from_port}); it != preview.end() && !it->second.empty())
+        return it->second;
     if (const auto it = last_run.find({l.from_node, l.from_port}); it != last_run.end()) {
         if (from_run) *from_run = true;
         return it->second;
     }
-    const Node* from = g.find(l.from_node);
-    if (!from) return "";
-    if (from->type == "Value") {
-        const auto it = from->params.find("value");
-        return it == from->params.end() ? std::string() : it->second;
-    }
-    return from->type == "Split" ? known_value(g, from->id, "in") : std::string();
+    return "";
 }
 
 void History::reset(const Graph& graph) {

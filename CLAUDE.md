@@ -204,9 +204,14 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   Save; Ctrl+S saves; New, Load and closing the window (WM_CLOSE, also from the taskbar while minimized) ask Save /
   Don't save / Cancel. View changes (fit, Far / Near) run after the blocks are drawn.
 - **Fields show their values (user, 2026-10-01):** hovering a filled field shows the whole value (e.g. a long path)
-  instead of the hint; a linked field shows what it holds instead of "linked": the source's value from the last run
-  (`RunResult::values`, every output's text, also on `RunError`), else a Value's (through Splits; core `link_value`),
-  else "linked (known after a run)". Link tooltips say which, and where it comes from.
+  instead of the hint; a linked field shows what it holds instead of "linked" (core `link_value`): first its
+  **preview** (core `preview_values`, recomputed when the graph changes: `NodeSpec::pure` blocks are run for real,
+  steps give their predictable outputs through `NodeSpec::preview` without touching files: Original texture / Export
+  image / Use existing image / Make folder / Require file their path, Edit image what comes in, Copy / Move
+  `destination_for`, Rename folder + new name, Package `<out>\<name>.zip`; a block whose input isn't known gets
+  nothing), else the source's value from the last run (`RunResult::values`, also on `RunError`), else "linked
+  (known after a run)". Only Convert image to texture (a temporary .tex) and what depends on it wait for a run. A new
+  step type should get a `preview` if its output is predictable.
 - **App modes:** Build layout (structure editing: add/insert/duplicate/delete/link, via core helpers
   `choices_for_pin`, `add_connected`, `choices_for_link`, `insert_node`, `duplicate_node`, `disconnect_node`)
   and Use layout (structure and block positions locked; fill in, run, edit). The switch sits centred above the

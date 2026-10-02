@@ -402,6 +402,10 @@ struct State {
     std::string pending_path;  // the graph to load
     bool quit = false;
     remod::RunValues values;  // what every output gave in the last run (linked fields show it)
+    // What links hold before a run (core preview_values), worked out again when the graph or its file changes.
+    remod::RunValues preview;
+    remod::Graph preview_of;
+    std::string preview_path = "\x01";
     std::future<remod::RunResult> run;
     std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
     // Link drawing: pin centres (canvas coordinates) recorded while drawing the nodes, and the routes, recomputed
@@ -1803,6 +1807,11 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.dest_inputs = std::move(inputs);
         s.dest_checked = ImGui::GetTime();
     }
+    if (s.graph != s.preview_of || s.graph_path != s.preview_path) {
+        s.preview = remod::preview_values(s.graph, std::filesystem::absolute(s.graph_path).parent_path());
+        s.preview_of = s.graph;
+        s.preview_path = s.graph_path;
+    }
     bool open_choice_menu = false, open_rename = false;
     for (auto& n : s.graph.nodes) {
         const remod::NodeSpec* spec = remod::find_spec(n.type);
@@ -1920,7 +1929,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 // A link's tooltip: the value it holds (the last run's, or a Value's), else the input's hint; its source.
                 auto from = [&](size_t link) {
                     bool from_run = false;
-                    const std::string held = remod::link_value(s.graph, s.values, link, &from_run);
+                    const std::string held = remod::link_value(s.graph, s.preview, s.values, link, &from_run);
                     return (held.empty() ? std::string(in.hint) : held + (from_run ? "\n(as of the last run)" : "")) +
                            "\nFrom: " + source_of(s.graph, s.graph.links[link]);
                 };
@@ -1957,7 +1966,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     const Faded field(linked.empty() ? 1.0f : detail);  // a linked row stays; its field fades
                     std::string& value = n.params[in.name];
                     if (!linked.empty()) {  // a link overrides the typed value: show what it holds, if known yet
-                        const std::string held = remod::link_value(s.graph, s.values, linked[0]);
+                        const std::string held = remod::link_value(s.graph, s.preview, s.values, linked[0]);
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextDisabled(
                             "%s", fit_text(nullptr, font, held.empty() ? "linked (known after a run)" : held, field_width).c_str());

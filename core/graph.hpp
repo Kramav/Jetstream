@@ -141,9 +141,16 @@ struct RunError : GraphError {
 // Runs nodes in dependency order. Throws GraphError if the graph isn't runnable, RunError if a node fails.
 RunResult run_graph(const Graph& graph, const RunOptions& options);
 
-// What link `link` holds, as far as is known without running: what its source gave in the last run (`last_run`,
-// RunResult::values; `*from_run` set), else a Value block's typed value (through Splits); "" if neither.
-std::string link_value(const Graph& graph, const RunValues& last_run, size_t link, bool* from_run = nullptr);
+// Every output's value as far as it's known without running (front ends show what links hold): pure blocks are run
+// (NodeSpec::pure), steps give their predictable outputs (NodeSpec::preview, e.g. the path they'll write) and touch
+// nothing. Outputs only a run makes (a temporary .tex) are left out, and so is everything that depends on them.
+// Relative paths resolve against `base_dir`, as in a run.
+RunValues preview_values(const Graph& graph, const std::filesystem::path& base_dir);
+
+// What link `link` holds: its source's preview value (`preview`, from preview_values: the graph as it is now), else
+// what the source gave in the last run (`last_run`, RunResult::values; `*from_run` set); "" if neither.
+std::string link_value(const Graph& graph, const RunValues& preview, const RunValues& last_run, size_t link,
+                       bool* from_run = nullptr);
 
 // Undo / redo (front ends): snapshots of the whole graph (blocks, links, values, positions; small). A front end calls
 // track() whenever the graph may have changed and is settled (nothing being dragged or typed): a change since the

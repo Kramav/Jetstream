@@ -167,11 +167,11 @@
     {
       "id": 2,
       "params": {
-        "png": "my_texture.png"
+        "png": "my_texture.tga"
       },
       "pos": [
-        1711.0,
-        -163.0
+        1704.0,
+        -159.0
       ],
       "type": "ExportImage"
     },
@@ -232,7 +232,7 @@
     {
       "id": 8,
       "params": {
-        "value": "cosa"
+        "value": "my name"
       },
       "pos": [
         -385.0,
