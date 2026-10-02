@@ -40,6 +40,24 @@ std::vector<size_t> search(const std::vector<std::string>& paths, const std::str
 // The file name after the last '/'.
 std::string file_name(const std::string& path);
 
+// ---- Browsing any folder (the Browser goes anywhere, not only the indexed game files) ----
+
+// What a file is, by its name: an RE Engine texture (.tex, .tex.<version>), mesh (.mesh.<version>), an image the
+// edit step reads (png, tga, jpg), anything else.
+enum class FileKind { Folder, Texture, Mesh, Image, Other };
+FileKind file_kind(const std::string& name);
+
+struct DirEntry {
+    std::string name;
+    FileKind kind;
+};
+// A folder's entries: folders first, then files, each sorted ignoring case. Entries that can't be read are skipped;
+// `error` is set if the folder itself can't be read.
+std::vector<DirEntry> list_folder(const std::filesystem::path& folder, std::string* error = nullptr);
+
+// The drives, e.g. C:\ and D:\.
+std::vector<std::filesystem::path> drive_roots();
+
 // The materials of a mesh's material file (.mdf2) and the textures they use, matched to `textures` (an
 // AssetIndex list). The file is <mesh>.mdf2.*, <mesh>_mat.mdf2.*, <mesh>_00.mdf2.* (fmt_RE_MESH's guesses
 // [plugin source]), else the first .mdf2 in the mesh's folder. Throws if none is found or it can't be read.

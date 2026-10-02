@@ -622,6 +622,42 @@ NodeSpec change_extension() {
     };
 }
 
+NodeSpec cut_text_node() {
+    return {
+        .type = "CutText",
+        .title = "Cut text",
+        .summary = "Keeps part of a text or path, cut at a marker: a texture's path after natives/STM/ is its in-game "
+                   "path. Ignores case and treats \\ and / alike.",
+        .inputs = {{.name = "text", .label = "Text", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "The text to cut. Link a file or texture to cut its full path."},
+                   {.name = "marker", .label = "Marker", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "Where to cut, e.g. natives/STM/. The run stops if the text doesn't contain it."},
+                   {.name = "keep", .label = "Keep", .type = Text, .widget = Widget::Choice, .required = true,
+                    .hint = "Which part to keep.", .initial = "after",
+                    .options = {{"after", "After the marker"},
+                                {"before", "Before the marker"},
+                                {"from", "From the marker on"},
+                                {"upto", "Up to the marker"}}},
+                   {.name = "occurrence", .label = "Which", .type = Text, .widget = Widget::Choice, .required = true,
+                    .hint = "If the marker appears more than once: cut at its first or its last.", .initial = "first",
+                    .options = {{"first", "First one"}, {"last", "Last one"}}}},
+        .outputs = {{"text", Text, "text"}},
+        .utility = true,
+        .family = Family::Value,
+        .run = [](NodeRun& r) {
+            const std::string text = r.text("text"), marker = r.text("marker"), keep = r.text("keep");
+            const CutKeep how = keep == "before" ? CutKeep::Before
+                                : keep == "from" ? CutKeep::From
+                                : keep == "upto" ? CutKeep::UpTo
+                                                 : CutKeep::After;
+            const auto out = cut_text(text, marker, how, r.text("occurrence") == "last");
+            if (!out) throw GraphError("'" + marker + "' isn't in '" + text + "'");
+            r.output("text", {*out, {}, {}});
+            r.done("\"" + *out + "\"");
+        },
+    };
+}
+
 NodeSpec require_file() {
     return {
         .type = "RequireFile",
@@ -650,7 +686,7 @@ const std::vector<NodeSpec>& node_specs() {
         load_tex(), export_image(), edit_image(), import_image(), save_tex(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(),
         // Utilities.
-        value(), text_node(), split(), join_path(), path_parts(), change_extension(), require_file(),
+        value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),
     };
     return specs;
 }
@@ -731,6 +767,24 @@ std::string fill_template(const std::string& text, const std::vector<std::string
     }
     out.append(last, text.cend());
     return out;
+}
+
+std::optional<std::string> cut_text(const std::string& text, const std::string& marker, CutKeep keep, bool last) {
+    auto fold = [](std::string s) {  // same length: positions map back to the original
+        for (char& c : s) c = c == '\\' ? '/' : char(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    if (marker.empty()) return std::nullopt;
+    const std::string t = fold(text), m = fold(marker);
+    const size_t at = last ? t.rfind(m) : t.find(m);
+    if (at == std::string::npos) return std::nullopt;
+    switch (keep) {
+    case CutKeep::After: return text.substr(at + m.size());
+    case CutKeep::Before: return text.substr(0, at);
+    case CutKeep::From: return text.substr(at);
+    case CutKeep::UpTo: return text.substr(0, at + m.size());
+    }
+    return std::nullopt;
 }
 
 }  // namespace remod

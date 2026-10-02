@@ -367,6 +367,7 @@ struct State {
     float detail = 1;       // eases to 0 in the overview, back to 1 zoomed in
     bool tidy_requested = false;  // Tidy up clicked: arrange the blocks this frame
     bool show_descriptions = saved.show_descriptions;  // blocks' description text (else a tooltip on the title)
+    std::vector<std::string> pinned = saved.pinned_folders;  // the Browser's pinned folders
     // Where a menu was opened, and on what: right-click / let-go position, pin, link index, node.
     ImVec2 menu_pos;
     ed::PinId menu_pin;
@@ -490,7 +491,8 @@ void remember_paths(State& s) {
                               .show_help = s.show_help,
                               .game_files_dir = s.game_files,
                               .build_mode = s.build_mode,
-                              .show_descriptions = s.show_descriptions};
+                              .show_descriptions = s.show_descriptions,
+                              .pinned_folders = s.pinned};
     if (now == s.saved || s.settings_file.empty()) return;
     try {
         remod::save_settings(now, s.settings_file);
@@ -2640,9 +2642,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         }
         if (state.build_mode) draw_nodes_panel(state);
         if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles,
-                                                     state.graph.profile, state.build_mode);
+                                                     state.graph.profile, state.pinned, state.build_mode);
             !picked.empty())
             state.pending_texture = picked;
+        if (state.pinned != state.saved.pinned_folders) remember_paths(state);  // a folder was pinned or unpinned
         if (state.build_mode || state.show_pipeline) draw_side_panel(state);
         draw_canvas(state, editor);
         draw_warnings(state);

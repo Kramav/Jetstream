@@ -1089,6 +1089,33 @@ TEST_CASE("Path parts, Change extension and Require file") {
     CHECK(run_in(req, tmp.path).nodes.at(after).message == "\"" + (tmp.path / "needed.png").string() + "\"");
 }
 
+TEST_CASE("cut_text cuts at a marker, ignoring case and slash direction") {
+    using remod::CutKeep;
+    const std::string p = R"(E:\REtool\re_chunk_000\natives\STM\_chainsaw\ui\tex\a.tex.143221013)";
+    CHECK(remod::cut_text(p, "natives/stm/", CutKeep::After, false) == R"(_chainsaw\ui\tex\a.tex.143221013)");
+    CHECK(remod::cut_text(p, "natives/stm/", CutKeep::Before, false) == R"(E:\REtool\re_chunk_000\)");
+    CHECK(remod::cut_text(p, "NATIVES\\STM", CutKeep::From, false) == R"(natives\STM\_chainsaw\ui\tex\a.tex.143221013)");
+    CHECK(remod::cut_text(p, "natives/stm", CutKeep::UpTo, false) == R"(E:\REtool\re_chunk_000\natives\STM)");
+    CHECK(remod::cut_text("a/b/c", "/", CutKeep::After, false) == "b/c");
+    CHECK(remod::cut_text("a/b/c", "/", CutKeep::After, true) == "c");  // the last one
+    CHECK_FALSE(remod::cut_text(p, "streaming/", CutKeep::After, false));
+    CHECK_FALSE(remod::cut_text(p, "", CutKeep::After, false));
+}
+
+TEST_CASE("run: Cut text passes on the part it keeps, and stops clearly without its marker") {
+    TempDir tmp;
+    Graph g;
+    auto& cut = g.add_node("CutText");  // 1
+    cut.params["text"] = "C:/x/natives/stm/_chainsaw/ui/a.tex.143221013";
+    cut.params["marker"] = "Natives\\STM\\";
+    CHECK(cut.params.at("keep") == "after");  // defaults
+    CHECK(cut.params.at("occurrence") == "first");
+    const int out = observe(g, 1, "text");
+    CHECK(run_in(g, tmp.path).nodes.at(out).message == "\"_chainsaw/ui/a.tex.143221013\"");
+    g.find(1)->params["marker"] = "streaming/";
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("'streaming/' isn't in"));
+}
+
 TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {
     auto result = [](const char* type, const char* input) {
         const char* r = remod::find_input(*remod::find_spec(type), input)->result;

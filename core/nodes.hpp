@@ -5,6 +5,7 @@
 #include <array>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -117,5 +118,11 @@ std::string game_path_from(const std::filesystem::path& file, const std::string&
 // Text: fills "{1}", "{2}", ... in `text` with `parts` (1-based). Throws GraphError if text uses a part that isn't
 // given.
 std::string fill_template(const std::string& text, const std::vector<std::string>& parts);
+
+// Cut text: `text` cut at `marker`'s first (or last) occurrence, ignoring case and treating \ and / alike (it's mostly
+// for paths); the kept part keeps its own characters. After / Before leave the marker out, From / UpTo keep it.
+// nullopt if the marker isn't in the text (or is empty).
+enum class CutKeep { After, Before, From, UpTo };
+std::optional<std::string> cut_text(const std::string& text, const std::string& marker, CutKeep keep, bool last);
 
 }  // namespace remod

@@ -306,3 +306,33 @@ TEST_CASE("texture_target: the selected Original texture block, else the only on
     CHECK(remod::texture_target(g, b) == b);
 }
 
+
+TEST_CASE("file_kind and list_folder: any folder, folders first, sorted ignoring case") {
+    using remod::FileKind;
+    CHECK(remod::file_kind("cha000_albd.tex.143221013") == FileKind::Texture);
+    CHECK(remod::file_kind("plain.TEX") == FileKind::Texture);
+    CHECK(remod::file_kind("cha000.mesh.221108797") == FileKind::Mesh);
+    CHECK(remod::file_kind("shot.PNG") == FileKind::Image);
+    CHECK(remod::file_kind("notes.txt") == FileKind::Other);
+    CHECK(remod::file_kind("a.tex.png") == FileKind::Image);
+
+    TempDir tmp;
+    fs::create_directories(tmp.path / "zeta");
+    fs::create_directories(tmp.path / "Alpha");
+    test::write_file(tmp.path / "b.png", "x");
+    test::write_file(tmp.path / "A.tex.143221013", "x");
+    std::string error;
+    const auto entries = remod::list_folder(tmp.path, &error);
+    CHECK(error.empty());
+    REQUIRE(entries.size() == 4);
+    CHECK(entries[0].name == "Alpha");
+    CHECK(entries[0].kind == FileKind::Folder);
+    CHECK(entries[1].name == "zeta");
+    CHECK(entries[2].name == "A.tex.143221013");
+    CHECK(entries[2].kind == FileKind::Texture);
+    CHECK(entries[3].kind == FileKind::Image);
+
+    CHECK(remod::list_folder(tmp.path / "missing", &error).empty());
+    CHECK_FALSE(error.empty());
+    CHECK_FALSE(remod::drive_roots().empty());
+}

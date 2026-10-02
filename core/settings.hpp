@@ -2,6 +2,7 @@
 // Per-user settings remembered between app sessions.
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace remod {
 
@@ -12,6 +13,7 @@ struct Settings {
     std::string game_files_dir;  // extracted game files (REtool); empty = ask the RE plugin's NativesPath.txt
     bool build_mode = false;     // app: Build layout (edit blocks and links) vs Use layout (fill in and run)
     bool show_descriptions = true;  // app: each block's description text (else on hovering its title)
+    std::vector<std::string> pinned_folders;  // app: the Browser's pinned folders, in the order pinned
     bool operator==(const Settings&) const = default;
 };
 

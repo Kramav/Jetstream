@@ -83,7 +83,7 @@ Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, PackageMod; file steps CopyFile,
   MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
-  RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
+  CutText, RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
   utility.**
 - **Node types live in `core/nodes.*` (user, 2026-10-01: kept apart for cleanliness).** One function per type returns
   its `NodeSpec`, run code included (`NodeSpec::run`, given a `NodeRun`: inputs, outputs, done/wait/log/warn; core-only
@@ -239,6 +239,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   "Replace existing" overwrites only a previous build of the same mod.
 - Old graph files are migrated on load: PackageMod's typed `screenshot` becomes ImportImage → preview.
 - LoadTex infers the game path when the `.tex` sits inside a `natives/STM/...` tree; otherwise set `game_path`.
+- **Cut text (CutText, user 2026-10-01: "truncate text based on the character content"):** keeps the part of a text
+  or path after / before / from / up to a marker, at its first or last occurrence (core `cut_text`), ignoring case and
+  treating `\` and `/` alike; a missing marker fails the run. E.g. a texture path cut after `natives/STM/` gives the
+  in-game path for LoadTex's `game_path` when the file isn't inside a natives tree.
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> --noesis <exe>` and from the app's Run button.
 
@@ -421,10 +425,19 @@ Fill these in from the manual spike before implementing the affected code:
 - M3: REFramework Lua runtime reading manifests (triggers → actions).
 - M4: C++ REFramework plugin for video playback (in-game "cutscene" videos).
 - Replace ImGui front end with a polished native UI.
-- **Texture and mesh browser: first version built (2026-10-01).** Use layout only. Layout: Browser left (folder tree, search,
-  file paths), Graph middle, Pipeline right; along the bottom the viewer (left corner: the selected texture, or the
-  picked mesh in 3D until closed; the last mesh stays) and Textures (thumbnails of the picked mesh's or the folder's
-  textures, "Use in graph" via `texture_target`).
+- **Texture and mesh browser: first version built (2026-10-01).** Layout: Browser left (both layouts; Build layout
+  shows only it), Graph middle, Pipeline right; in Use layout along the bottom the viewer (left corner: the selected
+  texture or image, or the picked mesh in 3D until closed; the last mesh stays) and Textures (thumbnails of the picked
+  mesh's or the place's textures and images, "Use in graph" via `texture_target`).
+  - **Browses anywhere (user, 2026-10-01):** the tree is Pinned ("Game files" = the indexed REtool folder, then the
+    user's pins, `Settings::pinned_folders`, right-click a folder → Pin / Unpin) and This PC (drives, `drive_roots`;
+    folders read when opened, `list_folder`, kept until Refresh), with an address bar (Up, a typed path, Refresh).
+    Outside the game files every file is listed (`file_kind`: textures, meshes and png/tga/jpg images get previews,
+    images via `read_image_bgra`). Files are known by absolute path; inside the game files also relative to them.
+    Search: inside the game files the index search (nicknames too), elsewhere a name filter of the current folder.
+    **Nicknames apply inside the game files only (user: no file bloat).** A mesh's textures are matched only inside
+    the game files (it needs the index); elsewhere the 3D shape shows untextured. The index still skips `streaming/`;
+    browse to it on disk to see those copies.
   - Core: `core/browse.*` (index, tree, search, `mesh_textures`, `preview_file`) and `read_tex_pixels`. The app
     uploads the stored mip to D3D11 as is: RE Engine's format numbers are DXGI's, so the GPU decodes BC1-7 itself.
     sRGB formats are shown as their UNORM twins (the back buffer is UNORM).

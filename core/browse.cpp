@@ -1,5 +1,8 @@
 #include "browse.hpp"
 
+#define NOMINMAX
+#include <windows.h>  // GetLogicalDrives
+
 #include <algorithm>
 #include <bit>
 #include <cctype>
@@ -159,6 +162,44 @@ std::vector<size_t> search(const std::vector<std::string>& paths, const std::str
 }
 
 std::string file_name(const std::string& path) { return path.substr(path.rfind('/') + 1); }
+
+FileKind file_kind(const std::string& name) {
+    const std::string n = lower(name);
+    if (n.ends_with(".tex") || is_kind(n, ".tex.")) return FileKind::Texture;
+    if (is_kind(n, ".mesh.")) return FileKind::Mesh;
+    for (const char* ext : {".png", ".tga", ".jpg"})
+        if (n.ends_with(ext)) return FileKind::Image;
+    return FileKind::Other;
+}
+
+std::vector<DirEntry> list_folder(const fs::path& folder, std::string* error) {
+    std::vector<DirEntry> folders, files;
+    std::error_code ec;
+    fs::directory_iterator it(folder, fs::directory_options::skip_permission_denied, ec);
+    if (ec) {
+        if (error) *error = "Can't open " + folder.string() + ": " + ec.message();
+        return {};
+    }
+    for (; it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) break;  // ponytail: stops at the first unreadable entry; per-entry recovery if a folder shows that
+        std::error_code ignore;
+        const std::string name = it->path().filename().string();
+        if (it->is_directory(ignore)) folders.push_back({name, FileKind::Folder});
+        else files.push_back({name, file_kind(name)});
+    }
+    for (auto* group : {&folders, &files})
+        std::ranges::sort(*group, [](const DirEntry& a, const DirEntry& b) { return less_nocase(a.name, b.name); });
+    folders.insert(folders.end(), files.begin(), files.end());
+    return folders;
+}
+
+std::vector<fs::path> drive_roots() {
+    std::vector<fs::path> out;
+    const DWORD drives = ::GetLogicalDrives();
+    for (int i = 0; i < 26; ++i)
+        if (drives & (1u << i)) out.push_back(std::string(1, char('A' + i)) + ":\\");
+    return out;
+}
 
 MeshTextures mesh_textures(const fs::path& natives_root, const std::string& mesh, const std::vector<std::string>& textures) {
     const std::string stem = lower(file_name(mesh).substr(0, lower(file_name(mesh)).rfind(".mesh.")));

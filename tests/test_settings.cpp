@@ -12,7 +12,8 @@ TEST_CASE("settings round-trip, and bad files fall back to defaults") {
     const remod::Settings s{.graph_path = "E:/mods/my graph.json",
                             .noesis_path = "D:/Noesis/Noesis64.exe",
                             .show_help = false,
-                            .show_descriptions = false};
+                            .show_descriptions = false,
+                            .pinned_folders = {"D:/mods", "E:/work/natives/stm/streaming"}};
     remod::save_settings(s, file);
     CHECK(remod::load_settings(file) == s);
 
