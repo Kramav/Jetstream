@@ -1,4 +1,5 @@
 #include "node_run.hpp"
+#include "custom.hpp"
 
 #include "image.hpp"
 #include "package.hpp"
@@ -1244,6 +1245,52 @@ NodeSpec require_file() {
     };
 }
 
+// ---- Custom nodes' pins (custom.hpp): Input and Output blocks inside a custom node's graph. Expanding a custom
+// block replaces them by what's linked to its pins; editing the custom node's own graph, an Input gives its default
+// like a Value, so previews work in there too. ----
+
+NodeSpec node_input() {
+    return {
+        .type = "NodeInput",
+        .title = "Input",
+        .summary = "One input pin of a custom node, named here. It becomes whatever it's connected to inside. A "
+                   "default makes the pin a field on the custom block, typed or linked.",
+        .inputs = {{.name = "name", .label = "Pin name", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "What the pin is called on the custom block."},
+                   {.name = "default", .label = "Default", .type = Text, .widget = Widget::Text,
+                    .hint = "Used when nothing is typed or linked on the custom block. Empty: the pin must be "
+                            "linked or typed."}},
+        .outputs = {{"value", Any, "value"}},
+        .utility = true,
+        .family = Family::Value,
+        .pure = true,
+        .run = [](NodeRun& r) {
+            const std::string text = r.text("default");
+            if (text.empty()) throw GraphError("Input '" + r.text("name") + "' has no default to try it with");
+            const PortType kind = r.run.graph.output_type(r.node.id, "value");
+            const bool file = kind == Tex || kind == Image || kind == Path || kind == Folder;
+            r.output("value", {text, file ? r.resolve(text) : fs::path(), {}});
+            r.done("\"" + text + "\"");
+        },
+    };
+}
+
+NodeSpec node_output() {
+    return {
+        .type = "NodeOutput",
+        .title = "Output",
+        .summary = "One output pin of a custom node, named here: what's linked in goes out of the custom block.",
+        .inputs = {{.name = "name", .label = "Pin name", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "What the pin is called on the custom block."},
+                   {.name = "value", .label = "value", .type = Any, .required = true}},
+        .outputs = {},
+        .utility = true,
+        .family = Family::Value,
+        .pure = true,
+        .run = [](NodeRun& r) { r.done("\"" + r.input("value").text + "\""); },
+    };
+}
+
 // ---- Run program (user, 2026-10-02: "claude -p, scripts, a possible ComfyUI bridge") ----
 
 fs::path system_program(const wchar_t* relative) {  // from System32, never from PATH
@@ -1419,6 +1466,7 @@ const std::vector<NodeSpec>& node_specs() {
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),
+        node_input(), node_output(),
     };
     return specs;
 }
@@ -1426,7 +1474,14 @@ const std::vector<NodeSpec>& node_specs() {
 const NodeSpec* find_spec(std::string_view type) {
     for (const auto& s : node_specs())
         if (type == s.type) return &s;
-    return nullptr;
+    return find_custom_spec(type);  // a custom node's (custom.hpp)
+}
+
+std::vector<const NodeSpec*> all_specs() {
+    std::vector<const NodeSpec*> out;
+    for (const auto& s : node_specs()) out.push_back(&s);
+    for (const NodeSpec* s : custom_specs()) out.push_back(s);
+    return out;
 }
 
 const InputSpec* find_input(const NodeSpec& spec, std::string_view name) {

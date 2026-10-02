@@ -197,6 +197,31 @@ Start the graph with a **Files in folder** block instead of picking one texture:
 - **If a file fails:** the block's **If a file fails** setting stops the run (the default) or skips that file and
   goes on with the rest.
 
+## Custom nodes
+
+Turn a group of blocks you use often into one block of your own.
+
+**Making one:**
+1. In Build layout, select the blocks.
+2. Right-click one and pick **Make custom node...**, then give it a name.
+
+The blocks become a single block. Every link into or out of the group becomes one of its pins.
+
+**Where it goes:**
+- It's saved to your library (`%APPDATA%\remod\nodes`) and appears in the Nodes panel under **Custom nodes** in every
+  layout.
+- A layout that uses one keeps its own copy, so the layout still opens and runs on another PC.
+- If your library's version is newer, the Pipeline panel offers to use it.
+
+**Editing one:**
+- Right-click it and pick **Edit custom node**. Its blocks open in the canvas.
+- **Input** and **Output** blocks are its pins. Give an Input a default value to make that pin a field you can type
+  into on the block.
+- **Save** updates your library and the layout; **Back to the layout** returns.
+
+Everything works inside a custom node. An Edit image inside one shows up on the YOUR STEP card under the custom
+block's name.
+
 ## Running other programs
 
 The **Run program** block runs a program or script as one step of the graph: an `.exe`, `.bat` / `.cmd`, `.ps1` or

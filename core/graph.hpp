@@ -36,6 +36,8 @@ struct Link {
     bool operator==(const Link&) const = default;
 };
 
+struct CustomNode;
+
 struct Graph {
     std::string profile = "re4r";  // profile id: profiles/<id>.toml
     std::vector<Node> nodes;
@@ -43,7 +45,10 @@ struct Graph {
     // Links run top to bottom (outputs on blocks' bottom edges, inputs on their top), else left to right. Part of the
     // layout, like block positions (file: "flow": "down").
     bool downward = false;
-    bool operator==(const Graph&) const = default;  // undo history, unsaved changes
+    // The custom nodes this graph uses (custom.hpp): its own copies, so it opens and runs anywhere (file:
+    // "custom_nodes"). add_node copies a definition in from the registry the first time its type is used.
+    std::vector<CustomNode> customs;
+    bool operator==(const Graph& other) const;  // undo history, unsaved changes
 
     Node& add_node(const std::string& type);  // new unique id, every editable input present (its `initial` value)
     void remove_node(int id);                 // and its links
@@ -85,6 +90,21 @@ struct Graph {
     // default), it's typed and the result goes on. The links of the side that goes away are removed.
     void flip(int node, const std::string& input);
 };
+
+// A block type the user made (CLAUDE.md §4 Custom nodes): a graph whose Input and Output blocks are its pins. `type`
+// is "custom:<name>"; `graph.customs` holds the custom nodes it uses in turn.
+struct CustomNode {
+    std::string type;
+    std::string title;
+    std::string summary;
+    Graph graph;
+    bool operator==(const CustomNode&) const = default;
+};
+
+inline bool Graph::operator==(const Graph& o) const {
+    return profile == o.profile && nodes == o.nodes && links == o.links && downward == o.downward &&
+           customs == o.customs;
+}
 
 // An input's value as known without running: typed, or from a linked Value block (followed back through Splits);
 // "" if a step's result decides it (known only in a run). For front ends acting before a run, e.g. Edit image's

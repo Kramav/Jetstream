@@ -108,7 +108,8 @@ struct NodeSpec {
 // graph, of whatever kind it feeds), Text, and Split (one value to several inputs: an output feeds one input, so
 // using it in several places takes a Split).
 const std::vector<NodeSpec>& node_specs();
-const NodeSpec* find_spec(std::string_view type);
+const NodeSpec* find_spec(std::string_view type);  // built in, else a registered custom node (custom.hpp)
+std::vector<const NodeSpec*> all_specs();           // node_specs, then the custom nodes: for menus and palettes
 const InputSpec* find_input(const NodeSpec& spec, std::string_view name);
 
 // The picker a typed value of `type` gets (a Value's field takes the kind it feeds); None for text.

@@ -35,7 +35,8 @@ const char* family(Family f) {
 
 json types() {
     json all = json::array();
-    for (const NodeSpec& s : node_specs()) {
+    for (const NodeSpec* spec : all_specs()) {  // built in, then custom nodes
+        const NodeSpec& s = *spec;
         json inputs = json::array(), outputs = json::array();
         for (const InputSpec& in : s.inputs) {
             json i{{"name", in.name}, {"label", in.label}, {"kind", kind(in.type)}, {"required", in.required},

@@ -1,4 +1,6 @@
 #include "node_run.hpp"
+#include "custom.hpp"
+#include "graph_json.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -153,6 +155,8 @@ Node& Graph::add_node(const std::string& type) {
     int id = 1;
     for (const auto& n : nodes) id = std::max(id, n.id + 1);
     Node n{.id = id, .type = type};
+    if (is_custom(type) && std::ranges::none_of(customs, [&](const CustomNode& c) { return c.type == type; }))
+        if (const CustomNode* def = find_custom(type)) customs.push_back(*def);  // the graph keeps its own copy
     for (const auto& in : spec->inputs)
         if (in.editable()) n.params[in.name] = in.initial;
     for (const auto& out : spec->outputs)
@@ -303,13 +307,13 @@ std::vector<Graph::Choice> Graph::choices_for_pin(int node, const std::string& p
     if (output) {
         const PortSpec* p = output_of(*this, node, port);
         if (!p) return out;
-        for (const auto& spec : node_specs())
-            if (const InputSpec* in = best_input(spec, output_type(node, port))) out.push_back({&spec, in->name});
+        for (const NodeSpec* spec : all_specs())
+            if (const InputSpec* in = best_input(*spec, output_type(node, port))) out.push_back({spec, in->name});
     } else {
         const InputSpec* in = input_of(*this, node, port);
         if (!in) return out;
-        for (const auto& spec : node_specs())
-            if (const PortSpec* p = best_output(spec, *in)) out.push_back({&spec, p->name});
+        for (const NodeSpec* spec : all_specs())
+            if (const PortSpec* p = best_output(*spec, *in)) out.push_back({spec, p->name});
     }
     return out;
 }
@@ -337,9 +341,9 @@ std::vector<const NodeSpec*> Graph::choices_for_link(size_t link) const {
     const PortSpec* src = output_of(*this, links[link].from_node, links[link].from_port);
     const InputSpec* dst = input_of(*this, links[link].to_node, links[link].to_port);
     if (!src || !dst) return out;
-    for (const auto& spec : node_specs())
-        if (best_input(spec, output_type(links[link].from_node, links[link].from_port)) && best_output(spec, *dst))
-            out.push_back(&spec);
+    for (const NodeSpec* spec : all_specs())
+        if (best_input(*spec, output_type(links[link].from_node, links[link].from_port)) && best_output(*spec, *dst))
+            out.push_back(spec);
     return out;
 }
 
@@ -430,6 +434,13 @@ void Graph::flip(int node, const std::string& input) {
 }
 
 std::vector<std::string> Graph::validate() const {
+    if (has_customs(*this)) {  // checked as it runs: custom blocks expanded into their inner blocks
+        try {
+            return expand_customs(*this).graph.validate();
+        } catch (const GraphError& e) {
+            return {e.what()};
+        }
+    }
     std::vector<std::string> errors;
     if (profile.empty()) errors.push_back("graph has no profile");
     if (nodes.empty()) errors.push_back("graph has no nodes");
@@ -566,46 +577,71 @@ void migrate(Graph& g) {
 
 }  // namespace
 
-Graph load_graph(const fs::path& file, bool* added_blocks) {
-    std::ifstream in(file);
-    if (!in) throw GraphError("cannot open graph file " + file.string());
-    try {
-        const json j = json::parse(in);
-        if (j.at("schema_version").get<int>() != 0)
-            throw GraphError(file.string() + ": unsupported schema_version (expected 0)");
-        Graph g;
-        g.profile = j.at("profile").get<std::string>();
-        g.downward = j.value("flow", std::string()) == "down";
-        for (const auto& jn : j.at("nodes")) {
-            Node n{.id = jn.at("id").get<int>(), .type = jn.at("type").get<std::string>()};
-            if (jn.contains("params")) n.params = jn["params"].get<std::map<std::string, std::string>>();
-            if (jn.contains("pos")) {
-                n.x = jn["pos"].at(0).get<float>();
-                n.y = jn["pos"].at(1).get<float>();
-            }
-            g.nodes.push_back(std::move(n));
-        }
-        for (const auto& jl : j.value("links", json::array()))
-            g.links.push_back({jl.at("from").at(0).get<int>(), jl.at("from").at(1).get<std::string>(),
-                               jl.at("to").at(0).get<int>(), jl.at("to").at(1).get<std::string>()});
-        const size_t before = g.nodes.size();
-        migrate(g);
-        if (added_blocks) *added_blocks = g.nodes.size() != before;
-        return g;
-    } catch (const json::exception& e) {
-        throw GraphError(file.string() + ": invalid graph file: " + e.what());
-    }
-}
-
-void save_graph(const Graph& g, const fs::path& file) {
+nlohmann::json graph_json(const Graph& g) {
     json j{{"schema_version", 0}, {"profile", g.profile}, {"nodes", json::array()}, {"links", json::array()}};
     if (g.downward) j["flow"] = "down";
     for (const auto& n : g.nodes)
         j["nodes"].push_back({{"id", n.id}, {"type", n.type}, {"params", n.params}, {"pos", {n.x, n.y}}});
     for (const auto& l : g.links)
         j["links"].push_back({{"from", {l.from_node, l.from_port}}, {"to", {l.to_node, l.to_port}}});
+    for (const CustomNode& c : g.customs) j["custom_nodes"].push_back(custom_json(c));
+    return j;
+}
+
+Graph graph_from_json(const nlohmann::json& j) {
+    if (j.at("schema_version").get<int>() != 0) throw GraphError("unsupported schema_version (expected 0)");
+    Graph g;
+    g.profile = j.at("profile").get<std::string>();
+    g.downward = j.value("flow", std::string()) == "down";
+    for (const auto& jn : j.at("nodes")) {
+        Node n{.id = jn.at("id").get<int>(), .type = jn.at("type").get<std::string>()};
+        if (jn.contains("params")) n.params = jn["params"].get<std::map<std::string, std::string>>();
+        if (jn.contains("pos")) {
+            n.x = jn["pos"].at(0).get<float>();
+            n.y = jn["pos"].at(1).get<float>();
+        }
+        g.nodes.push_back(std::move(n));
+    }
+    for (const auto& jl : j.value("links", json::array()))
+        g.links.push_back({jl.at("from").at(0).get<int>(), jl.at("from").at(1).get<std::string>(),
+                           jl.at("to").at(0).get<int>(), jl.at("to").at(1).get<std::string>()});
+    for (const auto& jc : j.value("custom_nodes", json::array())) g.customs.push_back(custom_from_json(jc));
+    return g;
+}
+
+nlohmann::json custom_json(const CustomNode& c) {
+    return {{"type", c.type}, {"title", c.title}, {"summary", c.summary}, {"graph", graph_json(c.graph)}};
+}
+
+CustomNode custom_from_json(const nlohmann::json& j) {
+    CustomNode c{j.at("type").get<std::string>(), j.at("title").get<std::string>(), j.value("summary", std::string()),
+                 graph_from_json(j.at("graph"))};
+    if (!c.type.starts_with("custom:")) throw GraphError("a custom node's type must start with custom: (" + c.type + ")");
+    return c;
+}
+
+Graph load_graph(const fs::path& file, bool* added_blocks) {
+    std::ifstream in(file);
+    if (!in) throw GraphError("cannot open graph file " + file.string());
+    try {
+        Graph g = graph_from_json(json::parse(in));
+        for (const CustomNode& c : g.customs) register_custom(c);  // its copies are what it runs and shows
+        const size_t before = g.nodes.size();
+        migrate(g);
+        if (added_blocks) *added_blocks = g.nodes.size() != before;
+        return g;
+    } catch (const json::exception& e) {
+        throw GraphError(file.string() + ": invalid graph file: " + e.what());
+    } catch (const GraphError& e) {
+        throw GraphError(file.string() + ": " + e.what());
+    }
+}
+
+void save_graph(const Graph& graph, const fs::path& file) {
+    Graph g = graph;
+    std::erase_if(g.customs, [&](const CustomNode& c) { return !uses(graph, c.type); });  // only the ones it uses
     std::ofstream out(file);
-    out << j.dump(2) << "\n";
+    out << graph_json(g).dump(2) << "\n";
     if (!out.flush()) throw GraphError("failed to write " + file.string());
 }
 
@@ -731,7 +767,27 @@ RunValues first_values(const RunState& run) {
 
 }  // namespace
 
+RunResult run_expanded(const Graph& g, const RunOptions& opt);
+
 RunResult run_graph(const Graph& g, const RunOptions& opt) {
+    if (!has_customs(g)) return run_expanded(g, opt);
+    if (const auto errors = g.validate(); !errors.empty()) {  // before expanding: reports an unknown custom node
+        std::string msg = "graph can't run:";
+        for (const auto& e : errors) msg += "\n  " + e;
+        throw GraphError(msg);
+    }
+    const ExpandedGraph e = expand_customs(g);
+    try {
+        RunResult result = run_expanded(e.graph, opt);
+        fold_results(e, &result.nodes, &result.values, &result.state, &result.reset_edits);
+        return result;
+    } catch (RunError& error) {
+        fold_results(e, &error.nodes, &error.values, &error.state, nullptr);
+        throw;
+    }
+}
+
+RunResult run_expanded(const Graph& g, const RunOptions& opt) {
     if (const auto errors = g.validate(); !errors.empty()) {
         std::string msg = "graph can't run:";
         for (const auto& e : errors) msg += "\n  " + e;
@@ -970,13 +1026,30 @@ bool inside(const fs::path& path, const fs::path& dir) {
 
 }  // namespace
 
-RunValues preview_values(const Graph& g, const fs::path& base_dir) { return preview_pass(g, base_dir).values; }
+RunValues preview_values(const Graph& g, const fs::path& base_dir) {
+    if (!has_customs(g)) return preview_pass(g, base_dir).values;
+    try {
+        const ExpandedGraph e = expand_customs(g);
+        RunValues values = preview_pass(e.graph, base_dir).values;
+        fold_results(e, nullptr, &values, nullptr, nullptr);
+        return values;
+    } catch (const GraphError&) {
+        return {};  // an unknown custom node: validate() says so
+    }
+}
 
-ChangePlan plan_changes(const Graph& g, const fs::path& base_dir) {
+ChangePlan plan_changes(const Graph& graph, const fs::path& base_dir) {
+    // Custom blocks: planned as their inner blocks, each change and unknown one put down to the custom block.
+    const std::optional<ExpandedGraph> e = has_customs(graph) ? std::optional(expand_customs(graph)) : std::nullopt;
+    const Graph& g = e ? e->graph : graph;
+    auto origin = [&](int id) { return e && e->origin.contains(id) ? e->origin.at(id).first : id; };
     ChangePlan plan;
     const PreviewPass pass = preview_pass(g, base_dir, &plan.changes);
+    for (FileChange& c : plan.changes) c.node = origin(c.node);
     for (const Node& n : g.nodes)
-        if (pass.unknown.contains(n.id) && may_change_files(g, n)) plan.unknown.push_back(n.id);
+        if (pass.unknown.contains(n.id) && may_change_files(g, n) &&
+            std::ranges::find(plan.unknown, origin(n.id)) == plan.unknown.end())
+            plan.unknown.push_back(origin(n.id));
     return plan;
 }
 
@@ -1081,6 +1154,17 @@ void apply_run(Graph& g, const RunResult& result) {
 
 void set_edit_done(Graph& g, int node, bool done, const std::string& item) {
     Node* n = g.find(node);
+    if (n && is_custom(n->type)) {  // an Edit image inside: `item` is its key ("<inner id>:done[@<item key>]")
+        if (!item.empty() && done)
+            n->params[item] = "true";
+        else if (!item.empty())
+            n->params.erase(item);
+        else if (!done)
+            std::erase_if(n->params, [](const auto& p) {
+                return p.first.ends_with(":done") || p.first.find(":done@") != std::string::npos;
+            });
+        return;
+    }
     if (!n || n->type != "EditImage") return;
     const std::string key = item.empty() ? "done" : "done@" + item;
     if (done)

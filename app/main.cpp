@@ -3,6 +3,7 @@
 // Win32 + DX11 setup follows imgui/examples/example_win32_directx11 (v1.92.9-docking).
 #define IMGUI_DEFINE_MATH_OPERATORS  // required by the node editor's internal header; before any imgui.h
 #include "browser.hpp"
+#include "custom.hpp"
 #include "graph.hpp"
 #include "profile.hpp"
 #include "route.hpp"
@@ -401,7 +402,7 @@ struct State {
     remod::Graph saved_graph;
     bool baseline_pending = true;
     // Asked before New, Load or closing with unsaved changes: what to do once the user has answered.
-    enum class Pending { None, New, Load, Close } pending = Pending::None;
+    enum class Pending { None, New, Load, Close, Back } pending = Pending::None;
     std::string pending_path;  // the graph to load
     bool quit = false;
     remod::RunValues values;  // what every output gave in the last run (linked fields show it)
@@ -494,6 +495,20 @@ struct State {
     std::string choice_input;
     int rename_node = 0;      // the block being named (double-click its title, or Rename... in its menu)
     std::string rename_text;
+    // Custom nodes (core custom.hpp): the library (APPDATA/remod/nodes, registered at start), the blocks a
+    // "Make custom node" is for and its title, and while one is open for editing, the graph it came from.
+    std::vector<remod::CustomNode> library = [] {  // registered first: a loaded graph's own copies then win
+        auto lib = remod::load_custom_library(remod::custom_library_dir());
+        for (const remod::CustomNode& c : lib) remod::register_custom(c);
+        return lib;
+    }();
+    std::vector<int> make_custom_from;
+    std::string custom_title;
+    struct Parent {
+        remod::Graph graph, saved_graph;
+        std::string type;  // the custom node being edited
+    };
+    std::optional<Parent> parent;
     // Zoom (handoff §3): Far shows blocks as small symbols, Near as full blocks; switched by the zoom (s.overview) or
     // the Far / Near buttons above the graph (1 = Far, 2 = Near, handled inside the editor).
     int zoom_request = 0;
@@ -591,8 +606,62 @@ void load_graph_file(State& s) {
 
 bool unsaved(const State& s) { return !s.baseline_pending && s.graph != s.saved_graph; }
 
+// The custom node open for editing: its graph back into its definition, into the library and the graph it came
+// from (which then has unsaved changes). Returns whether it worked.
+bool save_custom(State& s) {
+    try {
+        const remod::CustomNode* now = remod::find_custom(s.parent->type);
+        if (!now) throw std::runtime_error("custom node " + s.parent->type + " isn't known any more");
+        remod::CustomNode def = *now;
+        def.graph = s.graph;
+        remod::update_custom(s.parent->graph, def);
+        remod::save_custom_node(def, remod::custom_library_dir());
+        s.library = remod::load_custom_library(remod::custom_library_dir());
+        s.saved_graph = s.graph;
+        s.status = "Saved custom node " + def.title + " (to your library and the layout).";
+        return true;
+    } catch (const std::exception& e) {
+        s.status = std::string("Error: ") + e.what();
+        return false;
+    }
+}
+
+// Opens a custom block's definition in the canvas (Build layout), keeping the graph it's in to go back to.
+void open_custom(State& s, int node) {
+    const remod::Node* n = s.graph.find(node);
+    const remod::CustomNode* def = nullptr;
+    for (const remod::CustomNode& c : s.graph.customs)
+        if (n && c.type == n->type) def = &c;
+    if (!def && n) def = remod::find_custom(n->type);
+    if (!def) return;
+    const remod::Graph inner = def->graph;
+    s.parent = State::Parent{s.graph, s.saved_graph, def->type};
+    s.graph = inner;
+    s.statuses.clear();
+    s.values.clear();
+    s.push_positions = true;
+    s.navigate = true;
+    s.baseline_pending = true;
+    s.build_mode = true;
+    s.status = "Editing custom node " + def->title + ": Input and Output blocks are its pins. Save, then Back.";
+}
+
+// Back from a custom node to the graph it was opened from.
+void close_custom(State& s) {
+    if (!s.parent) return;
+    s.graph = std::move(s.parent->graph);
+    s.saved_graph = std::move(s.parent->saved_graph);  // a saved change to the custom node shows as unsaved here
+    s.parent.reset();
+    s.statuses.clear();
+    s.values.clear();
+    s.push_positions = true;
+    s.navigate = true;
+    s.history.reset(s.graph);  // ponytail: the layout's undo steps from before are gone; keep a stack if missed
+}
+
 // Saves the graph (block positions are synced every frame). Returns whether it worked.
 bool save_graph_file(State& s) {
+    if (s.parent) return save_custom(s);  // a custom node is open: Save saves it
     s.graph_path = unquote(s.graph_path);
     try {
         remod::save_graph(s.graph, s.graph_path);
@@ -618,6 +687,8 @@ void new_graph(State& s) {
 
 // New, Load or Close, after asking about unsaved changes if there are any (draw_unsaved_prompt).
 void do_pending(State& s) {
+    if (s.pending == State::Pending::Back) close_custom(s);
+    if (s.pending == State::Pending::New || s.pending == State::Pending::Load) s.parent.reset();
     if (s.pending == State::Pending::New) new_graph(s);
     if (s.pending == State::Pending::Load) {
         s.graph_path = s.pending_path;
@@ -628,6 +699,10 @@ void do_pending(State& s) {
 }
 
 void ask(State& s, State::Pending what, const std::string& path = {}) {
+    if (s.parent && what != State::Pending::Back) {  // the layout behind it may have unsaved changes too
+        s.status = "A custom node is open: go Back to the layout first (Pipeline panel), so nothing unsaved is lost.";
+        return;
+    }
     s.pending = what;
     s.pending_path = path;
     if (!unsaved(s)) do_pending(s);
@@ -640,8 +715,10 @@ void draw_unsaved_prompt(State& s) {
     if (!ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const char* what = s.pending == State::Pending::New    ? "starting a new layout"
                        : s.pending == State::Pending::Load ? "loading another graph"
+                       : s.pending == State::Pending::Back ? "going back to the layout"
                                                            : "closing";
-    ImGui::Text("Save the changes to %s before %s?", std::filesystem::path(s.graph_path).filename().string().c_str(), what);
+    const std::string subject = s.parent ? "the custom node" : std::filesystem::path(s.graph_path).filename().string();
+    ImGui::Text("Save the changes to %s before %s?", subject.c_str(), what);
     if (ImGui::Button("Save")) {
         ImGui::CloseCurrentPopup();
         if (save_graph_file(s)) do_pending(s);
@@ -768,7 +845,10 @@ std::string open_edit_hint(const State& s, int node) {
 }
 
 // An Edit image block repeated for a list (fan-out): an item is done once marked (node param "done@<item key>").
-bool item_done(const remod::Node& n, const remod::ItemStatus& item) { return n.params.contains("done@" + item.key); }
+// A custom block's items carry their whole key ("<inner id>:done[@<item>]", core fold_results).
+bool item_done(const remod::Node& n, const remod::ItemStatus& item) {
+    return n.params.contains(remod::is_custom(n.type) ? item.key : "done@" + item.key);
+}
 
 // The block's Done editing: every item the last run left waiting, or the block itself when it isn't repeated.
 void mark_done(State& s, int node, const remod::NodeStatus* status) {
@@ -889,6 +969,24 @@ void draw_steps(State& s) {
 // layout: only what building uses (graph file, game, status, problems); no run settings or log.
 void draw_side_panel(State& s) {
     ImGui::Begin("Pipeline", s.build_mode ? nullptr : &s.show_pipeline);
+    if (s.parent) {  // a custom node is open in the canvas
+        const remod::CustomNode* def = remod::find_custom(s.parent->type);
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(pal::accent), "Editing custom node: %s",
+                           def ? def->title.c_str() : s.parent->type.c_str());
+        ImGui::TextWrapped("Input and Output blocks are its pins. Save updates your library and the layout.");
+        if (ImGui::Button(unsaved(s) ? "Save custom node*" : "Save custom node")) save_custom(s);
+        ImGui::SameLine();
+        if (ImGui::Button("Back to the layout")) ask(s, State::Pending::Back);
+        ImGui::Separator();
+    }
+    for (const std::string& type : remod::library_differs(s.parent ? s.parent->graph : s.graph, s.library)) {
+        const auto it = std::ranges::find(s.library, type, &remod::CustomNode::type);
+        ImGui::TextWrapped("Custom node %s differs from your library's.", it->title.c_str());
+        ImGui::SameLine();
+        ImGui::PushID(type.c_str());
+        if (!s.parent && ImGui::SmallButton("Use the library's")) remod::update_custom(s.graph, *it);
+        ImGui::PopID();
+    }
     if (ImGui::Checkbox("Show help", &s.show_help)) remember_paths(s);
 
     if (s.show_help && !s.build_mode) {
@@ -1424,17 +1522,25 @@ void draw_nodes_panel(State& s) {
                                       {File, "File steps"},  {Output, "Output"},        {Flow, "Flow"},
                                       {Value, "Values"}};
     const float u = unit(), margin = 10 * u;
+    // The built-in blocks by family, then the user's custom nodes in a folder of their own.
+    std::vector<std::pair<const char*, std::vector<const remod::NodeSpec*>>> groups;
     for (const Folder& folder : folders) {
-        int count = 0;
-        for (const auto& spec : remod::node_specs()) count += spec.family == folder.family && matches(spec);
-        if (count == 0) continue;
+        auto& group = groups.emplace_back(folder.name, std::vector<const remod::NodeSpec*>()).second;
+        for (const auto& spec : remod::node_specs())
+            if (spec.family == folder.family && matches(spec)) group.push_back(&spec);
+    }
+    auto& custom = groups.emplace_back("Custom nodes", std::vector<const remod::NodeSpec*>()).second;
+    for (const remod::NodeSpec* spec : remod::custom_specs())
+        if (matches(*spec)) custom.push_back(spec);
+    for (const auto& [name, specs] : groups) {
+        if (specs.empty()) continue;
         if (!want.empty()) ImGui::SetNextItemOpen(true);
-        const std::string header = std::string(folder.name) + " (" + std::to_string(count) + ")###" + folder.name;
+        const std::string header = std::string(name) + " (" + std::to_string(specs.size()) + ")###" + name;
         if (!ImGui::CollapsingHeader(header.c_str())) continue;
         const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
         float last_right = -1;  // right edge of the block before on this line; < 0: none yet
-        for (const auto& spec : remod::node_specs()) {
-            if (spec.family != folder.family || !matches(spec)) continue;
+        for (const remod::NodeSpec* spec_ptr : specs) {
+            const remod::NodeSpec& spec = *spec_ptr;
             const ImVec2 full = draw_block_preview(nullptr, {}, spec, s.look, 1, 1);
             const float scale = (std::min)({0.55f, (right - ImGui::GetCursorScreenPos().x - margin * 2) / full.x,
                                        ImGui::GetWindowHeight() * 0.75f / full.y});
@@ -2251,7 +2357,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.preview_of = std::move(shape);
         s.preview_path = s.graph_path;
     }
-    bool open_choice_menu = false, open_rename = false;
+    bool open_choice_menu = false, open_rename = false, open_make_custom = false;
     for (auto& n : s.graph.nodes) {
         const remod::NodeSpec* spec = remod::find_spec(n.type);
         const auto status_it = s.statuses.find(n.id);
@@ -3041,6 +3147,11 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 if (spec.utility && node_item(spec)) place(s.graph.add_node(spec.type).id);
             ImGui::EndMenu();
         }
+        if (const auto custom = remod::custom_specs(); !custom.empty() && ImGui::BeginMenu("Custom nodes")) {
+            for (const remod::NodeSpec* spec : custom)
+                if (node_item(*spec)) place(s.graph.add_node(spec->type).id);
+            ImGui::EndMenu();
+        }
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("add_connected")) {
@@ -3095,7 +3206,54 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             s.rename_text = n && spec && remod::block_title(*n) != spec->title ? remod::block_title(*n) : std::string();
             open_rename = true;
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Make custom node...")) {  // of the selected blocks, or this one if it isn't selected
+            std::vector<ed::NodeId> picked(static_cast<size_t>(ed::GetSelectedObjectCount()));
+            picked.resize(size_t(ed::GetSelectedNodes(picked.data(), int(picked.size()))));
+            s.make_custom_from.clear();
+            for (const ed::NodeId id : picked) s.make_custom_from.push_back(int(id.Get()));
+            if (std::ranges::find(s.make_custom_from, s.menu_node) == s.make_custom_from.end())
+                s.make_custom_from = {s.menu_node};
+            s.custom_title.clear();
+            open_make_custom = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The selected blocks become one block of a new type, kept in your library and offered "
+                              "in every layout. Links into and out of them become its pins.");
+        const remod::Node* menu_block = s.graph.find(s.menu_node);
+        if (menu_block && remod::is_custom(menu_block->type) && ImGui::MenuItem("Edit custom node"))
+            open_custom(s, s.menu_node);
+        ImGui::Separator();
         if (ImGui::MenuItem("Delete")) s.graph.remove_node(s.menu_node);
+        ImGui::EndPopup();
+    }
+    if (open_make_custom) ImGui::OpenPopup("make_custom");
+    if (ImGui::BeginPopup("make_custom")) {
+        ImGui::TextDisabled("Make a custom node of %d block(s)", int(s.make_custom_from.size()));
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(font * 16);
+        const bool enter = ImGui::InputTextWithHint("##title", "Its name, e.g. Photo frame kit", &s.custom_title,
+                                                    ImGuiInputTextFlags_EnterReturnsTrue);
+        if (enter || ImGui::Button("Make")) {
+            attempt([&] {
+                remod::CustomNode made;
+                const int id = remod::make_custom_node(s.graph, s.make_custom_from, s.custom_title, &made);
+                const remod::Node& block = *s.graph.find(id);
+                ed::SetNodePosition(id, ImVec2(block.x, block.y));
+                s.place_new = id;
+                try {
+                    remod::save_custom_node(made, remod::custom_library_dir());
+                    s.library = remod::load_custom_library(remod::custom_library_dir());
+                    s.status = "Made custom node " + made.title + ". It's in your library (Nodes panel, Custom nodes).";
+                } catch (const std::exception& e) {
+                    s.status = std::string("Made custom node ") + made.title + ", but couldn't save it to your library: " +
+                               e.what();
+                }
+            });
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     // Naming a block (both layouts: it's a label, not structure). Empty goes back to the type's title.

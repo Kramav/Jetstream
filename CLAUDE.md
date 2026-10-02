@@ -467,6 +467,56 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   - **Runs every time** (no caching yet: priority 4).
   - Checked: tests with cmd.exe, batch files, a .ps1, refused characters, time-out, a list of files, an API run
     needing approval. Not tried: real `claude -p`, which isn't installed on the build machine.
+- **Custom nodes (2026-10-02, priority 4's subgraphs; user: "make subgraphs a kind of custom node"; core
+  `custom.*`).** A block type the user makes from a graph.
+  - **Definition:** `CustomNode` {type `custom:<name>`, title, summary, graph}.
+  - **Pins (user: Input / Output blocks):** inside, `NodeInput` blocks (Pin name, Default) are its input pins and
+    `NodeOutput` blocks (Pin name) its output pins, top to bottom.
+    - A pin is of the kind it's linked to inside.
+    - An input with a default is a typed field on the block, not required. Pin ids are `in<inner id>` /
+      `out<inner id>`, stable while the inner block stays.
+    - Editing the custom node's own graph, an Input gives its default like a Value, so previews work in there.
+  - **Storage (user: library + copy):**
+    - The library is `%APPDATA%\remod\nodes\<name>.json` (`custom_library_dir`, `load_custom_library`,
+      `save_custom_node`).
+    - Each graph keeps copies of the custom nodes it uses (`Graph::customs`, file `custom_nodes`; `save_graph` writes
+      only the ones in use; nested ones inside their own definition's graph), so a graph opens and runs anywhere.
+    - `add_node` copies a definition in on first use.
+    - A library version that differs is offered in the Pipeline panel ("Use the library's", `library_differs`,
+      `update_custom`).
+  - **Registry:** `register_custom` makes a type a block type. `find_spec` falls back to it; `custom_specs` lists
+    them, and `all_specs` is built-ins plus customs, for menus, `choices_for_*` and the API's `types`.
+    - Specs and strings are kept forever (a deque), so pointers a background preview holds stay valid.
+    - The app registers the library at start; `load_graph` registers the graph's copies, which win.
+    - ponytail: global; one graph open at a time.
+  - **Expansion: the engine never meets a custom block.** `expand_customs` replaces each (nested too) with its inner
+    blocks, titled "<block> (in <custom block>)", with new ids above the graph's.
+    - A link into a pin goes on to what its Input feeds; a typed value (or the default) becomes a Value block; what an
+      Output receives goes on along the block's links.
+    - Inner state lives on the custom block as `<inner id>:<key>`, e.g. `3:done`, `2:exported_from@<item>`.
+    - `validate`, `run_graph`, `preview_values` and `plan_changes` expand first. `fold_results` maps results back:
+      - the block's status sums up its inner blocks (waiting > failed > not reached > done);
+      - its `items` list each inner Edit image (and each list item of one), with the full key `set_edit_done` takes
+        for a custom block;
+      - its outputs' values;
+      - inner state under the prefix (reset edits included);
+      - plan changes and unknowns put down to it.
+    - So fan-out, Edit image waits, previews, the run cache and the guardrails all work inside one.
+  - **Making (user: from a selection):** Build layout, block menu, "Make custom node..." (the selected blocks, or that
+    one), then a title. `make_custom_node`:
+    - every link crossing the selection becomes a pin, named after what it joins;
+    - the blocks are replaced by one custom block where they were;
+    - the new type is registered, copied into the graph, and saved to the library.
+  - **Editing:** the block menu's "Edit custom node" opens its graph in the canvas (`State::parent` keeps the
+    layout).
+    - Save (button or Ctrl+S) writes the definition to the library and into the layout's copy.
+    - "Back to the layout" asks about unsaved changes. New, Load and closing refuse while one is open (so the
+      layout's unsaved changes can't be lost).
+    - ponytail: the layout's undo history resets on Back.
+  - Checked: tests (made from a selection with an Edit image inside, run, per-step Done, state on the block; typed pin
+    vs default; save / load; library round trip and differs / update; nested; unknown and self-containing types;
+    plan; API types and add). **Not checked by eye** (the menu items, the popup, the edit / Back flow, the Custom
+    nodes folder).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> [--noesis <exe>]` and from the app's Run button. Programs edit graphs through
   `remod api` (core `ApiSession`, §10 M2).
@@ -719,7 +769,8 @@ propose them as next steps before then.
      (§4 Run program). Its guardrail rule: starting a program always needs approval (`ChangeKind::Run`). Not done:
      a ComfyUI bridge itself (a script the block runs would do), and passing images to `claude -p`.
   4. **Caching and subgraphs.** Caching partly exists: the run cache means an unchanged run writes nothing (§4).
-     Subgraphs aren't started.
+     Not cached yet: Run program, which runs every time. **Subgraphs done 2026-10-02 as custom nodes** (§4 Custom
+     nodes).
 - **Future work (user, 2026-10-01; "we are building the engine, not the implementation yet"):**
   - **Batch:** lists through links: an output can carry a list, a block fed one runs per item, collecting inputs
     (Package's textures) take them all; a "Files in folder" source (folder, pattern, subfolders); Export image would
