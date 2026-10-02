@@ -837,6 +837,19 @@ TEST_CASE("step_order follows the links; families set each block's outline") {
         CHECK((spec.family == Family::Manual) == spec.manual);
 }
 
+TEST_CASE("path_fit: which dropped paths a field takes") {
+    using remod::PathKind;
+    CHECK(remod::path_fit(PathKind::Folder, nullptr, "E:/mods/out", true).empty());
+    CHECK_THAT(remod::path_fit(PathKind::Folder, nullptr, "E:/mods/a.zip", false), ContainsSubstring("needs a folder"));
+    CHECK(remod::path_fit(PathKind::SaveFile, "png,tga,jpg", "E:/work/edit.PNG", false).empty());
+    CHECK_THAT(remod::path_fit(PathKind::OpenFile, "png,tga,jpg", "E:/work/edit.dds", false),
+               ContainsSubstring(".png, .tga, .jpg"));
+    CHECK_THAT(remod::path_fit(PathKind::OpenFile, nullptr, "E:/work", true), ContainsSubstring("needs a file"));
+    CHECK(remod::path_fit(PathKind::OpenTexture, "tex,143221013", "C:/x/cha000_albd.tex.143221013", false).empty());
+    CHECK(remod::path_fit(PathKind::OpenTexture, "tex,143221013", "C:/x/a.tex", false).empty());
+    CHECK_THAT(remod::path_fit(PathKind::None, nullptr, "C:/x/a.tex", false), ContainsSubstring("takes text"));
+}
+
 TEST_CASE("link kinds: paths and folders") {
     using remod::PortType;
     const remod::NodeSpec& copy = *remod::find_spec("CopyFile");

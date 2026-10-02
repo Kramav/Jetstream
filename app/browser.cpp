@@ -128,7 +128,8 @@ int Browser::draw_tile(const std::string& rel, bool found, float size, bool sele
     int result = 0;
     if (ImGui::Selectable("##tile", selected, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(size, size + line)))
         result = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) ? 2 : 1;
-    const bool hovered = ImGui::IsItemHovered();
+    const bool hovered = ImGui::IsItemHovered() && !ImGui::GetDragDropPayload();
+    if (found) drag_source(rel, false);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImU32 dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     std::string problem = found ? "" : "Not in the extracted files.";
@@ -143,16 +144,74 @@ int Browser::draw_tile(const std::string& rel, bool found, float size, bool sele
         draw->AddText(ImVec2(at.x + 4, at.y + 4), dim, "missing");
     }
     draw->PushClipRect(ImVec2(at.x, at.y + size), ImVec2(at.x + size, at.y + size + line), true);
-    draw->AddText(ImVec2(at.x, at.y + size), ImGui::GetColorU32(ImGuiCol_Text), remod::file_name(rel).c_str());
+    const std::string nick = remod::nickname(names_, rel);  // the caption: its nickname, else its file name
+    draw->AddText(ImVec2(at.x, at.y + size),
+                  ImGui::GetColorU32(nick.empty() ? ImGuiCol_Text : ImGuiCol_CheckMark),
+                  nick.empty() ? remod::file_name(rel).c_str() : nick.c_str());
     draw->PopClipRect();
-    if (hovered) ImGui::SetTooltip("%s%s%s", rel.c_str(), problem.empty() ? "" : "\n", problem.c_str());
+    if (hovered)
+        ImGui::SetTooltip("%s%s%s%s%s", nick.empty() ? "" : (nick + "\n").c_str(), rel.c_str(), problem.empty() ? "" : "\n",
+                          problem.c_str(), "\nRight-click to name it.");
+    name_menu(rel);
     ImGui::PopID();
     return result;
 }
 
-void Browser::draw_tree(const remod::FolderTree& tree, size_t folder) {
+// Right-click the last item (a folder, file or thumbnail): give it a nickname, saved at once. Empty removes it.
+void Browser::name_menu(const std::string& rel) {
+    if (!ImGui::BeginPopupContextItem()) return;
+    if (ImGui::IsWindowAppearing()) naming_ = remod::nickname(names_, rel);
+    ImGui::TextDisabled("Nickname for %s", remod::file_name(rel).c_str());
+    if (names_file_.empty()) {
+        ImGui::TextDisabled("Nicknames can't be saved: %s", names_error_.c_str());
+    } else {
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16);
+        const bool enter =
+            ImGui::InputTextWithHint("##nickname", "e.g. Leon", &naming_, ImGuiInputTextFlags_EnterReturnsTrue);
+        if (enter || ImGui::Button("OK")) {
+            remod::set_nickname(names_, rel, naming_);
+            try {
+                remod::save_names(names_, names_file_);
+            } catch (const std::exception& e) {
+                names_error_ = e.what();
+            }
+            searched_ = "\x01";  // search again: it matches nicknames
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::TextDisabled("Only a label here: mods use the real name. Empty removes it.");
+    }
+    ImGui::EndPopup();
+}
+
+// The last item can be dragged onto a block's field in the graph, as its absolute path ("remod_path").
+void Browser::drag_source(const std::string& rel, bool folder) {
+    if (!ImGui::BeginDragDropSource()) return;
+    const std::string path = (root_ / std::filesystem::path(rel)).make_preferred().string();
+    ImGui::SetDragDropPayload("remod_path", path.c_str(), path.size() + 1);
+    const std::string nick = remod::nickname(names_, rel);
+    ImGui::Text("%s%s", nick.empty() ? remod::file_name(rel).c_str() : nick.c_str(), folder ? " (folder)" : "");
+    ImGui::TextDisabled("Drop it on a field in a block.");
+    ImGui::EndDragDropSource();
+}
+
+// The item's nickname beside it; with `above` and none of its own, its nearest named folder's, dimmed.
+void Browser::show_nickname(const std::string& rel, bool above) {
+    std::string nick = remod::nickname(names_, rel);
+    const bool own = !nick.empty();
+    if (!own && above) nick = remod::nickname_above(names_, rel);
+    if (nick.empty()) return;
+    ImGui::SameLine();
+    if (own) ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_CheckMark), "%s", nick.c_str());
+    else ImGui::TextDisabled("(%s)", nick.c_str());
+}
+
+void Browser::draw_tree(const remod::FolderTree& tree, size_t folder, const std::string& path) {
     for (size_t c : tree.folders[folder].children) {
         const auto& f = tree.folders[c];
+        const std::string child = path.empty() ? f.name : path + "/" + f.name;
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
                                    ImGuiTreeNodeFlags_SpanAvailWidth;
         if (f.children.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
@@ -164,8 +223,11 @@ void Browser::draw_tree(const remod::FolderTree& tree, size_t folder) {
             folder_ = c;
             mesh_focus_ = false;
         }
+        drag_source(child, true);
+        name_menu(child);
+        show_nickname(child);
         if (open) {
-            draw_tree(tree, c);
+            draw_tree(tree, c, child);
             ImGui::TreePop();
         }
     }
@@ -209,12 +271,28 @@ void Browser::select_mesh(const std::string& rel) {
 }
 
 std::string Browser::draw(const std::string& natives_root, const std::string& noesis_exe,
-                          const std::vector<remod::Profile>& profiles) {
+                          const std::vector<remod::Profile>& profiles, const std::string& game, bool browser_only) {
     ++frame_;
     load_ms_ = 0;
     release_unused();
     std::string chosen;
     ImGui::Begin("Browser");
+
+    // This game's nicknames, read when the game changes. A file that can't be read is reported and left alone.
+    if (game != names_game_) {
+        names_game_ = game;
+        names_ = {};
+        names_error_.clear();
+        names_file_ = remod::default_names_path(game);
+        try {
+            names_ = remod::load_names(names_file_);
+        } catch (const std::exception& e) {
+            names_error_ = e.what();
+            names_file_.clear();
+        }
+        searched_ = "\x01";
+    }
+    if (!names_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "%s", names_error_.c_str());
 
     // Index the folder once, in the background (a few seconds for RE4R's 26k textures and meshes).
     std::error_code ec;
@@ -264,6 +342,7 @@ std::string Browser::draw(const std::string& natives_root, const std::string& no
     if (ready) draw_files(profiles, chosen);
     ImGui::End();
 
+    if (browser_only) return chosen;
     draw_textures(ready, profiles, chosen);
     draw_viewer(noesis_exe);
     return chosen;
@@ -276,14 +355,14 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
     ImGui::InputTextWithHint("##search", "Search, e.g. ui3200 or wood albd", &query_);
     const bool searching = query_.find_first_not_of(' ') != std::string::npos;
     if (searching && query_ != searched_) {
-        hits_ = remod::search(list, query_);
+        hits_ = remod::search(list, query_, &names_);
         searched_ = query_;
         mesh_focus_ = false;
     }
     if (!searching) {
         ImGui::BeginChild("tree", ImVec2(0, ImGui::GetContentRegionAvail().y * 0.45f),
                           ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeY);
-        draw_tree(tree, 0);
+        draw_tree(tree, 0, "");
         ImGui::EndChild();
     }
 
@@ -310,7 +389,11 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) chosen = (root_ / rel).string();
                 }
             }
-            if (!searching && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rel.c_str());
+            if (ImGui::IsItemHovered() && !ImGui::GetDragDropPayload())
+                ImGui::SetTooltip("%s\nRight-click to name it, drag it onto a field in a block.", rel.c_str());
+            drag_source(rel, false);
+            name_menu(rel);
+            show_nickname(rel, searching);  // a search lists files from many folders: say whose they are
             ImGui::PopID();
         }
     ImGui::EndChild();
@@ -346,6 +429,7 @@ void Browser::draw_textures(bool ready, const std::vector<remod::Profile>& profi
                               "data (e.g. metalness), which would hide the picture.");
         ImGui::SameLine();
         ImGui::TextUnformatted(remod::file_name(texture_).c_str());
+        show_nickname(texture_, true);
         ImGui::PushTextWrapPos(0);
         ImGui::TextDisabled("%s", info_.c_str());
         ImGui::PopTextWrapPos();
@@ -466,6 +550,7 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
         return;
     }
     ImGui::TextUnformatted(remod::file_name(mesh_).c_str());
+    show_nickname(mesh_, true);
     ImGui::PushTextWrapPos(0);
     if (!mesh_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "%s", mesh_error_.c_str());
     if (mesh_loading_.valid() && loading_mesh_ == mesh_)

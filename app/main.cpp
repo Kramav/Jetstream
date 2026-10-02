@@ -464,6 +464,25 @@ void detect_game(State& s, const std::string& texture) {
     }
 }
 
+// A path dragged from the Browser (payload "remod_path") over the last item, a block's field. Core decides whether it
+// fits (`kind`, `filter`: the field's picker); if so, dropping fills the field (a texture also picks the game, as the
+// "..." picker does), else `hint` says why and nothing happens.
+void accept_path(State& s, std::string& value, remod::PathKind kind, const char* filter, std::string& hint) {
+    if (!ImGui::BeginDragDropTarget()) return;
+    if (const ImGuiPayload* peek = ImGui::GetDragDropPayload(); peek && peek->IsDataType("remod_path")) {
+        const std::string path = static_cast<const char*>(peek->Data);
+        std::error_code ec;
+        const std::string problem = remod::path_fit(kind, filter, path, std::filesystem::is_directory(path, ec));
+        if (!problem.empty()) {
+            hint = problem;
+        } else if (ImGui::AcceptDragDropPayload("remod_path")) {
+            value = path;
+            if (kind == remod::PathKind::OpenTexture) detect_game(s, value);
+        }
+    }
+    ImGui::EndDragDropTarget();
+}
+
 // Writes the settings file only when something changed.
 void remember_paths(State& s) {
     const remod::Settings now{.graph_path = s.graph_path,
@@ -1133,8 +1152,9 @@ void draw_nodes_panel(State& s) {
                lower(spec.summary).find(want) != std::string::npos;
     };
     // One folder per family, the main steps first and the utilities (flow, values) last; closed until opened, open
-    // while a search finds something in it. Each block is shown as it will look, at most 70% size, with room around
-    // it for its corner marks.
+    // while a search finds something in it. Each block is shown as it will look, at most 55% size (less if the panel
+    // is short), side by side and wrapping (the panel is a wide strip along the bottom), with room around each for
+    // its corner marks.
     using enum remod::Family;
     struct Folder {
         remod::Family family;
@@ -1151,13 +1171,21 @@ void draw_nodes_panel(State& s) {
         if (!want.empty()) ImGui::SetNextItemOpen(true);
         const std::string header = std::string(folder.name) + " (" + std::to_string(count) + ")###" + folder.name;
         if (!ImGui::CollapsingHeader(header.c_str())) continue;
+        const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+        float last_right = -1;  // right edge of the block before on this line; < 0: none yet
         for (const auto& spec : remod::node_specs()) {
             if (spec.family != folder.family || !matches(spec)) continue;
             const ImVec2 full = draw_block_preview(nullptr, {}, spec, s.look, 1, 1);
-            const float scale = ImMin(0.7f, (ImGui::GetContentRegionAvail().x - margin * 2) / full.x);
-            ImGui::Dummy(ImVec2(0, margin * 0.5f));
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + margin);
+            const float scale = (std::min)({0.55f, (right - ImGui::GetCursorScreenPos().x - margin * 2) / full.x,
+                                       ImGui::GetWindowHeight() * 0.75f / full.y});
+            if (last_right >= 0 && last_right + margin * 2 + full.x * scale <= right) {
+                ImGui::SameLine(0, margin * 2);  // fits beside the one before
+            } else {
+                ImGui::Dummy(ImVec2(0, margin * 0.5f));
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + margin);
+            }
             const ImVec2 at = ImGui::GetCursorScreenPos();
+            last_right = at.x + full.x * scale;
             if (ImGui::InvisibleButton(spec.type, full * scale)) s.add_type = spec.type, s.add_at.reset();
             const bool hovered = ImGui::IsItemHovered();
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {  // the graph shows a copy
@@ -1167,8 +1195,8 @@ void draw_nodes_panel(State& s) {
                 spec_tooltip(spec);
             }
             draw_block_preview(ImGui::GetWindowDrawList(), at, spec, s.look, scale, hovered ? 1.0f : 0.8f);
-            ImGui::Dummy(ImVec2(0, margin));
         }
+        ImGui::Dummy(ImVec2(0, margin));
     }
     ImGui::End();
 }
@@ -1819,6 +1847,9 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                         ImGui::SetNextItemWidth(field_width - (in.result && s.build_mode ? flip_width : 0));
                         ImGui::InputText("##v", &value);
                         if (ImGui::IsItemHovered()) hovered_hint = in.hint;
+                        accept_path(s, value, in.path,
+                                    in.path == remod::PathKind::OpenTexture ? s.texture_filter.c_str() : in.filter,
+                                    hovered_hint);
                         if (in.widget == remod::Widget::Path) {
                             ImGui::SameLine();
                             const bool texture = in.path == remod::PathKind::OpenTexture;
@@ -1900,10 +1931,6 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     ImGui::SetCursorPosX(x0 + node_width -
                                          (field_width + style.ItemSpacing.x * 2 + button_width +
                                           ImGui::CalcTextSize(out.label).x));
-                    ImGui::SetNextItemWidth(field_width - (dest && s.build_mode ? flip_width : 0));
-                    ImGui::InputTextWithHint("##v", dest ? dest->label : out.field_label, &value);
-                    if (ImGui::IsItemHovered()) hovered_hint = dest ? dest->hint : out.hint;
-                    ImGui::SameLine();
                     // A Value's field (an open kind) gets the picker of the kind it feeds; text gets none.
                     const remod::PortType kind = s.graph.output_type(n.id, out.name);
                     const remod::PathKind picker = dest                              ? dest->path
@@ -1915,6 +1942,11 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                                          : out.type != remod::PortType::Any ? out.filter
                                          : kind == remod::PortType::Image   ? remod::kEditImageFormats
                                                                             : nullptr;
+                    ImGui::SetNextItemWidth(field_width - (dest && s.build_mode ? flip_width : 0));
+                    ImGui::InputTextWithHint("##v", dest ? dest->label : out.field_label, &value);
+                    if (ImGui::IsItemHovered()) hovered_hint = dest ? dest->hint : out.hint;
+                    accept_path(s, value, picker, filter, hovered_hint);
+                    ImGui::SameLine();
                     if (picker == remod::PathKind::None) {
                         ImGui::Dummy(ImVec2(button_width, 0));  // keeps the field where the button would push it
                     } else {
@@ -2546,9 +2578,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
         poll_run(state);
         const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
-        // Panels show only where they're used: Use layout has Browser left, Graph middle, Pipeline right (closable)
-        // and along the bottom the viewer, then Textures; Build layout has Nodes left, Graph middle, Pipeline right.
-        // Rebuilt when the mode or the Pipeline's visibility changes, so a hidden panel leaves no empty space.
+        // Panels show only where they're used. Both layouts: Browser left (its paths drag onto block fields), Graph
+        // middle, Pipeline right (closable in Use layout). Along the bottom: Use layout the viewer, then Textures;
+        // Build layout the Nodes. Rebuilt when the mode or the Pipeline's visibility changes, so a hidden panel
+        // leaves no empty space.
         if (state.build_mode) state.show_pipeline = true;
         static int layout_key = -1;
         if (const int key = int(state.build_mode) * 2 + int(state.show_pipeline); key != layout_key) {
@@ -2557,26 +2590,27 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->Size);
             ImGuiID top = dockspace, bottom = 0, corner = 0, textures = 0, left = 0, rest = 0, right = 0, middle = 0;
-            if (!state.build_mode) ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Down, 0.32f, &bottom, &top);
-            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, state.build_mode ? 0.18f : 0.25f, &left, &rest);
+            ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Down, 0.32f, &bottom, &top);
+            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.25f, &left, &rest);
             middle = rest;
             if (state.show_pipeline) ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.3f, &right, &middle);
-            ImGui::DockBuilderDockWindow(state.build_mode ? "Nodes" : "Browser", left);
+            ImGui::DockBuilderDockWindow("Browser", left);
             ImGui::DockBuilderDockWindow("Graph", middle);
             if (state.show_pipeline) ImGui::DockBuilderDockWindow("Pipeline", right);
-            if (!state.build_mode) {
+            if (state.build_mode) {
+                ImGui::DockBuilderDockWindow("Nodes", bottom);
+            } else {
                 ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.25f, &corner, &textures);
                 ImGui::DockBuilderDockWindow("###viewer", corner);
                 ImGui::DockBuilderDockWindow("Textures", textures);
             }
             ImGui::DockBuilderFinish(dockspace);
         }
-        if (state.build_mode) {
-            draw_nodes_panel(state);
-        } else if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles);
-                   !picked.empty()) {
+        if (state.build_mode) draw_nodes_panel(state);
+        if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles,
+                                                     state.graph.profile, state.build_mode);
+            !picked.empty())
             state.pending_texture = picked;
-        }
         if (state.build_mode || state.show_pipeline) draw_side_panel(state);
         draw_canvas(state, editor);
         draw_warnings(state);

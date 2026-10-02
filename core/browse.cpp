@@ -136,13 +136,22 @@ FolderTree folder_tree(const std::vector<std::string>& paths) {
     return tree;
 }
 
-std::vector<size_t> search(const std::vector<std::string>& paths, const std::string& query) {
+std::vector<size_t> search(const std::vector<std::string>& paths, const std::string& query, const Nicknames* names) {
     std::vector<std::string> words;
     std::istringstream in(lower(query));
     for (std::string w; in >> w;) words.push_back(w);
     std::vector<size_t> hits;
     for (size_t i = 0; i < paths.size(); ++i) {
-        const std::string p = lower(paths[i]);
+        std::string p = lower(paths[i]);
+        if (names && !names->names.empty()) {  // add the nicknames of every folder above it and of the path itself
+            std::string nicks;
+            for (size_t end = p.find('/');; end = p.find('/', end + 1)) {
+                const auto it = names->names.find(p.substr(0, end));
+                if (it != names->names.end()) nicks += "\n" + lower(it->second);
+                if (end == std::string::npos) break;
+            }
+            p += nicks;
+        }
         if (std::ranges::all_of(words, [&](const std::string& w) { return p.find(w) != std::string::npos; }))
             hits.push_back(i);
     }

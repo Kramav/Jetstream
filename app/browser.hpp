@@ -26,9 +26,11 @@ public:
     // Draws the "Browser" window (the REtool folder `natives_root`'s file paths), the "Textures" window (thumbnails
     // of the picked mesh's or the folder's textures) and the viewer window: the selected texture, or the picked
     // mesh in 3D (converted by Noesis) until the user closes it. The viewer's window id is "###viewer". Returns the
-    // texture the user chose to use in the graph (absolute path), else empty.
+    // texture the user chose to use in the graph (absolute path), else empty. `game`: the profile id whose nicknames
+    // (readable names, core/names) label the files. `browser_only`: just the Browser window (Build layout).
+    // Files, folders and thumbnails can be dragged onto a block's field: payload "remod_path", the absolute path.
     std::string draw(const std::string& natives_root, const std::string& noesis_exe,
-                     const std::vector<remod::Profile>& profiles);
+                     const std::vector<remod::Profile>& profiles, const std::string& game, bool browser_only = false);
 
 private:
     struct Index {
@@ -46,7 +48,10 @@ private:
 
     const Image& image(const std::string& rel, unsigned max_side, bool force = false);
     void release_unused();
-    void draw_tree(const remod::FolderTree& tree, size_t folder);
+    void draw_tree(const remod::FolderTree& tree, size_t folder, const std::string& path);
+    void name_menu(const std::string& rel);                         // right-click the last item: name it
+    void drag_source(const std::string& rel, bool folder);           // the last item can be dragged as a path
+    void show_nickname(const std::string& rel, bool above = false);  // after the last item, on its line
     int draw_tile(const std::string& rel, bool found, float size, bool selected);  // 1 clicked, 2 double-clicked
     void draw_files(const std::vector<remod::Profile>& profiles, std::string& chosen);
     void draw_textures(bool ready, const std::vector<remod::Profile>& profiles, std::string& chosen);
@@ -85,6 +90,11 @@ private:
     std::set<int> hidden_groups_;              // groups the user turned off
     size_t triangles_ = 0;
     std::map<std::string, Image> images_;  // key: max side + path
+    // Readable names: this game's nicknames and their file; no file while it couldn't be read (never saved over).
+    remod::Nicknames names_;
+    std::filesystem::path names_file_;
+    std::string names_game_ = "\x01", names_error_;
+    std::string naming_;  // the nickname being typed
     int frame_ = 0;
     double load_ms_ = 0;  // spent loading images this frame
 };

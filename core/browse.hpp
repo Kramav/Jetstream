@@ -1,6 +1,8 @@
 #pragma once
 // The texture and mesh browser's data (CLAUDE.md §10): an index of an extracted natives folder (REtool), its
 // folder tree, search, and which textures a mesh's material uses. Previews are read with read_tex_pixels.
+#include "names.hpp"
+
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -30,8 +32,10 @@ struct FolderTree {
 };
 FolderTree folder_tree(const std::vector<std::string>& paths);
 
-// Indexes of the paths containing every space-separated word of `query`, ignoring case.
-std::vector<size_t> search(const std::vector<std::string>& paths, const std::string& query);
+// Indexes of the paths containing every space-separated word of `query`, ignoring case. With `names`, a word may also
+// be in the path's nickname or a folder's above it (naming cha000 "Leon" makes "leon albd" find its colour textures).
+std::vector<size_t> search(const std::vector<std::string>& paths, const std::string& query,
+                           const Nicknames* names = nullptr);
 
 // The file name after the last '/'.
 std::string file_name(const std::string& path);

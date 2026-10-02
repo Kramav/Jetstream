@@ -161,12 +161,19 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   - **Not checked by eye yet** (2026-10-01): built, tests pass, Build layout at Near started without asserts.
 - **Panels per layout (user, 2026-10-01: "we shouldn't show things that won't be in use").** Use layout: Browser,
   Graph, Pipeline, viewer and Textures; the Pipeline can be closed (its X; a "Pipeline" button above the graph brings
-  it back). Build layout: a **Nodes** panel (every block type, steps then utilities, search; each entry is a preview of
-  the block as it will look, `draw_block_preview`, shrunk to the panel; click adds mid-view; dragging one over the
-  graph shows a see-through copy at the graph's zoom, already spaced from the others as `keep_apart` will place it,
-  and the drop lands exactly there; tooltips show description and coloured pins), Graph, and the Pipeline's building parts only
-  (graph file, game, status, problems; no Noesis, game files or log), always shown. The dock layout is rebuilt when
-  the layout or the Pipeline's visibility changes, so hidden panels leave no gap (split sizes reset then).
+  it back). Build layout (user, 2026-10-01: Browser in both layouts, Nodes moved to the bottom): Browser left (the
+  Browser window only, no Textures or viewer), Graph, the Pipeline's building parts only (graph file, game, status,
+  problems; no Noesis, game files or log), always shown, and along the bottom a **Nodes** panel (every block type in
+  family folders, search; each entry is a preview of the block as it will look, `draw_block_preview`, side by side and
+  wrapping; click adds mid-view; dragging one over the graph shows a see-through copy at the graph's zoom, already
+  spaced from the others as `keep_apart` will place it, and the drop lands exactly there; tooltips show description
+  and pins). The dock layout is rebuilt when the layout or the Pipeline's visibility changes, so hidden panels leave
+  no gap (split sizes reset then).
+- **Drag paths from the Browser onto block fields (user, 2026-10-01), both layouts.** Files, folders and thumbnails
+  are drag sources (payload `"remod_path"`, the absolute path); every path-capable field in a Near block is a target
+  (`accept_path`). Core `path_fit` decides: folder fields take folders, file fields files with an extension from the
+  field's filter, text fields no path; a misfit shows why on hover and the drop does nothing. A texture drop picks the
+  game, like the "..." picker. Dropping only fills fields: no new blocks (see §10).
 - **Zooming while holding a block keeps it under the cursor (user, 2026-10-01).** imgui-node-editor drags by
   mouse − click in graph coordinates but re-converts the screen click through the current zoom each frame, so a zoom
   moved the block. The app pins the click's graph position just before `ed::End()` (after all Suspend/Resume, which
@@ -401,6 +408,10 @@ Fill these in from the manual spike before implementing the affected code:
 
 ## 10. Later milestones (do not start)
 
+- **Far future (user, 2026-10-01): drop a Browser path on empty canvas to add a block holding it** (.tex → Original
+  texture, image → Use existing image, anything else → Value), as an option in an options menu. Not started; today
+  a drop only fills a field.
+
 - M2: AI backend as a separate local process (not in the app). GPU/VRAM detection at install.
   img2img/ControlNet for textures, never plain text-to-image for UV-mapped textures.
 - M3: REFramework Lua runtime reading manifests (triggers → actions).
@@ -443,7 +454,13 @@ Fill these in from the manual spike before implementing the affected code:
 - **Readable names (user wish, long term, 2026-10-01):** let the user give the game's cryptic folder and file names
   (e.g. `cha000`, `sm84_676_00`, `ui3200`) a human-readable nickname, shown in the Browser in place of or beside
   the real name, and searchable. Nicknames only label things: real paths stay what's packaged and stored.
-  Open: where nicknames live (a user file, per game profile) and whether a shared, community-made list is wanted.
+  **Built 2026-10-01** (core `names.*`, `Nicknames`): one JSON file per game, `%APPDATA%\remod\names\<game>.json`, a
+  flat `{"path": "nickname"}` object keyed by the lowercase path under the natives root (folders and files), so a
+  list can be shared by copying the file. A file that can't be read is reported and never saved over. Browser:
+  right-click a folder, file or thumbnail → Name...; the nickname shows beside the real name (thumbnails: in place of
+  it), search results show the nearest named folder's, and `search` matches the nicknames of a path and every folder
+  above it ("leon albd"). The game is the graph's profile. Open: a shipped community list (not built; the format
+  allows one).
 
 ## 11. References
 

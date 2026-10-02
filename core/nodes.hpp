@@ -92,6 +92,11 @@ const InputSpec* find_input(const NodeSpec& spec, std::string_view name);
 // The picker a typed value of `type` gets (a Value's field takes the kind it feeds); None for text.
 PathKind picker_for(PortType type);
 
+// Why `path` can't go into a field with this picker and filter (e.g. dropped there from the browser), or "" if it can.
+// Folder fields take folders; file fields (OpenFile, OpenTexture, SaveFile) take files, with an extension in `filter`
+// if one is given (e.g. "png,tga,jpg"); a text field (None) takes no path.
+std::string path_fit(PathKind kind, const char* filter, const std::string& path, bool is_folder);
+
 // Can an output of type `out` feed `in`? Same type; anything into a Text or Path input (as its text/path: a texture
 // is a file too); Text into an editable input (a typed value), and a Path into a texture or image file field; anything
 // into a pass-through, and a pass-through with nothing linked in yet into anything (checked once it has a type).

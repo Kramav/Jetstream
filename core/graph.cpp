@@ -74,6 +74,18 @@ std::string extension_list(const char* filter) {
     return exts;
 }
 
+}  // namespace
+
+std::string path_fit(PathKind kind, const char* filter, const std::string& path, bool is_folder) {
+    if (kind == PathKind::None) return "This field takes text, not a path.";
+    if (kind == PathKind::Folder) return is_folder ? "" : "This field needs a folder.";
+    if (is_folder) return "This field needs a file.";
+    if (filter && *filter && !has_extension(path, filter)) return "This field needs a " + extension_list(filter) + " file.";
+    return "";
+}
+
+namespace {
+
 // Kahn's algorithm; ties keep file order so runs are deterministic. Returns fewer nodes than exist on a cycle.
 std::vector<const Node*> topo_order(const Graph& g) {
     std::map<int, int> indegree;
