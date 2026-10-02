@@ -242,6 +242,399 @@ Bgra resize_image(const Bgra& image, unsigned width, unsigned height, Fit fit) {
     return out;
 }
 
+// ---- Replace photo ----
+
+namespace {
+
+using Plane = std::vector<float>;  // one value per pixel, rows top-down
+
+Plane luma(const Bgra& img) {  // brightness, 0-1
+    Plane p(size_t(img.width) * img.height);
+    for (size_t i = 0; i < p.size(); ++i) {
+        const std::uint8_t* c = &img.pixels[i * 4];
+        p[i] = (0.114f * c[0] + 0.587f * c[1] + 0.299f * c[2]) / 255;
+    }
+    return p;
+}
+
+// A box blur `r` pixels each way (rows then columns, the window shrinking at the edges), `passes` times: three are
+// close to a Gaussian.
+Plane box_blur(Plane p, unsigned w, unsigned h, int r, int passes = 3) {
+    if (r <= 0 || w == 0 || h == 0) return p;
+    Plane tmp(p.size());
+    std::vector<double> sum(size_t(std::max(w, h)) + 1);
+    auto pass = [&](const Plane& in, Plane& out, unsigned n, unsigned lines, size_t step, size_t line_step) {
+        for (unsigned l = 0; l < lines; ++l) {
+            const size_t base = l * line_step;
+            sum[0] = 0;
+            for (unsigned i = 0; i < n; ++i) sum[i + 1] = sum[i] + in[base + i * step];
+            for (unsigned i = 0; i < n; ++i) {
+                const int a = std::max(0, int(i) - r), b = std::min(int(n) - 1, int(i) + r);
+                out[base + i * step] = float((sum[size_t(b) + 1] - sum[size_t(a)]) / double(b - a + 1));
+            }
+        }
+    };
+    for (int k = 0; k < passes; ++k) {
+        pass(p, tmp, w, h, 1, w);  // rows
+        pass(tmp, p, h, w, w, 1);  // columns
+    }
+    return p;
+}
+
+// The blur of `v` counting only where `weight` is (blur(v * weight) / blur(weight)): the old photo without the frame.
+Plane weighted_blur(const Plane& v, const Plane& weight, unsigned w, unsigned h, int r) {
+    Plane vw(v.size());
+    for (size_t i = 0; i < v.size(); ++i) vw[i] = v[i] * weight[i];
+    const Plane a = box_blur(std::move(vw), w, h, r), b = box_blur(weight, w, h, r);
+    Plane out(v.size());
+    for (size_t i = 0; i < v.size(); ++i) out[i] = b[i] > 1e-4f ? a[i] / b[i] : v[i];
+    return out;
+}
+
+// Squared distances along one line (Felzenszwalb & Huttenlocher): `f` is 0 at the sources, huge elsewhere.
+void distance_line(const std::vector<double>& f, std::vector<double>& d, int n, std::vector<int>& v,
+                   std::vector<double>& z) {
+    constexpr double inf = 1e30;
+    int k = 0;
+    v[0] = 0;
+    z[0] = -inf;
+    z[1] = inf;
+    for (int q = 1; q < n; ++q) {
+        auto meet = [&](int p) { return ((f[q] + double(q) * q) - (f[p] + double(p) * p)) / (2.0 * q - 2.0 * p); };
+        double s = meet(v[k]);
+        while (s <= z[k]) s = meet(v[--k]);
+        v[++k] = q;
+        z[k] = s;
+        z[k + 1] = inf;
+    }
+    for (int q = 0, j = 0; q < n; ++q) {
+        while (z[j + 1] < q) ++j;
+        d[q] = double(q - v[j]) * (q - v[j]) + f[v[j]];
+    }
+}
+
+// Each inside pixel's distance (pixels) to the nearest outside one or the image's edge (0 outside).
+Plane distance_inside(const std::vector<bool>& inside, unsigned width, unsigned height) {
+    const int w = int(width) + 2, h = int(height) + 2;  // outside all round
+    std::vector<double> g(size_t(w) * h, 0.0);
+    for (int y = 1; y + 1 < h; ++y)
+        for (int x = 1; x + 1 < w; ++x)
+            if (inside[size_t(y - 1) * width + size_t(x - 1)]) g[size_t(y) * w + x] = 1e20;
+    const int n = std::max(w, h);
+    std::vector<double> f(size_t(n) + 1), d(size_t(n) + 1), z(size_t(n) + 2);
+    std::vector<int> v(size_t(n) + 1);
+    for (int x = 0; x < w; ++x) {  // columns
+        for (int y = 0; y < h; ++y) f[y] = g[size_t(y) * w + x];
+        distance_line(f, d, h, v, z);
+        for (int y = 0; y < h; ++y) g[size_t(y) * w + x] = d[y];
+    }
+    for (int y = 0; y < h; ++y) {  // rows
+        for (int x = 0; x < w; ++x) f[x] = g[size_t(y) * w + x];
+        distance_line(f, d, w, v, z);
+        for (int x = 0; x < w; ++x) g[size_t(y) * w + x] = d[x];
+    }
+    Plane out(size_t(width) * height);
+    for (unsigned y = 0; y < height; ++y)
+        for (unsigned x = 0; x < width; ++x) out[size_t(y) * width + x] = float(std::sqrt(g[size_t(y + 1) * w + x + 1]));
+    return out;
+}
+
+// How far into the frame each pixel is: its distance to the nearest transparent one (alpha < 128) or the image's edge.
+Plane distance_to_outline(const Bgra& img) {
+    std::vector<bool> opaque(size_t(img.width) * img.height);
+    for (size_t i = 0; i < opaque.size(); ++i) opaque[i] = img.pixels[i * 4 + 3] >= 128;
+    return distance_inside(opaque, img.width, img.height);
+}
+
+float sample(const Plane& p, unsigned w, unsigned h, float x, float y) {  // bilinear, clamped
+    x = std::clamp(x, 0.0f, float(w) - 1.001f);
+    y = std::clamp(y, 0.0f, float(h) - 1.001f);
+    const unsigned x0 = unsigned(x), y0 = unsigned(y);
+    const float fx = x - float(x0), fy = y - float(y0);
+    const float* r0 = &p[size_t(y0) * w + x0];
+    const float* r1 = r0 + w;
+    return (r0[0] * (1 - fx) + r0[1] * fx) * (1 - fy) + (r1[0] * (1 - fx) + r1[1] * fx) * fy;
+}
+
+}  // namespace
+
+PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float feather) {
+    const unsigned w = frame.width, h = frame.height;
+    if (w < 8 || h < 8) throw std::runtime_error("the frame image is too small");
+    const Plane dist = distance_to_outline(frame);
+    // The brightness change across the frame: the Sobel gradient of a slightly blurred brightness, projected onto the
+    // outline's normal (the way the distance from the outline grows). A ring's edges all lie along the outline and
+    // step the same way all round it; the photo's content (faces, grime, specks) points every way, with either sign.
+    const Plane l = box_blur(luma(frame), w, h, 1, 2);
+    Plane across(l.size(), 0);
+    auto at = [&](const Plane& p, unsigned x, unsigned y) { return p[size_t(y) * w + x]; };
+    for (unsigned y = 1; y + 1 < h; ++y)
+        for (unsigned x = 1; x + 1 < w; ++x) {
+            const float nx = at(dist, x + 1, y) - at(dist, x - 1, y), ny = at(dist, x, y + 1) - at(dist, x, y - 1);
+            const float len = std::sqrt(nx * nx + ny * ny);
+            if (len < 1e-3f) continue;
+            const float gx = at(l, x + 1, y - 1) + 2 * at(l, x + 1, y) + at(l, x + 1, y + 1) - at(l, x - 1, y - 1) -
+                             2 * at(l, x - 1, y) - at(l, x - 1, y + 1);
+            const float gy = at(l, x - 1, y + 1) + 2 * at(l, x, y + 1) + at(l, x + 1, y + 1) - at(l, x - 1, y - 1) -
+                             2 * at(l, x, y - 1) - at(l, x + 1, y - 1);
+            across[size_t(y) * w + x] = (gx * nx + gy * ny) / len;
+        }
+    // For snapping: how strong the edge along the ring is (either way), saturated at half its 95th percentile so
+    // every clear edge counts the same.
+    std::vector<float> inside;
+    for (size_t i = 0; i < across.size(); ++i)
+        if (dist[i] > 1.5f) inside.push_back(std::abs(across[i]));
+    if (inside.empty()) throw std::runtime_error("the frame image is all transparent");
+    const auto p95 = inside.begin() + std::ptrdiff_t(double(inside.size() - 1) * 0.95);
+    std::nth_element(inside.begin(), p95, inside.end());
+    const float saturation = std::max(1e-4f, *p95 * 0.5f);
+    Plane s(across.size());
+    for (size_t i = 0; i < across.size(); ++i) s[i] = std::min(1.0f, std::abs(across[i]) / saturation);
+
+    PhotoArea out;
+    out.frame_width = frame_width;
+    if (frame_width <= 0) {
+        // The brightness change across the outline, averaged (with its sign) at each whole distance from it: the
+        // frame's rings, the photo's edge among them, add up; the photo's content cancels out. The innermost clear
+        // peak is the photo's edge.
+        const int deepest = std::max(4, int(*std::max_element(dist.begin(), dist.end()) * 0.8f));
+        std::vector<double> total(size_t(deepest) + 2), count(size_t(deepest) + 2);
+        for (size_t i = 0; i < dist.size(); ++i)
+            if (const int d = int(std::lround(dist[i])); d >= 1 && d <= deepest) {
+                total[size_t(d)] += across[i];
+                count[size_t(d)] += 1;
+            }
+        std::vector<float> m(size_t(deepest) + 2, 0), smooth(size_t(deepest) + 2, 0);
+        for (int d = 1; d <= deepest; ++d)
+            m[size_t(d)] = count[size_t(d)] ? float(std::abs(total[size_t(d)] / count[size_t(d)])) : 0;
+        for (int d = 2; d < deepest; ++d) smooth[size_t(d)] = (m[size_t(d) - 1] + m[size_t(d)] + m[size_t(d) + 1]) / 3;
+        const float best = *std::max_element(smooth.begin(), smooth.end());
+        int pick = 0;
+        for (int d = 3; d + 1 < deepest; ++d)
+            if (smooth[size_t(d)] >= 0.5f * best && smooth[size_t(d)] >= smooth[size_t(d) - 1] &&
+                smooth[size_t(d)] >= smooth[size_t(d) + 1])
+                pick = d;
+        if (!pick) throw std::runtime_error("no frame edge found: set Frame width");
+        out.frame_width = float(pick);
+    }
+    const float fw = out.frame_width;
+
+    // The middle of the area inside that ring; rays from it find the ring at every angle.
+    double cx = 0, cy = 0, n = 0;
+    for (unsigned y = 0; y < h; ++y)
+        for (unsigned x = 0; x < w; ++x)
+            if (dist[size_t(y) * w + x] >= fw) cx += x, cy += y, n += 1;
+    if (n == 0) throw std::runtime_error("Frame width is wider than the frame");
+    cx /= n;
+    cy /= n;
+    constexpr int A = 720;  // rays, half a degree apart
+    const float band = std::max(3.0f, fw * 0.15f);
+    std::vector<float> ring(A);
+    float reach = 0;
+    for (int a = 0; a < A; ++a) {
+        const double t = a * 6.283185307 / A;
+        const float dx = float(std::cos(t)), dy = float(std::sin(t));
+        float r = 0;
+        for (;; r += 0.5f) {
+            const float x = float(cx) + r * dx, y = float(cy) + r * dy;
+            if (x < 0 || y < 0 || x > float(w - 1) || y > float(h - 1) || sample(dist, w, h, x, y) < fw) break;
+        }
+        ring[size_t(a)] = r;
+        reach = std::max(reach, r + band);
+    }
+    const int R = int(reach) + 2;
+    // Within the band around the ring, the edge strength along each ray (pulled a little towards the ring).
+    constexpr float none = -1e9f;
+    std::vector<float> score(size_t(A) * R, none);
+    for (int a = 0; a < A; ++a) {
+        const double t = a * 6.283185307 / A;
+        const int lo = std::max(1, int(ring[size_t(a)] - band)), hi = std::min(R - 1, int(ring[size_t(a)] + band));
+        for (int r = lo; r <= hi; ++r)
+            score[size_t(a) * R + r] =
+                sample(s, w, h, float(cx + r * std::cos(t)), float(cy + r * std::sin(t))) -
+                0.05f * std::abs(float(r) - ring[size_t(a)]) / band;
+    }
+    // The closed path of radii with the most edge along it, changing by at most K per ray: two turns, the second
+    // (settled) kept.
+    const int K = 2 + int(0.012f * reach);
+    std::vector<float> dp(score.begin(), score.begin() + R), next(dp.size());
+    std::vector<std::int32_t> from(size_t(2 * A) * R);
+    for (int t = 1; t < 2 * A; ++t) {
+        const float* row = &score[size_t(t % A) * R];
+        for (int r = 0; r < R; ++r) {
+            next[size_t(r)] = none;
+            from[size_t(t) * R + r] = r;
+            if (row[r] <= none / 2) continue;
+            float best = none;
+            for (int q = std::max(0, r - K); q <= std::min(R - 1, r + K); ++q)
+                if (const float v = dp[size_t(q)] - 0.01f * float(std::abs(q - r)); v > best) {
+                    best = v;
+                    from[size_t(t) * R + r] = q;
+                }
+            if (best > none / 2) next[size_t(r)] = best + row[r];
+        }
+        std::swap(dp, next);
+    }
+    int r = int(std::max_element(dp.begin(), dp.end()) - dp.begin());
+    std::vector<int> radius(size_t(2 * A));
+    for (int t = 2 * A - 1; t >= 0; --t) {
+        radius[size_t(t)] = r;
+        if (t) r = from[size_t(t) * R + r];
+    }
+    for (int a = 0; a < A; ++a) {
+        const double t = a * 6.283185307 / A;
+        const float rr = std::max(1.0f, float(radius[size_t(A + a)]) + grow);
+        out.outline.push_back({float(cx + rr * std::cos(t)), float(cy + rr * std::sin(t))});
+    }
+
+    // The mask: inside the outline (pixel centres), softened by `feather`.
+    Plane m(size_t(w) * h, 0);
+    std::vector<float> xs;
+    for (unsigned y = 0; y < h; ++y) {
+        const float py = float(y) + 0.5f;
+        xs.clear();
+        for (size_t i = 0; i < out.outline.size(); ++i) {
+            const auto& p = out.outline[i];
+            const auto& q = out.outline[(i + 1) % out.outline.size()];
+            if ((p[1] <= py) != (q[1] <= py)) xs.push_back(p[0] + (py - p[1]) * (q[0] - p[0]) / (q[1] - p[1]));
+        }
+        std::ranges::sort(xs);
+        for (size_t k = 0; k + 1 < xs.size(); k += 2) {
+            const int x0 = std::max(0, int(std::ceil(xs[k] - 0.5f))), x1 = std::min(int(w) - 1, int(std::floor(xs[k + 1] - 0.5f)));
+            for (int x = x0; x <= x1; ++x) m[size_t(y) * w + size_t(x)] = 1;
+        }
+    }
+    if (feather > 0) m = box_blur(std::move(m), w, h, std::max(1, int(std::lround(feather))), 2);
+    out.mask.resize(m.size());
+    for (size_t i = 0; i < m.size(); ++i) out.mask[i] = std::uint8_t(std::lround(std::clamp(m[i], 0.0f, 1.0f) * 255));
+    return out;
+}
+
+Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std::uint8_t>& mask, const Ageing& ageing,
+                   float scale) {
+    const unsigned w = frame.width, h = frame.height;
+    if (mask.size() != size_t(w) * h) throw std::runtime_error("the mask doesn't match the frame image");
+    unsigned x0 = w, y0 = h, x1 = 0, y1 = 0;
+    for (unsigned y = 0; y < h; ++y)
+        for (unsigned x = 0; x < w; ++x)
+            if (mask[size_t(y) * w + x]) x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x), y1 = std::max(y1, y);
+    if (x0 > x1) return frame;  // no photo area
+    const unsigned bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    const Bgra pic = resize_image(picture, bw, bh, Fit::Fill);  // end to end over the area
+    Plane m(mask.size());
+    for (size_t i = 0; i < m.size(); ++i) m[i] = mask[i] / 255.0f;
+    const Plane old_l = luma(frame);
+
+    // The old photo and the picture over the area: brightness mean and spread, colour cast, how colourful.
+    struct Stats {
+        double weight = 0, l = 0, l2 = 0, colourful = 0, rgb[3] = {0, 0, 0};
+    } old_s, new_s;
+    auto add = [](Stats& st, const std::uint8_t* p, float wt) {
+        const double r = p[2] / 255.0, g = p[1] / 255.0, b = p[0] / 255.0, l = 0.299 * r + 0.587 * g + 0.114 * b;
+        st.weight += wt;
+        st.l += wt * l;
+        st.l2 += wt * l * l;
+        st.colourful += wt * (std::abs(r - l) + std::abs(g - l) + std::abs(b - l)) / 3;
+        st.rgb[0] += wt * r;
+        st.rgb[1] += wt * g;
+        st.rgb[2] += wt * b;
+    };
+    for (unsigned y = y0; y <= y1; ++y)
+        for (unsigned x = x0; x <= x1; ++x)
+            if (const float wt = m[size_t(y) * w + x]; wt > 0) {
+                add(old_s, &frame.pixels[(size_t(y) * w + x) * 4], wt);
+                add(new_s, &pic.pixels[(size_t(y - y0) * bw + (x - x0)) * 4], wt);
+            }
+    auto mean = [](const Stats& st) { return float(st.l / st.weight); };
+    auto spread = [&](const Stats& st) { return float(std::sqrt(std::max(0.0, st.l2 / st.weight - mean(st) * mean(st)))); };
+    const float mu_old = mean(old_s), mu_new = mean(new_s);
+    const float k_tone = spread(new_s) > 1e-4f ? spread(old_s) / spread(new_s) : 1;
+    const float colourful_new = float(new_s.colourful / new_s.weight), colourful_old = float(old_s.colourful / old_s.weight);
+    const float k_colour = colourful_new > 1e-4f ? std::min(1.0f, colourful_old / colourful_new) : 0;
+    float cast[3];
+    for (int k = 0; k < 3; ++k) cast[k] = float(old_s.rgb[k] / old_s.weight) - mu_old;
+
+    // The old photo's shading: its brightness averaged by distance from the photo's edge (up to a quarter of its size)
+    // and direction round it, relative to its mean. That keeps the frame's shadow along an edge and the fading at the
+    // corners, while the old picture's own shapes (faces, clothes) average out.
+    std::vector<bool> inside(mask.size());
+    double mx = 0, my = 0, mn = 0;
+    for (unsigned y = y0; y <= y1; ++y)
+        for (unsigned x = x0; x <= x1; ++x)
+            if (mask[size_t(y) * w + x] >= 128) inside[size_t(y) * w + x] = true, mx += x, my += y, mn += 1;
+    const Plane from_edge = distance_inside(inside, w, h);
+    constexpr int sectors = 36;
+    const float reach = std::max(4.0f, 0.25f * float(std::min(bw, bh)));
+    const int rings = 24;
+    std::vector<double> sum(size_t(rings) * sectors), count(size_t(rings) * sectors);
+    auto bin = [&](unsigned x, unsigned y, int& ring, int& sector) {
+        ring = std::min(rings - 1, int(from_edge[size_t(y) * w + x] / reach * rings));
+        const double angle = std::atan2(double(y) - my / mn, double(x) - mx / mn) + 3.141592653589793;
+        sector = std::min(sectors - 1, int(angle / 6.283185307179586 * sectors));
+    };
+    for (unsigned y = y0; y <= y1; ++y)
+        for (unsigned x = x0; x <= x1; ++x)
+            if (const size_t i = size_t(y) * w + x; inside[i] && from_edge[i] < reach) {
+                int ring = 0, sector = 0;
+                bin(x, y, ring, sector);
+                sum[size_t(ring) * sectors + sector] += old_l[i];
+                count[size_t(ring) * sectors + sector] += 1;
+            }
+    std::vector<float> ratio(sum.size(), 1);  // smoothed over +-3 sectors (30 degrees) and +-1 ring
+    for (int ring = 0; ring < rings; ++ring)
+        for (int sector = 0; sector < sectors; ++sector) {
+            double total = 0, n = 0;
+            for (int dr = -1; dr <= 1; ++dr)
+                for (int ds = -3; ds <= 3; ++ds) {
+                    const int r2 = ring + dr, s2 = (sector + ds + sectors) % sectors;
+                    if (r2 < 0 || r2 >= rings) continue;
+                    total += sum[size_t(r2) * sectors + s2];
+                    n += count[size_t(r2) * sectors + s2];
+                }
+            if (n > 0 && mu_old > 1e-3f) ratio[size_t(ring) * sectors + sector] = float(total / n) / mu_old;
+        }
+    const Plane fine = weighted_blur(old_l, m, w, h, std::max(1, int(std::lround(2 * scale))));
+
+    Bgra out = frame;
+    for (unsigned y = y0; y <= y1; ++y)
+        for (unsigned x = x0; x <= x1; ++x) {
+            const size_t i = size_t(y) * w + x;
+            const float a = m[i];
+            if (a <= 0) continue;
+            const std::uint8_t* np = &pic.pixels[(size_t(y - y0) * bw + (x - x0)) * 4];
+            std::uint8_t* op = &out.pixels[i * 4];
+            float rgb[3] = {np[2] / 255.0f, np[1] / 255.0f, np[0] / 255.0f};
+            const float old[3] = {op[2] / 255.0f, op[1] / 255.0f, op[0] / 255.0f};
+            const float l = 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2];
+            const float toned_l = (l - mu_new) * k_tone + mu_old;  // the old photo's brightness and contrast
+            float shading = 1;  // fading back to 1 (no change) towards the reach
+            if (from_edge[i] < reach) {
+                // Between the four nearest bins (rings straight, sectors round the circle), so no band edges show.
+                const float fr = std::clamp(from_edge[i] / reach * rings - 0.5f, 0.0f, float(rings - 1));
+                const double angle = std::atan2(double(y) - my / mn, double(x) - mx / mn) + 3.141592653589793;
+                const float fs = float(angle / 6.283185307179586 * sectors) - 0.5f;
+                const int r0 = std::min(rings - 2, int(fr)), s0 = int(std::floor(fs));
+                const float tr = fr - float(r0), ts = fs - float(s0);
+                auto at = [&](int r, int sct) { return ratio[size_t(r) * sectors + size_t((sct % sectors + sectors) % sectors)]; };
+                const float v = (at(r0, s0) * (1 - ts) + at(r0, s0 + 1) * ts) * (1 - tr) +
+                                (at(r0 + 1, s0) * (1 - ts) + at(r0 + 1, s0 + 1) * ts) * tr;
+                const float t = std::clamp(1 - from_edge[i] / reach, 0.0f, 1.0f);
+                const float fade = t * t * (3 - 2 * t);  // eases out over the whole reach: no inner edge shows
+                shading = 1 + (v - 1) * fade;
+            }
+            const float detail = old_l[i] - fine[i];
+            for (int k = 0; k < 3; ++k) {
+                const float toned = toned_l + (rgb[k] - l) * k_colour + cast[k];  // and its colour cast
+                float c = rgb[k] + (toned - rgb[k]) * ageing.tone;
+                c *= 1 + (shading - 1) * ageing.shading;
+                c += ageing.stains * ((old[k] - old_l[i]) - cast[k]);  // its colour away from its cast
+                c += ageing.detail * detail;
+                op[2 - k] = std::uint8_t(std::lround(std::clamp(old[k] + (c - old[k]) * a, 0.0f, 1.0f) * 255));
+            }
+        }
+    return out;
+}
+
 void overlay_image(Bgra& base, const Bgra& top, int x, int y, float opacity) {
     opacity = std::clamp(opacity, 0.0f, 1.0f);
     for (unsigned ty = 0; ty < top.height; ++ty) {

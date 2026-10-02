@@ -1,5 +1,6 @@
 #pragma once
 // Small image jobs via WIC (Windows Imaging Component, built into Windows): no image library dependency.
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <vector>
@@ -40,5 +41,31 @@ Bgra resize_image(const Bgra& image, unsigned width, unsigned height, Fit fit);
 // `top` over `base` with its top-left at (x, y), weighted by top's alpha times `opacity` (0 to 1), clipped to base.
 // Base's alpha is kept.
 void overlay_image(Bgra& base, const Bgra& top, int x, int y, float opacity);
+
+// ---- Replace photo: a picture into a framed photo's place, keeping the old photo's ageing ----
+
+// The old photo's area inside an opaque frame. A frame's inner edge runs parallel to its outer outline (alpha, or the
+// image's edge): the edge strength is averaged at each distance from the outline, and the innermost strong ring is
+// the photo's edge (the photo's own content doesn't line up with the outline, so it averages out). The outline is
+// then snapped to the actual edge within a band around that ring (closed contour, dynamic programming over angles).
+// Rectangles, ovals and arches work. `frame_width` > 0 skips the search (distance from the outline, pixels); `grow`
+// moves the edge outwards (negative: inwards); `feather` softens it (pixels).
+struct PhotoArea {
+    std::vector<std::uint8_t> mask;             // per pixel, 0-255
+    std::vector<std::array<float, 2>> outline;  // the edge found, a closed polygon (x, y)
+    float frame_width = 0;                      // used (found, when asked for 0)
+};
+PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float feather);
+
+// How much of the old photo's ageing goes onto the new picture, 0-1 each: its tone (brightness, contrast, colour
+// cast), its large-scale shading (the frame's shadow, fading), its colour damage (stains: colour away from its own
+// cast, clean on old grey photos), its fine detail (scratches, specks; the old picture shows through when strong).
+struct Ageing {
+    float tone = 1, shading = 1, stains = 1, detail = 0;
+};
+// `picture` covering the masked area end to end (aspect kept, cropped), aged from the old photo underneath, blended
+// into `frame` through the mask. The frame's alpha is kept. `scale` = pixels per real pixel (blur sizes follow it).
+Bgra replace_photo(const Bgra& frame, const Bgra& picture, const std::vector<std::uint8_t>& mask, const Ageing& ageing,
+                   float scale = 1);
 
 }  // namespace remod

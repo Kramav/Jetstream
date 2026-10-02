@@ -86,7 +86,7 @@ Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
-  OverlayImage, PackageMod; file steps CopyFile,
+  OverlayImage, ReplacePhoto, PackageMod; file steps CopyFile,
   MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
   CutText, RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
   utility.**
@@ -282,6 +282,22 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   image and Use existing image hand on theirs. So a fresh graph shows thumbnails before any run. Checked in the app
   on a test graph (Original texture → Export image, nothing exported → Adjust colour: thumbnail made from the
   texture). Padded-width textures decode at their visible width, where Noesis exports the padded one (§9).
+- **Replace photo (ReplacePhoto, user 2026-10-01: frames "filled end to end, fit with the curve, keeping the dirt"):**
+  a picture in place of the photo in an opaque frame (RE4R UI frames such as `ui3200/.../cs_ui3210_file_039_00_iam`:
+  alpha is only the frame's outline; the old photo is opaque, its ageing baked in). Core `photo_area`: a frame's inner
+  edge runs parallel to its outline, so the brightness change across the outline (Sobel projected onto the distance
+  field's normal, signed) is averaged at each distance from it: rings add up, the photo's content cancels; the
+  innermost peak (>= half the strongest, searched to 80% of the depth) is the photo's edge ("Frame width", 0 = auto),
+  then snapped within a band (15% of the width) by dynamic programming over 720 rays (a closed, smooth contour).
+  An unsigned average failed on the real texture (the grimy photo had as much edge as the rings: it picked 164 px
+  inside the photo); the signed one found 91 px, on the edge, at full size and on the 256 px thumbnail. Grow (default
+  2 px, slides under the lip; at 0 a 1-2 px line of the old photo showed) and Feather. Core `replace_photo`: the
+  picture covers the area (Fill), then the old photo's ageing at slider strengths: tone (brightness mean / spread,
+  colour cast, colourfulness), shading (brightness by distance from the photo's edge and direction round it, 36
+  sectors x 24 rings up to a quarter of its size, interpolated, eased out; a plain blur ghosted the old faces),
+  stains (colour away from its cast: clean on grey photos), scratches (high-pass, default 0: the old picture ghosts
+  through). "Show edge" draws the found outline on the thumbnail only. Checked on the real texture (images saved and
+  looked at, not screenshots). Thumbnails shrink one-mip textures (most RE4R UI textures) to 256 px.
 - **Cut text (CutText, user 2026-10-01: "truncate text based on the character content"):** keeps the part of a text
   or path after / before / from / up to a marker, at its first or last occurrence (core `cut_text`), ignoring case and
   treating `\` and `/` alike; a missing marker fails the run. E.g. a texture path cut after `natives/STM/` gives the
@@ -467,12 +483,9 @@ Fill these in from the manual spike before implementing the affected code:
   - **Channel tools:** split / merge channels, so colour can be edited without touching data packed in another
     channel. Which RE4R textures pack what (`_albm`, `_nrmr`, `_atos`...) is `[TBD-spike]`; don't assume.
   - **Mod options:** one mod with variants to choose in Fluffy.
-  - **Fit into frame** (next candidate; opinion given): technically small with the image blocks (flood-fill
-    transparent pixels from the edges; the largest enclosed transparent area's rectangle is the window; Resize
-    fill/fit + composite behind the frame). `[TBD-spike]` whether RE4R frame textures have transparent openings:
-    check 2-3 in the Browser with Transparency on. Transparent → auto-detect; picture printed into an opaque frame →
-    a typed rectangle (later drag-select on the preview); in-world paintings usually have their own picture texture,
-    which Resize "Match size of" already covers.
+  - Frames: done as **Replace photo** (§4; RE4R's UI frames are opaque, no transparent opening). Open: a picture
+    printed at an angle or in perspective (four-corner warp) if one turns up; in-world paintings usually have their
+    own picture texture (Resize "Match size of" covers them).
   - Declined: **Install to Fluffy** (the user installs by hand). A template library: only one real workflow exists
     yet (the RE4R texture mod).
 - **Later (user, 2026-10-01): Tidy up should allow more vertical inputs** (lay blocks out with room for inputs that

@@ -176,3 +176,107 @@ TEST_CASE("overlay_image: placed, blended by opacity, clipped, base alpha kept")
     CHECK(at(half, 0, 0) == std::array<int, 4>{100, 100, 100, 255});
     CHECK(at(half, 1, 1)[0] == 0);
 }
+
+namespace {
+
+// A framed photo, `size` square: transparent outside `margin`, dark wood (40) up to `lip`, a lighter lip (150) up to
+// `photo`, then a dark-grey photo (60) with a black block touching its bottom edge and a white one in the middle (its
+// own strong edges, which must not be taken for the frame).
+remod::Bgra framed(unsigned size, unsigned margin, unsigned lip, unsigned photo) {
+    remod::Bgra img{size, size, std::vector<std::uint8_t>(size_t(size) * size * 4, 0)};
+    for (unsigned y = 0; y < size; ++y)
+        for (unsigned x = 0; x < size; ++x) {
+            const unsigned d = std::min({x, y, size - 1 - x, size - 1 - y});  // distance from the image's edge
+            std::uint8_t v = 0, a = 255;
+            if (d < margin) a = 0;
+            else if (d < lip) v = 40;
+            else if (d < photo) v = 150;
+            else v = 60;
+            if (d >= photo && x >= size * 35 / 100 && x < size * 50 / 100 && y >= size * 55 / 100) v = 0;  // to the bottom
+            if (d >= photo && x >= size * 55 / 100 && x < size * 65 / 100 && y >= size * 35 / 100 && y < size * 45 / 100)
+                v = 255;
+            std::uint8_t* p = &img.pixels[(size_t(y) * size + x) * 4];
+            p[0] = p[1] = p[2] = v;
+            p[3] = a;
+        }
+    return img;
+}
+
+}  // namespace
+
+TEST_CASE("photo_area finds the photo's edge, not the frame's other rings or the photo's content") {
+    const remod::Bgra frame = framed(200, 10, 45, 50);
+    const remod::PhotoArea area = remod::photo_area(frame, 0, 0, 0);
+    CHECK(area.frame_width >= 38);  // the lip/photo edge: 40 px in from the outline (at 10)
+    CHECK(area.frame_width <= 43);
+    auto in = [&](unsigned x, unsigned y) { return area.mask[size_t(y) * 200 + x]; };
+    CHECK(in(100, 100) == 255);
+    CHECK(in(53, 53) == 255);   // just inside the photo's corner
+    CHECK(in(80, 147) == 255);  // the black block reaching the photo's edge: still the photo
+    CHECK(in(46, 100) == 0);    // the lip
+    CHECK(in(20, 100) == 0);    // the wood
+    CHECK_FALSE(area.outline.empty());
+
+    const remod::PhotoArea grown = remod::photo_area(frame, 0, 3, 0);  // under the lip
+    CHECK(grown.mask[100 * 200 + 48] == 255);
+    const remod::PhotoArea given = remod::photo_area(frame, 25, 0, 0);  // a width given: no search
+    CHECK(given.frame_width == 25);
+    const remod::PhotoArea soft = remod::photo_area(frame, 0, 0, 3);  // feathered: a ramp across the edge
+    CHECK(soft.mask[100 * 200 + 50] > 0);
+    CHECK(soft.mask[100 * 200 + 50] < 255);
+}
+
+TEST_CASE("photo_area follows an oval frame") {
+    constexpr unsigned W = 240, H = 180;
+    remod::Bgra img{W, H, std::vector<std::uint8_t>(size_t(W) * H * 4, 0)};
+    for (unsigned y = 0; y < H; ++y)
+        for (unsigned x = 0; x < W; ++x) {
+            const double dx = (double(x) - 120) / 110, dy = (double(y) - 90) / 80;  // the frame's outline
+            const double ix = (double(x) - 120) / 80, iy = (double(y) - 90) / 55;   // its oval opening
+            std::uint8_t* p = &img.pixels[(size_t(y) * W + x) * 4];
+            if (dx * dx + dy * dy > 1) continue;
+            p[3] = 255;
+            p[0] = p[1] = p[2] = std::uint8_t(ix * ix + iy * iy <= 1 ? 170 : 50);
+        }
+    const remod::PhotoArea area = remod::photo_area(img, 0, 0, 0);
+    auto in = [&](unsigned x, unsigned y) { return area.mask[size_t(y) * W + x]; };
+    CHECK(in(120, 90) == 255);
+    CHECK(in(195, 90) == 255);  // near the opening's right end (x 200)
+    CHECK(in(120, 140) == 255); // near its bottom (y 145)
+    CHECK(in(185, 50) == 0);    // a corner of its box: frame, not photo
+    CHECK(in(208, 90) == 0);
+}
+
+TEST_CASE("replace_photo fills the area end to end and carries the old photo's ageing over") {
+    remod::Bgra frame = framed(200, 10, 45, 50);
+    for (unsigned y = 60; y < 80; ++y)  // a brown stain on the old grey photo
+        for (unsigned x = 60; x < 80; ++x) {
+            std::uint8_t* p = &frame.pixels[(size_t(y) * 200 + x) * 4];
+            p[0] = 30, p[1] = 60, p[2] = 100;
+        }
+    const remod::PhotoArea area = remod::photo_area(frame, 0, 0, 0);
+    const remod::Bgra red{4, 3, {0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0,
+                                 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
+                                 0, 0, 255, 255}};
+    auto px = [](const remod::Bgra& img, unsigned x, unsigned y) {
+        const std::uint8_t* p = &img.pixels[(size_t(y) * img.width + x) * 4];
+        return std::array<int, 4>{p[0], p[1], p[2], p[3]};
+    };
+
+    const remod::Bgra plain = remod::replace_photo(frame, red, area.mask, {0, 0, 0, 0});  // no ageing: just red
+    CHECK(px(plain, 100, 100) == std::array<int, 4>{0, 0, 255, 255});
+    CHECK(px(plain, 55, 145) == std::array<int, 4>{0, 0, 255, 255});  // end to end, corners too
+    CHECK(px(plain, 20, 100) == px(frame, 20, 100));                   // the frame untouched
+    CHECK(px(plain, 5, 5)[3] == 0);                                    // its alpha kept
+
+    const remod::Bgra grey{1, 1, {128, 128, 128, 255}};
+    const remod::Bgra stained = remod::replace_photo(frame, grey, area.mask, {0, 0, 1, 0});
+    CHECK(px(stained, 70, 70)[2] > px(stained, 70, 70)[0] + 30);  // the stain's brown on the new picture: more red
+    CHECK(std::abs(px(stained, 120, 120)[2] - px(stained, 120, 120)[0]) < 5);  // still grey elsewhere
+    CHECK(px(plain, 70, 70) == px(plain, 120, 120));  // and not without Stains
+
+    const remod::Bgra toned = remod::replace_photo(frame, red, area.mask, {1, 0, 0, 0});
+    const auto t = px(toned, 120, 120);  // red becomes the old photo's dark grey
+    CHECK(std::abs(t[2] - t[1]) < 30);
+    CHECK(t[2] < 120);
+}

@@ -1835,21 +1835,22 @@ void update_thumbs(State& s) {
             if (ec) return std::nullopt;
             auto& cached = (*shrunk)[file.string()];
             if (cached.time != time || cached.image.image.pixels.empty()) {
-                // A texture (x.tex.<version>): the mip that fits, decoded (nothing needs exporting first).
+                // A texture (x.tex.<version>): the mip that fits, decoded (nothing needs exporting first). Most RE4R
+                // UI textures have one mip only, so it's shrunk to thumbnail size like an image.
+                unsigned real_width = 0;
+                remod::Bgra full;
                 if (remod::file_kind(file.filename().string()) == remod::FileKind::Texture) {
-                    unsigned full_width = 0;
-                    remod::Bgra mip = remod::decode_tex(file, kThumbSide, &full_width);
-                    const float k = full_width ? float(mip.width) / float(full_width) : 1.0f;
-                    cached = {time, {std::move(mip), k}};
-                    return cached.image;
+                    full = remod::decode_tex(file, kThumbSide, &real_width);
+                } else {
+                    full = remod::load_image(file);
+                    real_width = full.width;
                 }
-                const remod::Bgra full = remod::load_image(file);
-                const float k = ImMin(1.0f, float(kThumbSide) / float(ImMax(full.width, full.height)));
-                cached = {time,
-                          {k < 1 ? remod::resize_image(full, ImMax(1u, unsigned(full.width * k)),
-                                                       ImMax(1u, unsigned(full.height * k)), remod::Fit::Stretch)
-                                 : full,
-                           k}};
+                const float shrink = ImMin(1.0f, float(kThumbSide) / float(ImMax(full.width, full.height)));
+                if (shrink < 1)
+                    full = remod::resize_image(full, ImMax(1u, unsigned(full.width * shrink)),
+                                               ImMax(1u, unsigned(full.height * shrink)), remod::Fit::Stretch);
+                const float scale = real_width ? float(full.width) / float(real_width) : 1.0f;
+                cached = {time, {std::move(full), scale}};
             }
             return cached.image;
         };

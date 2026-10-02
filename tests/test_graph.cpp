@@ -1347,6 +1347,41 @@ TEST_CASE("preview_image starts at the texture when nothing is exported yet, and
     CHECK(from_png->image.width == 3);
 }
 
+TEST_CASE("run: Replace photo puts the picture in the frame's photo; its preview works before any run") {
+    TempDir tmp;
+    remod::Bgra frame{120, 120, std::vector<std::uint8_t>(120 * 120 * 4, 0)};
+    for (unsigned y = 0; y < 120; ++y)
+        for (unsigned x = 0; x < 120; ++x) {
+            const unsigned d = std::min({x, y, 119 - x, 119 - y});
+            std::uint8_t* p = &frame.pixels[(size_t(y) * 120 + x) * 4];
+            p[3] = d < 5 ? 0 : 255;
+            p[0] = p[1] = p[2] = std::uint8_t(d < 30 ? 40 : 170);  // wood, then the old photo
+        }
+    remod::save_png(tmp.path / "frame.png", frame);
+    remod::save_png(tmp.path / "pic.png", remod::Bgra{2, 2, {255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255}});
+
+    Graph g;
+    auto& block = g.add_node("ReplacePhoto");
+    block.params["frame"] = "frame.png";
+    block.params["picture"] = "pic.png";
+    block.params["tone"] = block.params["shading"] = block.params["stains"] = "0";  // the picture as it is
+    block.params["save_to"] = "out.png";
+    const auto r = run_in(g, tmp.path);
+    CHECK_THAT(r.nodes.at(1).message, ContainsSubstring("photo replaced (frame width"));
+    const remod::Bgra out = remod::load_image(tmp.path / "out.png");
+    CHECK(out.pixels[(60 * 120 + 60) * 4 + 0] == 255);  // blue in the middle
+    CHECK(out.pixels[(60 * 120 + 31) * 4 + 0] == 255);  // right up to the photo's edge (at 30)
+    CHECK(out.pixels[(60 * 120 + 15) * 4 + 0] == 40);   // the wood untouched
+
+    const remod::ImageLoader load = [](const fs::path& f) -> std::optional<remod::ImagePreview> {
+        return remod::ImagePreview{remod::load_image(f), 1};
+    };
+    g.find(1)->params["show_outline"] = "true";
+    const auto thumb = remod::preview_image(g, remod::preview_values(g, tmp.path), 1, tmp.path, 256, load);
+    REQUIRE(thumb);
+    CHECK(thumb->image.width == 120);
+}
+
 TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {
     auto result = [](const char* type, const char* input) {
         const char* r = remod::find_input(*remod::find_spec(type), input)->result;

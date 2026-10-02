@@ -399,6 +399,49 @@ NodeSpec overlay_image_node() {
     };
 }
 
+NodeSpec replace_photo_node() {
+    return {
+        .type = "ReplacePhoto",
+        .title = "Replace photo",
+        .summary = "Puts a picture in place of the photo in a frame (e.g. RE4R's framed photos): it finds the photo's "
+                   "edge, fills it end to end and carries the old photo's ageing over: its tone, the frame's shadow, "
+                   "its stains, and if wanted its scratches.",
+        .inputs = {image_input("frame", "Frame image", "The framed photo, e.g. Export image of the frame's texture."),
+                   image_input("picture", "Picture", "The new picture. It's cropped to fill the photo's area."),
+                   number_input("frame_width", "Frame width",
+                                "How far the photo's edge is from the frame's outline, in pixels. 0 (auto): found "
+                                "(the innermost ring that runs all the way round).",
+                                "0", 0, 4096, "%.0f px", "auto"),
+                   number_input("grow", "Grow", "Pixels to move the edge outwards (slides the picture under the "
+                                "frame's lip); negative moves it in.", "2", -40, 40, "%.0f px"),
+                   number_input("feather", "Feather", "Softens the edge, in pixels.", "1", 0, 20, "%.0f px"),
+                   number_input("tone", "Match tone", "The old photo's brightness, contrast and colour cast.", "100",
+                                0, 100, "%.0f%%"),
+                   number_input("shading", "Shading", "The old photo's shading near its edges: the frame's shadow, "
+                                "fading.", "100", 0, 100, "%.0f%%"),
+                   number_input("stains", "Stains", "The old photo's colour damage (clean on old grey photos).", "100",
+                                0, 100, "%.0f%%"),
+                   number_input("detail", "Scratches", "The old photo's fine detail: scratches and specks. The old "
+                                "picture shows through when strong; try 10-30.", "0", 0, 100, "%.0f%%"),
+                   {.name = "show_outline", .label = "Show edge", .type = Text, .widget = Widget::Checkbox,
+                    .hint = "Draws the photo's edge as found on the preview (not in the result)."},
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const Bgra frame = load_image(clean_path(r.text("frame"), r.run.options.base_dir));
+            const Bgra picture = load_image(clean_path(r.text("picture"), r.run.options.base_dir));
+            const PhotoArea area = photo_area(frame, number(r, "frame_width"), number(r, "grow"), number(r, "feather"));
+            const Ageing ageing{number(r, "tone") / 100, number(r, "shading") / 100, number(r, "stains") / 100,
+                                number(r, "detail") / 100};
+            write_image(r, replace_photo(frame, picture, area.mask, ageing),
+                        "photo replaced (frame width " + std::to_string(int(area.frame_width)) + " px)");
+        },
+        .preview = image_preview,
+    };
+}
+
 NodeSpec package_mod() {
     return {
         .type = "PackageMod",
@@ -898,7 +941,7 @@ const std::vector<NodeSpec>& node_specs() {
     static const std::vector<NodeSpec> specs{
         // The main steps: the texture pipeline, then file steps.
         load_tex(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(), resize_image_node(),
-        overlay_image_node(), package_mod(),
+        overlay_image_node(), replace_photo_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(),
         // Utilities.
         value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),
@@ -1066,6 +1109,27 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
             return ImagePreview{resize_image(img->image, std::max(1u, unsigned(std::lround(w * k))),
                                              std::max(1u, unsigned(std::lround(h * k))), how),
                                 float(k)};
+        }
+        if (n->type == "ReplacePhoto") {
+            const auto frame = image("frame"), picture = image("picture");
+            const auto fw = number_of("frame_width"), grow = number_of("grow"), feather = number_of("feather"),
+                       tone = number_of("tone"), shading = number_of("shading"), stains = number_of("stains"),
+                       detail = number_of("detail");
+            if (!frame || !picture || !fw || !grow || !feather || !tone || !shading || !stains || !detail)
+                return std::nullopt;
+            const float k = frame->scale;  // sizes on the thumbnail
+            const PhotoArea area = photo_area(frame->image, *fw > 0 ? *fw * k : 0, *grow * k, *feather * k);
+            ImagePreview out{replace_photo(frame->image, picture->image, area.mask,
+                                           {*tone / 100, *shading / 100, *stains / 100, *detail / 100}, k),
+                             k};
+            if (text("show_outline") == "true")  // the edge as found, in cyan
+                for (const auto& p : area.outline) {
+                    const long x = std::lround(p[0]), y = std::lround(p[1]);
+                    if (x < 0 || y < 0 || x >= long(out.image.width) || y >= long(out.image.height)) continue;
+                    std::uint8_t* px = &out.image.pixels[(size_t(y) * out.image.width + size_t(x)) * 4];
+                    px[0] = 255, px[1] = 255, px[2] = 0;
+                }
+            return out;
         }
         if (n->type == "OverlayImage") {
             auto base = image("base");
