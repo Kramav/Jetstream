@@ -1829,6 +1829,14 @@ void update_thumbs(State& s) {
             if (ec) return std::nullopt;
             auto& cached = (*shrunk)[file.string()];
             if (cached.time != time || cached.image.image.pixels.empty()) {
+                // A texture (x.tex.<version>): the mip that fits, decoded (nothing needs exporting first).
+                if (remod::file_kind(file.filename().string()) == remod::FileKind::Texture) {
+                    unsigned full_width = 0;
+                    remod::Bgra mip = remod::decode_tex(file, kThumbSide, &full_width);
+                    const float k = full_width ? float(mip.width) / float(full_width) : 1.0f;
+                    cached = {time, {std::move(mip), k}};
+                    return cached.image;
+                }
                 const remod::Bgra full = remod::load_image(file);
                 const float k = ImMin(1.0f, float(kThumbSide) / float(ImMax(full.width, full.height)));
                 cached = {time,
@@ -1853,7 +1861,7 @@ void draw_thumb(State& s, int node, float width, std::string& hint) {
     const auto it = s.thumbs.find(node);
     if (it == s.thumbs.end()) {
         ImGui::TextDisabled(s.no_thumb.contains(node)
-                                ? "No preview yet: its input image doesn't exist yet (run once), or a value isn't set."
+                                ? "No preview: an input image or texture can't be read, or a value isn't set."
                                 : "Working out the preview...");
         return;
     }

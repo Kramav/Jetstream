@@ -150,7 +150,9 @@ RunValues preview_values(const Graph& graph, const std::filesystem::path& base_d
 
 // An image block's result (NodeSpec::thumbnail) worked out in memory, for a live thumbnail of at most `max_side`
 // pixels: its input images come from linked image blocks (worked out the same way, through Splits) or from the files
-// the previews (`preview`, preview_values) or typed fields name, through the block's operation. `scale` = thumbnail
+// the previews (`preview`, preview_values) or typed fields name, through the block's operation. Export image hands on
+// its image file once it exists, else its texture (so `load` must also read textures, e.g. decode_tex); Edit image and
+// Use existing image hand on theirs. `scale` = thumbnail
 // pixels per real pixel, so sizes and positions are scaled to match. `load` gives a file's image already shrunk to at
 // most max_side, with its scale (front ends cache it). `profile` reads a texture's size for Resize's "Match size of"
 // (none: unknown). nullopt if an input image isn't known yet (e.g. not exported) or a value isn't usable.

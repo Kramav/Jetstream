@@ -11,7 +11,8 @@
       "features": ["docking-experimental", "win32-binding", "dx11-binding"]
     },
     "imgui-node-editor",
-    "nativefiledialog-extended"
+    "nativefiledialog-extended",
+    { "name": "directxtex", "default-features": false }
   ],
   "overrides": [
     { "name": "imgui", "version": "1.92.9" },

@@ -1302,6 +1302,51 @@ TEST_CASE("preview_image: an image block's result in memory, at thumbnail size, 
     CHECK_FALSE(remod::preview_image(g, none, 1, tmp.path, 16, load));  // load_image throws: caught, nothing
 }
 
+TEST_CASE("preview_image starts at the texture when nothing is exported yet, and uses the export once it exists") {
+    TempDir tmp;
+    // A 2x1 R8G8B8A8 texture (format 28), both pixels dark red.
+    std::string tex(40 + 16, '\0');
+    test::put_le(tex, 0, 0x00584554, 4);
+    test::put_le(tex, 4, 143221013, 4);
+    test::put_le(tex, 8, 2, 2);
+    test::put_le(tex, 10, 1, 2);
+    tex[14] = 1;
+    tex[15] = 16;
+    test::put_le(tex, 16, 28, 4);
+    test::put_le(tex, 40, std::uint32_t(tex.size()), 4);
+    test::put_le(tex, 48, 8, 4);
+    test::put_le(tex, 52, 8, 4);
+    tex += std::string("\x80\x00\x00\xff\x80\x00\x00\xff", 8);
+    test::write_file(tmp.path / "frame.tex.143221013", tex);
+
+    Graph g;
+    g.add_node("LoadTex").params["tex"] = "frame.tex.143221013";  // 1
+    g.add_node("ExportImage").params["png"] = "work/frame.png";    // 2: not exported yet
+    g.add_node("AdjustColour").params["brightness"] = "50";        // 3
+    REQUIRE(g.connect({1, "tex", 2, "tex"}).empty());
+    REQUIRE(g.connect({2, "png", 3, "image"}).empty());
+    const remod::ImageLoader load = [](const fs::path& f) -> std::optional<remod::ImagePreview> {
+        if (f.filename().string().find(".tex") != std::string::npos) {
+            unsigned w = 0;
+            remod::Bgra img = remod::decode_tex(f, 64, &w);
+            const float scale = float(img.width) / float(w);
+            return remod::ImagePreview{std::move(img), scale};
+        }
+        return remod::ImagePreview{remod::load_image(f), 1};
+    };
+    auto thumb = [&] { return remod::preview_image(g, remod::preview_values(g, tmp.path), 3, tmp.path, 64, load); };
+    const auto from_texture = thumb();
+    REQUIRE(from_texture);
+    CHECK(from_texture->image.width == 2);
+    CHECK(from_texture->image.pixels[2] > 0x80);  // red, brighter
+
+    fs::create_directories(tmp.path / "work");  // once exported (and maybe edited), the PNG is what comes in
+    remod::save_png(tmp.path / "work/frame.png", remod::Bgra{3, 1, std::vector<std::uint8_t>(12, 0)});
+    const auto from_png = thumb();
+    REQUIRE(from_png);
+    CHECK(from_png->image.width == 3);
+}
+
 TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {
     auto result = [](const char* type, const char* input) {
         const char* r = remod::find_input(*remod::find_spec(type), input)->result;

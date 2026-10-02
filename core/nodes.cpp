@@ -997,7 +997,6 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
         const Link* l = source("in");
         return l ? preview_image(g, preview, l->from_node, base_dir, max_side, load, profile) : std::nullopt;
     }
-    if (!spec->thumbnail) return std::nullopt;
     auto text = [&](const char* input) -> std::optional<std::string> {  // typed, or what the link holds
         if (const Link* l = source(input)) {
             const auto it = preview.find({l->from_node, l->from_port});
@@ -1019,6 +1018,14 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
         return load(clean_path(*t, base_dir));
     };
     try {
+        // Steps that hand an image on, so a preview can start at the texture itself, before anything is exported.
+        if (n->type == "ExportImage") {  // its image file once it's there (it may hold an edit), else the texture
+            std::error_code ec;
+            if (const auto png = text("png"); png && !png->empty() && fs::is_regular_file(clean_path(*png, base_dir), ec))
+                return load(clean_path(*png, base_dir));
+            return image("tex");
+        }
+        if (n->type == "EditImage" || n->type == "ImportImage") return image("png");
         if (n->type == "AdjustColour") {
             auto img = image("image");
             const auto hue = number_of("hue"), sat = number_of("saturation"), bri = number_of("brightness"),

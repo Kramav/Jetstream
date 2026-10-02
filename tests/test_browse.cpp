@@ -336,3 +336,72 @@ TEST_CASE("file_kind and list_folder: any folder, folders first, sorted ignoring
     CHECK_FALSE(error.empty());
     CHECK_FALSE(remod::drive_roots().empty());
 }
+
+namespace {
+
+// A .tex.143221013 whose mips hold exactly `mips` (pitch, bytes), for decode_tex.
+fs::path tex_with_data(const fs::path& file, std::uint16_t w, std::uint16_t h, std::uint32_t dxgi,
+                       const std::vector<std::pair<std::uint32_t, std::string>>& mips) {
+    std::string b(40 + 16 * mips.size(), '\0');
+    test::put_le(b, 0, 0x00584554, 4);
+    test::put_le(b, 4, 143221013, 4);
+    test::put_le(b, 8, w, 2);
+    test::put_le(b, 10, h, 2);
+    b[14] = 1;
+    b[15] = char(mips.size() * 16);
+    test::put_le(b, 16, dxgi, 4);
+    for (size_t i = 0; i < mips.size(); ++i) {
+        const size_t e = 40 + 16 * i;
+        test::put_le(b, e, std::uint32_t(b.size()), 4);
+        test::put_le(b, e + 8, mips[i].first, 4);
+        test::put_le(b, e + 12, std::uint32_t(mips[i].second.size()), 4);
+        b += mips[i].second;
+    }
+    test::write_file(file, b);
+    return file;
+}
+
+std::string rgba(std::initializer_list<int> bytes) {
+    std::string s;
+    for (int v : bytes) s += char(v);
+    return s;
+}
+
+}  // namespace
+
+TEST_CASE("decode_tex: a texture's pixels as BGRA, before anything is exported") {
+    TempDir tmp;
+    unsigned w = 0, h = 0;
+    // R8G8B8A8 (28), 2x1: red, then half-transparent blue.
+    const auto plain = tex_with_data(tmp.path / "plain.tex.143221013", 2, 1, 28,
+                                     {{8, rgba({255, 0, 0, 255, 0, 0, 255, 128})}});
+    remod::Bgra img = remod::decode_tex(plain, 64, &w, &h);
+    CHECK(img.width == 2);
+    CHECK(img.height == 1);
+    CHECK(img.pixels == std::vector<std::uint8_t>{0, 0, 255, 255, 255, 0, 0, 128});  // B, G, R, A
+    CHECK(w == 2);
+
+    // Rows padded to 4 pixels (16 bytes): only the visible 2 come back.
+    const auto padded = tex_with_data(tmp.path / "padded.tex.143221013", 2, 1, 28,
+                                      {{16, rgba({255, 0, 0, 255, 0, 255, 0, 255, 9, 9, 9, 9, 9, 9, 9, 9})}});
+    img = remod::decode_tex(padded, 64);
+    CHECK(img.width == 2);
+    CHECK(img.pixels.size() == 8);
+    CHECK(img.pixels[5] == 255);  // the second pixel's green
+
+    // BC1 (71): one 4x4 block, colour 0 = pure red (565), every index 0.
+    const auto bc1 = tex_with_data(tmp.path / "bc1.tex.143221013", 4, 4, 71, {{8, rgba({0x00, 0xF8, 0, 0, 0, 0, 0, 0})}});
+    img = remod::decode_tex(bc1, 64);
+    CHECK(img.width == 4);
+    CHECK(std::vector<std::uint8_t>(img.pixels.begin(), img.pixels.begin() + 4) == std::vector<std::uint8_t>{0, 0, 255, 255});
+    CHECK(img.pixels[15 * 4 + 2] == 255);  // the last pixel too
+
+    // Two mips, 4x4 then 2x2: max_side picks the one that fits; the full size is mip 0's.
+    std::string mip0(4 * 4 * 4, char(10)), mip1(2 * 2 * 4, static_cast<char>(std::uint8_t(200)));
+    const auto mipped = tex_with_data(tmp.path / "mips.tex.143221013", 4, 4, 28, {{16, mip0}, {8, mip1}});
+    img = remod::decode_tex(mipped, 2, &w, &h);
+    CHECK(img.width == 2);
+    CHECK(img.pixels[0] == 200);
+    CHECK(w == 4);
+    CHECK(h == 4);
+}

@@ -37,6 +37,10 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
     last tag Oct 2023, vcpkg patches it for ImGui 1.92). Issue #230's fix (#205, commit 3fdb8e3) is in v0.9.3.
   - **Adopted for the graph file:** nlohmann/json 3.12.0#2 (MIT), core-private.
   - **Adopted for the app's file pickers:** nativefiledialog-extended 1.4.0 (Zlib), app-only (never in core).
+  - **Adopted for decoding texture pixels (user, 2026-10-01):** DirectXTex 2026-05-07 (MIT), core-private
+    (`default-features: false`). Only decompresses / converts the pixel data our own reader extracts
+    (`decode_tex` over `read_tex_pixels`); it never reads a `.tex` file. Uses its own converter, not WIC's
+    (`TEX_FILTER_FORCE_NON_WIC`), so any thread can call it.
   - GoogleTest verified but not used.
 - Images (combining preview PNGs): **WIC**, built into Windows, used from core. No image library dependency.
 - Build (Developer PowerShell for VS 2026, which sets `VCPKG_ROOT`):
@@ -270,8 +274,12 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   result in memory at <= 256 px from its real input (an image block upstream, through Splits, or the file a preview
   or field names), scaling sizes and positions to the shrunk copy (`ImagePreview::scale`). The app recomputes them in a
   background job when the graph changes (positions aside; one job at a time, the next starts when it's done), caches
-  shrunk files by path and write time, and draws each under its block on a checkerboard. Without a known input image
-  (nothing exported yet) the block says to run once. Checked in the app on a test graph (thumbnail made and uploaded).
+  shrunk files by path and write time, and draws each under its block on a checkerboard. **Previews start at the
+  texture (user, 2026-10-01: "I cannot access the output without running"):** Export image hands on its PNG once it
+  exists (it may hold an edit), else its texture, which the app's loader decodes (`decode_tex`, DirectXTex); Edit
+  image and Use existing image hand on theirs. So a fresh graph shows thumbnails before any run. Checked in the app
+  on a test graph (Original texture → Export image, nothing exported → Adjust colour: thumbnail made from the
+  texture). Padded-width textures decode at their visible width, where Noesis exports the padded one (§9).
 - **Cut text (CutText, user 2026-10-01: "truncate text based on the character content"):** keeps the part of a text
   or path after / before / from / up to a marker, at its first or last occurrence (core `cut_text`), ignoring case and
   treating `\` and `/` alike; a missing marker fails the run. E.g. a texture path cut after `natives/STM/` gives the
@@ -344,7 +352,7 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 | fmt_RE_MESH Noesis plugin | RE Engine format support | Fork checked had **no license file** (all rights reserved by default); original repo not checked | Don't bundle. Download from repo at setup with consent, into `Noesis/plugins/python` |
 | REtool | PAK extraction / optional PAK creation | No license found | Don't bundle. Detect path; guide manual install |
 | Fluffy Mod Manager | Install/test mods | No license found | Don't bundle. User selects path |
-| texconv (DirectXTex) | Fallback DDS encoding | MIT [official] | May bundle, include license notice |
+| texconv (DirectXTex) | Fallback DDS encoding | MIT [official] | May bundle, include license notice. The DirectXTex library itself is a vcpkg dependency (preview decoding, §2) |
 | tar.exe (bsdtar) | Mod `.zip` creation | Ships with Windows 10 1803+ | Not bundled; run from System32 via `run_process` |
 | REFramework | Tiers 2/3 only | Not checked | Not needed in M1. Detect via `dinput8.dll` in game dir [guide] |
 

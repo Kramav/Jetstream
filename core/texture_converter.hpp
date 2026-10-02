@@ -1,6 +1,7 @@
 #pragma once
 // LoadTex / SaveTex (CLAUDE.md §4). File-based: Noesis converts .tex <-> PNG/TGA/JPG directly, so pixels never
 // pass through this process. ponytail: add in-memory decoding (WIC) when the app needs a texture preview.
+#include "image.hpp"
 #include "mesh.hpp"
 #include "process.hpp"
 #include "profile.hpp"
@@ -45,6 +46,12 @@ struct TexPixels {
 // The largest mip no bigger than max_side on either side, else the smallest. Throws ConvertError for formats
 // the browser can't show or a damaged file.
 TexPixels read_tex_pixels(const std::filesystem::path& tex, std::uint32_t max_side);
+
+// The same mip (read_tex_pixels) decoded to 32-bit BGRA at its visible size (padding cut off): BC1-7 decompressed and
+// other formats converted by DirectXTex. sRGB formats keep their bytes, as the browser shows them. `full_width` and
+// `full_height` get the texture's own size (mip 0). For previews before anything is exported. Throws ConvertError.
+Bgra decode_tex(const std::filesystem::path& tex, std::uint32_t max_side, unsigned* full_width = nullptr,
+                unsigned* full_height = nullptr);
 
 // Image formats for the edit step, by extension: Noesis picks the format from it, both ways. BMP is left out
 // because Noesis writes it without alpha (spike 2026-09-30). JPG works but loses quality and transparency.

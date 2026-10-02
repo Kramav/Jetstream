@@ -2,6 +2,9 @@
 
 #include "process.hpp"
 
+#define NOMINMAX
+#include <DirectXTex.h>  // decode_tex: decompresses and converts the pixel data (never reads the file)
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -167,6 +170,34 @@ TexPixels read_tex_pixels(const fs::path& tex, std::uint32_t max_side) {
     in.read(reinterpret_cast<char*>(p.data.data()), std::streamsize(size));
     if (!in) throw ConvertError(tex.string() + " is cut short");
     return p;
+}
+
+Bgra decode_tex(const fs::path& tex, std::uint32_t max_side, unsigned* full_width, unsigned* full_height) {
+    TexPixels p = read_tex_pixels(tex, max_side);
+    if (full_width || full_height) {
+        const std::string b = read_prefix(tex, 12);
+        if (full_width) *full_width = le16(b, 8);
+        if (full_height) *full_height = le16(b, 10);
+    }
+    // sRGB formats read as their linear twins: the bytes kept as they are, as the browser shows them.
+    const auto format = DirectX::MakeLinear(DXGI_FORMAT(p.format));
+    const DirectX::Image stored{p.stored_width, p.stored_height, format, p.row_pitch, p.data.size(), p.data.data()};
+    DirectX::ScratchImage scratch;
+    const DirectX::Image* bgra = &stored;
+    if (format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+        const HRESULT hr = DirectX::IsCompressed(format)
+                               ? DirectX::Decompress(stored, DXGI_FORMAT_B8G8R8A8_UNORM, scratch)
+                               // Its own converter, not WIC's (which needs COM on the calling thread).
+                               : DirectX::Convert(stored, DXGI_FORMAT_B8G8R8A8_UNORM, DirectX::TEX_FILTER_FORCE_NON_WIC,
+                                                  DirectX::TEX_THRESHOLD_DEFAULT, scratch);
+        if (FAILED(hr) || !scratch.GetImage(0, 0, 0))
+            throw ConvertError("can't decode " + tex.filename().string() + " (" + format_name(p.format) + ")");
+        bgra = scratch.GetImage(0, 0, 0);
+    }
+    Bgra out{p.width, p.height, std::vector<std::uint8_t>(size_t(p.width) * p.height * 4)};
+    for (std::uint32_t y = 0; y < p.height; ++y)  // the visible part: padding rows and columns cut off
+        std::copy_n(bgra->pixels + y * bgra->rowPitch, size_t(p.width) * 4, out.pixels.data() + size_t(y) * p.width * 4);
+    return out;
 }
 
 bool is_edit_image(const fs::path& file) {
