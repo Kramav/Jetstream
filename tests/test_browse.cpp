@@ -266,7 +266,7 @@ TEST_CASE("preview_file prefers the streaming copy") {
     CHECK(remod::preview_file(dir.path, "a/y.tex.1") == dir.path / "streaming/a/y.tex.1");
 }
 
-TEST_CASE("tidy_layout: columns by step order, blocks level with what feeds them") {
+TEST_CASE("tidy_layout: the main chain a row by step order, a helper feeding it in a row above") {
     remod::Graph g;
     for (const auto& [id, type, x, y] : std::vector<std::tuple<int, const char*, float, float>>{
              {1, "LoadTex", 500.0f, 300.0f}, {2, "ExportImage", 40.0f, 900.0f}, {3, "EditImage", 0.0f, 0.0f},
@@ -277,22 +277,61 @@ TEST_CASE("tidy_layout: columns by step order, blocks level with what feeds them
     const std::vector<std::array<float, 2>> sizes{{300, 200}, {300, 150}, {250, 120}, {300, 180}, {320, 400}, {200, 80}};
     const auto at = remod::tidy_layout(g, sizes, 100, 40);
     REQUIRE(at.size() == 6);
-    // Columns: LoadTex and Text first; Export, Edit, SaveTex, Package each one further right.
+    // Columns: LoadTex first; Export, Edit, SaveTex, Package each one further right.
     CHECK(at[0][0] == 0);
-    CHECK(at[5][0] == 0);
     CHECK(at[1][0] == 300 + 100);
     CHECK(at[2][0] == at[1][0] + 300 + 100);
     CHECK(at[3][0] == at[2][0] + 250 + 100);
     CHECK(at[4][0] == at[3][0] + 300 + 100);
-    // Starts at the old top-left corner; Text (above LoadTex before) stays above it, with the gap between them.
+    // Text (a helper fed by nothing) goes in the row above, in the column before Package (which it feeds): it doesn't
+    // take a column of its own at the start. The layout starts at the old top-left corner.
+    CHECK(at[5][0] == at[3][0]);
     CHECK(at[5][1] == 0);
-    CHECK(at[0][1] == 80 + 40);
-    // Level with what feeds them: Export with LoadTex; SaveTex between Edit and LoadTex.
-    CHECK(at[1][1] == at[0][1]);
-    CHECK(at[3][1] == (at[2][1] + at[0][1]) / 2);
+    // The main chain is one row, under it.
+    for (int i : {0, 1, 2, 3, 4}) CHECK(at[size_t(i)][1] == 80 + 40);
     // A cycle (not allowed by can_connect, but a file could hold one) doesn't hang.
     g.links.push_back({5, "tex", 1, "tex"});
     CHECK(remod::tidy_layout(g, sizes, 100, 40).size() == 6);
+}
+
+TEST_CASE("tidy_layout: a Preview goes below its column's blocks; top to bottom swaps the axes") {
+    remod::Graph g;
+    for (const auto& [id, type] : std::vector<std::pair<int, const char*>>{
+             {1, "LoadTex"}, {2, "Split"}, {3, "ExportImage"}, {4, "Preview"}, {5, "SaveTex"}})
+        g.nodes.push_back({id, type, {}, 0, 0});
+    g.links = {{1, "tex", 2, "in"}, {2, "out", 3, "tex"}, {2, "out", 4, "in"}, {3, "png", 5, "image"}};
+    const std::vector<std::array<float, 2>> sizes{{300, 200}, {100, 60}, {300, 150}, {320, 320}, {300, 180}};
+    const auto at = remod::tidy_layout(g, sizes, 100, 40);
+    CHECK(at[3][0] == at[2][0]);              // the Preview shares Export's column...
+    CHECK(at[3][1] == at[2][1] + 200 + 40);   // ...in the row below the main chain (its tallest block, LoadTex: 200)
+    CHECK(at[2][1] == at[1][1]);              // the main chain stays a row
+    CHECK(at[4][1] == at[2][1]);
+
+    const auto down = remod::tidy_layout(g, sizes, 100, 40, true);
+    CHECK(down[2][1] == down[1][1] + 60 + 100);  // Export one row below the Split
+    CHECK(down[2][0] == down[1][0]);             // in line with it
+    CHECK(down[3][1] == down[2][1]);             // the Preview beside Export (to its right)
+    CHECK(down[3][0] == down[2][0] + 300 + 40);
+}
+
+TEST_CASE("tidy_layout: a side branch lines up under where it joins, in a row below") {
+    remod::Graph g;
+    // Main: LoadTex -> Export -> Edit -> SaveTex -> Package. Side: a second LoadTex -> SaveTex (2 steps) into Package.
+    for (const auto& [id, type] : std::vector<std::pair<int, const char*>>{
+             {1, "LoadTex"}, {2, "ExportImage"}, {3, "EditImage"}, {4, "SaveTex"}, {5, "PackageMod"}, {6, "LoadTex"},
+             {7, "SaveTex"}, {8, "ImportImage"}})
+        g.nodes.push_back({id, type, {}, 0, 0});
+    g.links = {{1, "tex", 2, "tex"}, {2, "png", 3, "png"}, {3, "image", 4, "image"}, {4, "tex", 5, "tex"},
+               {6, "tex", 7, "original"}, {8, "image", 7, "image"}, {7, "tex", 5, "tex"}};
+    const std::vector<std::array<float, 2>> sizes(8, {300, 100});
+    const auto at = remod::tidy_layout(g, sizes, 100, 40);
+    for (int i : {1, 2, 3, 4}) CHECK(at[size_t(i)][1] == at[0][1]);  // the main chain: one row
+    CHECK(at[6][0] == at[3][0]);  // the side's SaveTex just before Package, under the main SaveTex
+    CHECK(at[5][0] == at[2][0]);  // its LoadTex just before that, not at the far left
+    CHECK(at[5][1] == at[0][1] + 100 + 40);  // a row below
+    CHECK(at[6][1] == at[5][1]);
+    CHECK(at[7][0] == at[5][0]);  // Use existing image, also feeding the side's SaveTex: stacked with its LoadTex
+    CHECK(at[7][1] == at[5][1] + 100 + 40);
 }
 
 TEST_CASE("texture_target: the selected Original texture block, else the only one") {

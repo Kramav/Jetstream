@@ -551,6 +551,7 @@ Graph load_graph(const fs::path& file, bool* added_blocks) {
             throw GraphError(file.string() + ": unsupported schema_version (expected 0)");
         Graph g;
         g.profile = j.at("profile").get<std::string>();
+        g.downward = j.value("flow", std::string()) == "down";
         for (const auto& jn : j.at("nodes")) {
             Node n{.id = jn.at("id").get<int>(), .type = jn.at("type").get<std::string>()};
             if (jn.contains("params")) n.params = jn["params"].get<std::map<std::string, std::string>>();
@@ -574,6 +575,7 @@ Graph load_graph(const fs::path& file, bool* added_blocks) {
 
 void save_graph(const Graph& g, const fs::path& file) {
     json j{{"schema_version", 0}, {"profile", g.profile}, {"nodes", json::array()}, {"links", json::array()}};
+    if (g.downward) j["flow"] = "down";
     for (const auto& n : g.nodes)
         j["nodes"].push_back({{"id", n.id}, {"type", n.type}, {"params", n.params}, {"pos", {n.x, n.y}}});
     for (const auto& l : g.links)
@@ -776,60 +778,131 @@ int texture_target(const Graph& g, int selected) {
 }
 
 
+namespace {
+
+// Top-to-bottom layouts are left-to-right ones with x and y swapped.
+std::vector<std::array<float, 2>> swapped(std::vector<std::array<float, 2>> points) {
+    for (auto& p : points) std::swap(p[0], p[1]);
+    return points;
+}
+Graph swapped(Graph g) {
+    for (Node& n : g.nodes) std::swap(n.x, n.y);
+    return g;
+}
+
+}  // namespace
+
 std::vector<std::array<float, 2>> tidy_layout(const Graph& g, const std::vector<std::array<float, 2>>& sizes,
-                                              float gap_x, float gap_y) {
+                                              float gap_x, float gap_y, bool downward) {
+    if (downward) return swapped(tidy_layout(swapped(g), swapped(sizes), gap_x, gap_y));
     const size_t n = g.nodes.size();
     std::vector<std::array<float, 2>> out(n);
     if (n == 0 || sizes.size() != n) return out;
     std::map<int, size_t> index;
     for (size_t i = 0; i < n; ++i) index[g.nodes[i].id] = i;
-    std::vector<std::vector<size_t>> feeders(n);  // the blocks linking into each one
+    std::vector<std::vector<size_t>> feeders(n), targets(n);  // the blocks linking into / out of each one
     for (const Link& l : g.links)
-        if (index.contains(l.from_node) && index.contains(l.to_node) && l.from_node != l.to_node)
+        if (index.contains(l.from_node) && index.contains(l.to_node) && l.from_node != l.to_node) {
             feeders[index[l.to_node]].push_back(index[l.from_node]);
+            targets[index[l.from_node]].push_back(index[l.to_node]);
+        }
 
-    // Column: one right of the furthest block feeding it (the longest chain of links into it). At most n rounds,
-    // so a cycle can't loop forever.
-    std::vector<size_t> column(n, 0);
+    // The earliest column: one right of the furthest block feeding it (the longest chain of links into it). At most n
+    // rounds, so a cycle can't loop forever.
+    std::vector<size_t> earliest(n, 0);
     for (size_t round = 0; round < n; ++round) {
         bool changed = false;
         for (size_t i = 0; i < n; ++i)
             for (const size_t f : feeders[i])
-                if (column[f] + 1 > column[i] && column[f] + 1 < n) column[i] = column[f] + 1, changed = true;
+                if (earliest[f] + 1 > earliest[i] && earliest[f] + 1 < n) earliest[i] = earliest[f] + 1, changed = true;
         if (!changed) break;
     }
 
-    // Columns left to right from the current top-left corner, each as wide as its widest block. Within a column,
-    // blocks go in the order of (and level with, where there's room) the blocks feeding them; blocks fed by nothing
-    // keep their current order.
+    // The main chain: the longest one, back from the furthest block (the first, in file order) through the feeder just
+    // before it. It's one row.
+    std::vector<char> main(n, 0);
+    size_t at = size_t(std::ranges::max_element(earliest) - earliest.begin());
+    for (size_t hop = 0; hop < n && !main[at]; ++hop) {
+        main[at] = 1;
+        const auto before = std::ranges::find_if(feeders[at], [&](size_t f) { return earliest[f] + 1 == earliest[at]; });
+        if (before == feeders[at].end()) break;
+        at = *before;
+    }
+
+    // Everything else as late as it can go: just before the first block it feeds (a side branch lines up under where
+    // it joins, instead of starting at the far left); what feeds nothing stays just after what feeds it.
+    std::vector<size_t> column = earliest;
+    for (size_t round = 0; round < n; ++round) {
+        bool changed = false;
+        for (size_t i = 0; i < n; ++i) {
+            if (main[i] || targets[i].empty()) continue;
+            size_t late = n;
+            for (const size_t t : targets[i]) late = std::min(late, column[t]);
+            late = late > 0 ? std::max(late - 1, earliest[i]) : earliest[i];
+            if (late != column[i]) column[i] = late, changed = true;
+        }
+        if (!changed) break;
+    }
+
+    // Rows (user, 2026-10-02: "branches stack down"): a helper fed by nothing that feeds the main chain (a Value, a
+    // Text) goes in a row above it; every other branch (linked blocks off the main chain, a Preview) in a row below,
+    // sharing a row with others whose columns don't overlap. Row -1 above, 0 the main chain, 1... below.
+    std::vector<int> row(n, 0);
+    std::vector<char> grouped(n, 0);
+    std::vector<std::vector<std::pair<size_t, size_t>>> spans;  // per row below: the column spans its branches take
+    for (size_t i = 0; i < n; ++i) {
+        if (main[i] || grouped[i]) continue;
+        const NodeSpec* spec = find_spec(g.nodes[i].type);
+        if (spec && spec->utility && feeders[i].empty() && !targets[i].empty() &&
+            std::ranges::all_of(targets[i], [&](size_t t) { return bool(main[t]); })) {
+            row[i] = -1;
+            grouped[i] = 1;
+            continue;
+        }
+        // Its branch: the blocks off the main chain linked to it, either way.
+        std::vector<size_t> branch{i}, todo{i};
+        grouped[i] = 1;
+        while (!todo.empty()) {
+            const size_t b = todo.back();
+            todo.pop_back();
+            for (const auto* next : {&feeders[b], &targets[b]})
+                for (const size_t k : *next)
+                    if (!main[k] && !grouped[k]) grouped[k] = 1, branch.push_back(k), todo.push_back(k);
+        }
+        size_t lo = n, hi = 0;
+        for (const size_t b : branch) lo = std::min(lo, column[b]), hi = std::max(hi, column[b]);
+        size_t r = 0;  // the first row below whose taken spans it doesn't overlap
+        while (r < spans.size() &&
+               std::ranges::any_of(spans[r], [&](const auto& s) { return lo <= s.second && s.first <= hi; }))
+            ++r;
+        if (r == spans.size()) spans.emplace_back();
+        spans[r].push_back({lo, hi});
+        for (const size_t b : branch) row[b] = int(r) + 1;
+    }
+
+    // Columns left to right from the current top-left corner, each as wide as its widest block; rows top to bottom, each
+    // as tall as its tallest stack (blocks of one row in one column stack, in file order), `gap_y` apart.
     float left = g.nodes[0].x, top = g.nodes[0].y;
     for (const Node& node : g.nodes) left = std::min(left, node.x), top = std::min(top, node.y);
     const size_t columns = *std::ranges::max_element(column) + 1;
-    float x = left;
-    for (size_t c = 0; c < columns; ++c) {
-        struct Entry {
-            float key;   // order in the column
-            bool level;  // sit at `key` if there's room (fed by placed blocks), else just stack
-            size_t i;
-        };
-        std::vector<Entry> blocks;
-        float width = 0;
-        for (size_t i = 0; i < n; ++i) {
-            if (column[i] != c) continue;
-            float want = 0, placed = 0;  // feeders already placed (in earlier columns; a cycle's aren't)
-            for (const size_t f : feeders[i])
-                if (column[f] < c) want += out[f][1], ++placed;
-            blocks.push_back({placed > 0 ? want / placed : g.nodes[i].y, placed > 0, i});
-            width = std::max(width, sizes[i][0]);
-        }
-        std::ranges::stable_sort(blocks, {}, &Entry::key);
-        float y = top;
-        for (const Entry& b : blocks) {
-            if (b.level) y = std::max(y, b.key);
-            out[b.i] = {x, y};
-            y += sizes[b.i][1] + gap_y;
-        }
-        x += width + gap_x;
+    const int rows = int(spans.size()) + 2;  // -1 .. spans.size()
+    std::vector<float> width(columns, 0), x(columns, left);
+    std::map<std::pair<int, size_t>, float> stack;  // (row, column) -> height so far
+    std::vector<float> offset(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        width[column[i]] = std::max(width[column[i]], sizes[i][0]);
+        float& h = stack[{row[i], column[i]}];
+        offset[i] = h;
+        h += sizes[i][1] + gap_y;
+    }
+    for (size_t c = 1; c < columns; ++c) x[c] = x[c - 1] + width[c - 1] + gap_x;
+    std::vector<float> height(size_t(rows), 0), y(size_t(rows), top);
+    for (const auto& [key, h] : stack) height[size_t(key.first + 1)] = std::max(height[size_t(key.first + 1)], h);
+    for (int r = 1; r < rows; ++r) y[size_t(r)] = y[size_t(r - 1)] + height[size_t(r - 1)];
+    for (size_t i = 0; i < n; ++i) {
+        // Above the main chain, a helper's stack sits on the row's bottom, right over what it feeds.
+        const float drop = row[i] == -1 ? height[0] - stack[{-1, column[i]}] : 0;
+        out[i] = {x[column[i]], y[size_t(row[i] + 1)] + offset[i] + drop};
     }
     return out;
 }
@@ -865,7 +938,8 @@ std::vector<std::array<float, 2>> keep_apart(const std::vector<std::array<float,
 
 std::vector<std::array<float, 2>> make_room(const Graph& g, const std::vector<std::array<float, 2>>& positions,
                                             const std::vector<std::array<float, 2>>& sizes, int id, float gap_x,
-                                            float min_gap) {
+                                            float min_gap, bool downward) {
+    if (downward) return swapped(make_room(swapped(g), swapped(positions), swapped(sizes), id, gap_x, min_gap));
     std::vector<std::array<float, 2>> out = positions;
     std::map<int, size_t> index;
     for (size_t i = 0; i < g.nodes.size(); ++i) index[g.nodes[i].id] = i;

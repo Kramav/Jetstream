@@ -98,8 +98,8 @@
       "id": 2,
       "params": {},
       "pos": [
-        500.0,
-        40.0
+        504.0,
+        0.0
       ],
       "type": "Split"
     },
@@ -109,7 +109,7 @@
         "png": "C:/spike/image.png"
       },
       "pos": [
-        720.0,
+        760.0,
         0.0
       ],
       "type": "ExportImage"
@@ -123,14 +123,17 @@
         "frame_width": "0",
         "grow": "0",
         "picture": "H:\\Memes\\PFP\\9ff743bcff6c990381a922822471473f-1931141924.jpg",
+        "picture_x": "",
+        "picture_y": "",
         "save_to": "C:/spike/replace_image.png",
         "shading": "100",
         "show_outline": "true",
         "stains": "100",
-        "tone": "28"
+        "tone": "28",
+        "zoom": ""
       },
       "pos": [
-        1220.0,
+        1264.0,
         0.0
       ],
       "type": "ReplacePhoto"
@@ -139,8 +142,8 @@
       "id": 5,
       "params": {},
       "pos": [
-        1780.0,
-        40.0
+        1768.0,
+        0.0
       ],
       "type": "Split"
     },
@@ -148,7 +151,7 @@
       "id": 6,
       "params": {},
       "pos": [
-        2000.0,
+        2024.0,
         0.0
       ],
       "type": "SaveTex"
@@ -164,7 +167,7 @@
         "version": "1.0"
       },
       "pos": [
-        2480.0,
+        2528.0,
         0.0
       ],
       "type": "PackageMod"

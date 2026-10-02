@@ -557,11 +557,22 @@ Fill these in from the manual spike before implementing the affected code:
     own picture texture (Resize "Match size of" covers them).
   - Declined: **Install to Fluffy** (the user installs by hand). A template library: only one real workflow exists
     yet (the RE4R texture mod).
-- **Later (user, 2026-10-01): Tidy up should allow more vertical inputs** (lay blocks out with room for inputs that
-  come in from above and below, not only the columns-by-step-order arrangement), **and maybe an option to rotate the
-  connections from left-to-right to top-to-bottom** (outputs at a block's bottom, inputs at its top) for easier
-  linking. Would touch core `tidy_layout`, `route_links` (which assumes rightward pins) and the block layout. Not
-  started.
+- **Done (2026-10-02): more verticality in the left-to-right flow** (was "Later: Tidy up should allow more vertical
+  inputs"; user chose "fields linked from above" and "branches stack down"):
+  - core `tidy_layout`: the longest chain of links is one row; every other block as late as it can go (just before
+    the first block it feeds: a side branch lines up under where it joins); a helper fed by nothing that feeds the main
+    chain (Value, Text) in a row above, right over what it feeds; every other branch (linked blocks off the main
+    chain, a Preview) in a row below, sharing a row with branches whose columns don't overlap.
+  - A linked field (an editable input with a link: a Value into Frame width, a Text into Mod name) takes its link at
+    the block's top edge, spread along it in row order; data inputs stay on the left. Grabbed and dropped on at its
+    row's label (`ed::PinRect`). Core `LinkRoute::to_top`: the stub points up and the path arrives from above.
+  - **Top to bottom (`Graph::downward`, "flow": "down") is built but has no switch (user, 2026-10-02: big blocks like
+    Replace photo don't suit it at Near zoom; a later consideration).** Core swaps x and y around the left-to-right
+    code (`tidy_layout`, `make_room`, `route_links` take `downward`); the app spreads ports along top and bottom
+    edges. A graph saved that way still shows that way.
+  - Checked: tests (main row, helper above, side branch lined up below, Preview below; routes into a top edge from
+    above; downward swaps); the app starts on graphs with a linked field and a downward one without asserting.
+    **Not checked by eye.**
 - **Far future (user, 2026-10-01): drop a Browser path on empty canvas to add a block holding it** (.tex → Original
   texture, image → Use existing image, anything else → Value), as an option in an options menu. Not started; today
   a drop only fills a field.

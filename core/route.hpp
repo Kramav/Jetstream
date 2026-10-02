@@ -14,8 +14,9 @@ struct Box {
 };
 struct LinkRoute {
     int net = 0;  // links with the same net (one output) share their path where they can: a trunk that branches
-    Pt from;      // output pin, on a block's right edge: the path leaves rightwards
-    Pt to;        // input pin, on a block's left edge: the path arrives from the left
+    Pt from;      // output pin, on a block's right edge: the path leaves rightwards (`downward`: bottom edge, down)
+    Pt to;        // input pin, on a block's left edge: the path arrives from the left (`downward`: top edge, from above)
+    bool to_top = false;  // the input is on the block's top edge instead: the path arrives from above (a linked field)
     bool operator==(const LinkRoute&) const = default;
 };
 struct Routes {
@@ -35,7 +36,9 @@ struct Routes {
 // as the block's outline) and never goes the long way round (over 2.5 times the direct distance, plus 10 gaps for
 // the turns a backwards link needs). Otherwise the link tries squeezed lanes (half the gap), and failing that, or with
 // no way at all, it becomes a portal pair (Routes::portals).
-Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>& links, float gap, int passes = 3);
+// `downward`: the flow runs top to bottom (the same routing with x and y swapped).
+Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>& links, float gap, int passes = 3,
+                   bool downward = false);
 
 // Index of the first path passing within `tolerance` of `p`, or -1. A portal's (`portals`) only by its two stubs.
 int hit_link(const std::vector<std::vector<Pt>>& paths, Pt p, float tolerance, const std::vector<char>& portals = {});

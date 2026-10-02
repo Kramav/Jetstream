@@ -80,6 +80,42 @@ TEST_CASE("route: aligned pins with nothing between are one straight line") {
     CHECK(r.junctions.empty());
 }
 
+TEST_CASE("route: downward, a link leaves an output's bottom going down and enters an input's top from above") {
+    const std::vector<Box> blocks{{0, 0, 100, 50}, {-20, 150, 80, 200}, {-40, 300, 140, 350}};
+    const LinkRoute l{0, {50, 50}, {30, 300}};  // past the middle block
+    const auto r = remod::route_links(blocks, {l}, kGap, 3, true);
+    REQUIRE(r.paths.size() == 1);
+    const auto& p = r.paths[0];
+    REQUIRE(p.size() >= 2);
+    CHECK(p.front() == Pt{50, 50});
+    CHECK(p.back() == Pt{30, 300});
+    CHECK(p[1].x == 50);  // straight down first
+    CHECK(p[1].y > 50);
+    CHECK(p[p.size() - 2].x == 30);  // and straight down last
+    CHECK(p[p.size() - 2].y < 300);
+    for (size_t i = 0; i + 1 < p.size(); ++i) {  // right angles, never through the middle block
+        CHECK((p[i].x == p[i + 1].x || p[i].y == p[i + 1].y));
+        const bool vertical = p[i].x == p[i + 1].x;
+        if (vertical && p[i].x > -20 && p[i].x < 80) CHECK((std::max(p[i].y, p[i + 1].y) <= 150 || std::min(p[i].y, p[i + 1].y) >= 200));
+    }
+}
+
+TEST_CASE("route: a link into a block's top edge arrives from above") {
+    const std::vector<Box> blocks{{0, 0, 100, 50}, {200, 150, 400, 300}};
+    LinkRoute l{0, {100, 25}, {300, 150}};
+    l.to_top = true;
+    const auto r = remod::route_links(blocks, {l}, kGap);
+    REQUIRE(r.paths.size() == 1);
+    const auto& p = r.paths[0];
+    CHECK(p.front() == Pt{100, 25});
+    CHECK(p.back() == Pt{300, 150});
+    REQUIRE(p.size() >= 3);
+    CHECK(p[p.size() - 2].x == 300);  // straight down into the pin
+    CHECK(p[p.size() - 2].y < 150);
+    CHECK(p[1].y == 25);  // leaving the output rightwards
+    CHECK(p[1].x > 100);
+}
+
 TEST_CASE("route: goes around a block in the way") {
     const std::vector<Box> blocks{{0, 0, 100, 50}, {150, -20, 250, 70}, {300, 0, 400, 50}};
     const LinkRoute l{0, {100, 25}, {300, 25}};

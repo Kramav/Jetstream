@@ -85,16 +85,30 @@ bool follows_outline(const std::vector<Pt>& path, const std::vector<Box>& blocks
 
 }  // namespace
 
-Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>& links, float gap, int passes) {
+Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>& links, float gap, int passes,
+                   bool downward) {
+    if (downward) {  // the left-to-right routing with x and y swapped: outputs below, inputs above
+        std::vector<Box> b;
+        for (const Box& x : blocks) b.push_back({x.y0, x.x0, x.y1, x.x1});
+        std::vector<LinkRoute> l = links;
+        for (LinkRoute& r : l) std::swap(r.from.x, r.from.y), std::swap(r.to.x, r.to.y), r.to_top = false;
+        Routes out = route_links(b, l, gap, passes);
+        for (auto& path : out.paths)
+            for (Pt& p : path) std::swap(p.x, p.y);
+        for (Pt& p : out.junctions) std::swap(p.x, p.y);
+        return out;
+    }
     // A sparse grid: two lanes around every block, lines through every pin's stub, and spare lanes between them.
     std::vector<float> xv, yv;
     for (const Box& b : blocks) {
         xv.insert(xv.end(), {b.x0 - gap, b.x1 + gap, b.x0 - 2 * gap, b.x1 + 2 * gap});
         yv.insert(yv.end(), {b.y0 - gap, b.y1 + gap, b.y0 - 2 * gap, b.y1 + 2 * gap});
     }
+    // A pin's stub: an output's runs right; an input's left, or up for one on a block's top edge.
+    auto stub_end = [&](const LinkRoute& l) { return l.to_top ? Pt{l.to.x, l.to.y - gap} : Pt{l.to.x - gap, l.to.y}; };
     for (const LinkRoute& l : links) {
-        xv.insert(xv.end(), {l.from.x + gap, l.to.x - gap});
-        yv.insert(yv.end(), {l.from.y, l.to.y});
+        xv.insert(xv.end(), {l.from.x + gap, stub_end(l).x});
+        yv.insert(yv.end(), {l.from.y, stub_end(l).y});
     }
     const std::vector<float> xs = lines(std::move(xv), 2 * gap), ys = lines(std::move(yv), 2 * gap);
     const int nx = int(xs.size()), ny = int(ys.size()), n = nx * ny;
@@ -219,7 +233,7 @@ Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>&
     auto search = [&](size_t i, char need) {
         const LinkRoute& l = links[i];
         const int sx = find_line(xs, l.from.x + gap), sy = find_line(ys, l.from.y);
-        const int ex = find_line(xs, l.to.x - gap), ey = find_line(ys, l.to.y);
+        const int ex = find_line(xs, stub_end(l).x), ey = find_line(ys, stub_end(l).y);
         if (sx < 0 || sy < 0 || ex < 0 || ey < 0) return false;  // never: the pins made those lines
         const int start = at(sx, sy), goal = at(ex, ey);
         const Pt s = point(start), e = point(goal);
@@ -243,8 +257,10 @@ Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>&
             open.pop();
             if (cost > dist[size_t(state)] || cost >= best_cost) continue;
             const int left = state % 2, d = state / 2 % 4, p = state / 8;
-            if (p == goal && d != 1) {  // arriving leftwards would need a U-turn into the pin
-                const float total = cost + (d == 0 ? 0 : bend + (other(visit_net[size_t(p)], l.net) ? touch : 0));
+            // Arriving against the stub (leftwards into a left pin, upwards into a top one) would need a U-turn.
+            const int into = l.to_top ? 2 : 0;
+            if (p == goal && d != (into ^ 1)) {
+                const float total = cost + (d == into ? 0 : bend + (other(visit_net[size_t(p)], l.net) ? touch : 0));
                 if (total < best_cost) best_cost = total, best = state;
             }
             for (int nd = 0; nd < 4; ++nd) {
@@ -321,7 +337,8 @@ Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>&
         const LinkRoute& l = links[i];
         const std::vector<int>& g = grids[i];
         if (portals[i]) {  // a stub at each pin, two gaps long; no line between
-            out.paths.push_back({l.from, {l.from.x + 2 * gap, l.from.y}, {l.to.x - 2 * gap, l.to.y}, l.to});
+            out.paths.push_back({l.from, {l.from.x + 2 * gap, l.from.y},
+                                 l.to_top ? Pt{l.to.x, l.to.y - 2 * gap} : Pt{l.to.x - 2 * gap, l.to.y}, l.to});
             continue;
         }
         auto& laid = net_edges[l.net];

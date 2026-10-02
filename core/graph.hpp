@@ -40,6 +40,9 @@ struct Graph {
     std::string profile = "re4r";  // profile id: profiles/<id>.toml
     std::vector<Node> nodes;
     std::vector<Link> links;
+    // Links run top to bottom (outputs on blocks' bottom edges, inputs on their top), else left to right. Part of the
+    // layout, like block positions (file: "flow": "down").
+    bool downward = false;
     bool operator==(const Graph&) const = default;  // undo history, unsaved changes
 
     Node& add_node(const std::string& type);  // new unique id, every editable input present (its `initial` value)
@@ -206,13 +209,16 @@ void set_edit_done(Graph& graph, int node, bool done);
 // is one, else the graph's only one; 0 if neither.
 int texture_target(const Graph& graph, int selected);
 
-// "Tidy up": positions that line blocks up in columns by step order. A block goes one column right of the furthest
-// block linking into it; within a column, blocks follow (and sit level with, where there's room) the blocks feeding
-// them. Columns are as wide as their widest block, `gap_x` apart; blocks `gap_y` apart. The layout starts at the
-// blocks' current top-left corner. `sizes` (width, height) and the result (top-left corners) are in `graph.nodes`
-// order.
+// "Tidy up": positions in columns by step order and rows (user, 2026-10-02: "more vertical inputs", "branches stack
+// down"). The longest chain of links is one row; every other block goes as late as it can (just before the first
+// block it feeds, so a side branch lines up under where it joins). A helper fed by nothing that feeds the main chain
+// (a Value, a Text) goes in a row above it, right over what it feeds; every other branch (blocks off the main chain,
+// linked together; a Preview) in a row below, sharing a row with branches whose columns don't overlap. Columns are as
+// wide as their widest block, `gap_x` apart; rows as tall as their tallest stack, blocks `gap_y` apart. The layout
+// starts at the blocks' current top-left corner. `sizes` (width, height) and the result (top-left corners) are in
+// `graph.nodes` order. `downward`: the flow runs top to bottom (columns become rows, "above" becomes "left of").
 std::vector<std::array<float, 2>> tidy_layout(const Graph& graph, const std::vector<std::array<float, 2>>& sizes,
-                                              float gap_x, float gap_y);
+                                              float gap_x, float gap_y, bool downward = false);
 
 // Placement that leaves lines room (CLAUDE.md §4, links). Positions (top-left corners) and sizes (width, height) are
 // in `graph.nodes` order (keep_apart: any order); both return a position for every block.
@@ -224,8 +230,9 @@ std::vector<std::array<float, 2>> keep_apart(const std::vector<std::array<float,
 // A block just added onto a link or a pin (`id`) goes `gap_x` right of the block feeding it, level with it (or left of
 // the block it feeds, when nothing feeds it); the blocks after it move right as far as they need to keep `gap_x`,
 // with everything after them, so the flow keeps its order; then it keeps `min_gap` from the rest (keep_apart).
+// `downward`: the flow runs top to bottom ("right" becomes "below").
 std::vector<std::array<float, 2>> make_room(const Graph& graph, const std::vector<std::array<float, 2>>& positions,
                                             const std::vector<std::array<float, 2>>& sizes, int id, float gap_x,
-                                            float min_gap);
+                                            float min_gap, bool downward = false);
 
 }  // namespace remod

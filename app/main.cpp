@@ -354,6 +354,7 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value, const 
 // The graph editor's block style, copied each frame (draw_canvas) so blocks can be drawn outside the editor too.
 struct BlockLook {
     ImVec4 padding{8, 8, 8, 8};  // x left, y top, z right, w bottom
+    bool downward = false;       // the graph's flow: ports on the top and bottom edges
 };
 
 struct State {
@@ -468,6 +469,11 @@ struct State {
     // Placement (core make_room / keep_apart): a block just added, placed once its size is known; blocks being dragged,
     // kept apart from the rest when let go; a load that added blocks (old file), tidied once they're drawn.
     int place_new = 0;
+    // Top-to-bottom flow: the ports along each block's top (inputs) and bottom (outputs) edge, spread evenly: how many
+    // each block had last frame (by node), and the ones drawn so far in the block being drawn.
+    std::map<int, std::array<int, 2>> port_count;
+    std::map<std::uintptr_t, bool> pin_top;  // an input pin on its block's top edge (a linked field, Across)
+    std::array<int, 2> ports_now{};
     std::string add_type;  // from the Nodes panel: a block to add next frame, at `add_at` (graph) or mid-view
     std::optional<ImVec2> add_at;
     std::optional<ImVec2> ghost_at;  // where a block dragged from the Nodes panel would land (graph), while over it
@@ -1240,6 +1246,7 @@ ImVec2 draw_block_preview(ImDrawList* draw, ImVec2 at, const remod::NodeSpec& sp
     const ImU32 text = ImGui::GetColorU32(ImGuiCol_Text), dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     const ImU32 frame = ImGui::GetColorU32(ImGuiCol_FrameBg), button = ImGui::GetColorU32(ImGuiCol_Button);
     float height = 0;  // known once measured
+    int in_ports = 0, out_ports = 0;  // top to bottom: how many ports along each edge (measured)
 
     // The rows, walked twice: once to measure, once to paint.
     auto rows = [&](bool paint) {
@@ -1249,7 +1256,20 @@ ImVec2 draw_block_preview(ImDrawList* draw, ImVec2 at, const remod::NodeSpec& sp
         auto box = [&](float x, float y, float w, ImU32 col) {
             if (paint) draw->AddRectFilled(pos(x, y), pos(x + w, y + row), fade(col));
         };
+        int ports[2] = {0, 0};  // top to bottom: counted when measuring, spread when painting
         auto pin = [&](bool right, float y, remod::PortType type, PinLook pin_look) {
+            if (look.downward) {
+                if (pin_look == PinLook::Field) return;  // as on the graph: an unlinked field has no marker
+                const int side = right ? 1 : 0, i = ports[side]++;
+                if (!paint) return;
+                const int count = right ? out_ports : in_ports;
+                const float margin = 14 * u, k = float(i + 1) / float(count + 1);
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+                draw_pin_shape(draw, pos(margin + (width - 2 * margin) * k, right ? height : 0), type, pin_look, false,
+                               false, u * scale);
+                ImGui::PopStyleVar();
+                return;
+            }
             if (!paint) return;
             const float cy = y + row / 2;
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
@@ -1302,6 +1322,7 @@ ImVec2 draw_block_preview(ImDrawList* draw, ImVec2 at, const remod::NodeSpec& sp
             label(x0, y + style.FramePadding.y, (std::string("+ ") + in.label).c_str(), text);
             y += step;
         }
+        if (!paint) in_ports = ports[0], out_ports = ports[1];
         return y - style.ItemSpacing.y + look.padding.w;
     };
     height = rows(false);
@@ -1433,18 +1454,43 @@ struct Outline {
     ImVec2 min, size;
     float u;
     bool dim;
+    int node = 0;
+    bool downward = false;  // ports on the top and bottom edges
 };
 
 // One pin: its shape on the block's edge (links attach to its centre, drags start from it) beside the row's label,
 // which is drawn inside the node - left-aligned for inputs, right-aligned for outputs. Rows are frame-height tall so
 // labels line up with the text boxes next to them.
 void draw_pin(State& s, ed::PinId id, const std::string& label, remod::PortType type, bool output, bool connected,
-              float x0, float node_width, const Outline& o, PinLook look = PinLook::Port) {
+              float x0, float node_width, const Outline& o, PinLook look = PinLook::Port, bool from_above = false) {
+    s.pin_top[id.Get()] = from_above && !o.downward;
     ed::BeginPin(id, output ? ed::PinKind::Output : ed::PinKind::Input);
     if (output) ImGui::SetCursorPosX(x0 + node_width - ImGui::CalcTextSize(label.c_str()).x);
     const float y = ImGui::GetCursorScreenPos().y + ImGui::GetFrameHeight() * 0.5f;
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label.c_str());
+    if (o.downward || from_above) {
+        // Top to bottom (Graph::downward): ports spread evenly along the top edge (inputs) or the bottom (outputs),
+        // in row order; an unlinked field has none (a dozen markers would crowd the edge) and takes a link at its row.
+        // Across, a linked field (user, 2026-10-02: "fields linked from above") is on the top edge the same way: data
+        // comes in from the left, settings from above. Such a pin is grabbed and dropped on at its row's label, so
+        // links still go to a named field.
+        const float half = ImGui::GetFrameHeight() * 0.5f;
+        const ImVec2 label_min(ImGui::GetItemRectMin().x, y - half), label_max(ImGui::GetItemRectMax().x, y + half);
+        ImVec2 center = (label_min + label_max) * 0.5f;
+        if (look != PinLook::Field && o.size.x > 0) {
+            const int side = output ? 1 : 0, i = s.ports_now[side]++;
+            const int count = ImMax(i + 1, s.port_count[o.node][side]);
+            const float margin = 14 * o.u, span = ImMax(o.size.x - 2 * margin, 0.0f);
+            center = ImVec2(o.min.x + margin + span * float(i + 1) / float(count + 1), output ? o.min.y + o.size.y : o.min.y);
+            draw_pin_shape(ImGui::GetWindowDrawList(), center, type, look, connected, o.dim, o.u);
+        }
+        s.pin_pos[id.Get()] = s.pin_anchor[id.Get()] = center;
+        ed::PinPivotRect(center, center);
+        ed::PinRect(label_min, label_max);
+        ed::EndPin();
+        return;
+    }
 
     const ImVec2 center(o.min.x + edge_x(o.family, o.size, y - o.min.y, output, o.u), y);
     s.pin_pos[id.Get()] = center;
@@ -1486,7 +1532,18 @@ void center_view(ed::EditorContext* editor, ImVec2 view, ImVec2 center, float zo
 void draw_route(ImDrawList* draw, const std::vector<remod::Pt>& path, float radius, float inset, const Stroke& stroke,
                 float u, float width_scale = 1) {
     auto v = [](remod::Pt p) { return ImVec2(p.x, p.y); };
-    draw->PathLineTo(v(path.front()) + ImVec2(inset, 0));  // every path leaves rightwards ...
+    // The way it leaves and arrives (right and from the left, or down and from above): the first and last segments
+    // that have a length (a pin and its anchor can be the same point).
+    auto heading = [&](size_t from, int step) {
+        for (size_t i = from; i < path.size(); i += step) {
+            const ImVec2 d = v(path[i]) - v(path[from]);
+            if (const float len = ImLength(d); len > 0.01f) return d / len;
+            if (i == 0 && step < 0) break;
+        }
+        return ImVec2(1, 0);
+    };
+    const ImVec2 leave = heading(0, 1), arrive = heading(path.size() - 1, -1) * -1.0f;
+    draw->PathLineTo(v(path.front()) + leave * inset);
     for (size_t i = 1; i + 1 < path.size(); ++i) {
         const ImVec2 a = v(path[i - 1]), c = v(path[i]), b = v(path[i + 1]);
         const float in = ImLength(c - a), out = ImLength(b - c);
@@ -1495,7 +1552,7 @@ void draw_route(ImDrawList* draw, const std::vector<remod::Pt>& path, float radi
         draw->PathLineTo(c - (c - a) * (r / in));
         draw->PathBezierQuadraticCurveTo(c, c + (b - c) * (r / out));
     }
-    draw->PathLineTo(v(path.back()) - ImVec2(inset, 0));  // ... and arrives from the left
+    draw->PathLineTo(v(path.back()) - arrive * inset);
     const float width = stroke.width * u * width_scale;
     if (stroke.on <= 0) {
         draw->PathStroke(stroke.color, ImDrawFlags_None, width);
@@ -1575,10 +1632,13 @@ void draw_mode_switch(State& s) {
     ImGui::PopStyleVar();
     ImGui::Dummy(ImVec2(style.ItemSpacing.x, 0));
     ImGui::SameLine();
+    // The top-to-bottom flow (Graph::downward) has no switch here: user, 2026-10-02, big blocks don't suit it at Near
+    // zoom; a later consideration. A graph saved that way still shows that way.
     if (s.build_mode) {
         if (ImGui::Button(tidy)) s.tidy_requested = true;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Line the blocks up in columns, in step order, each level with the blocks feeding it.");
+            ImGui::SetTooltip("Line the blocks up in step order: the longest chain one row, Values and Text that feed it "
+                              "in a row above, side branches and Previews in rows below, each just before where it joins.");
         ImGui::SameLine();
     }
     if (ImGui::Checkbox(label, &s.show_descriptions)) remember_paths(s);
@@ -1711,8 +1771,9 @@ ImVec2 draw_far_block(State& s, const remod::Node& n, const remod::NodeSpec& spe
     float title_h = 0;
     if (!dot) {
         title_h = centered_text(nullptr, g_title_font, title_size, {}, 92 * u, 0, title.c_str());
-        size = ImVec2(116 * u, (std::max)({40 * u, float((std::max)(ports[0].size(), ports[1].size()) + 1) * 9 * u,
-                                         title_h + 10 * u}));
+        const float along = float((std::max)(ports[0].size(), ports[1].size()) + 1) * 9 * u;  // room for the ports
+        size = s.graph.downward ? ImVec2((std::max)(116 * u, along), (std::max)(40 * u, title_h + 10 * u))
+                                : ImVec2(116 * u, (std::max)({40 * u, along, title_h + 10 * u}));
     }
     const float alpha = state == remod::NodeState::NotReached ? 0.55f : 1;
     ImDrawList* d = ImGui::GetWindowDrawList();
@@ -1720,8 +1781,11 @@ ImVec2 draw_far_block(State& s, const remod::Node& n, const remod::NodeSpec& spe
     for (int side = 0; side < 2; ++side) {
         for (size_t i = 0; i < ports[side].size(); ++i) {
             const Port& p = ports[side][i];
-            const float y = dot ? size.y / 2 : size.y * float(i + 1) / float(ports[side].size() + 1);
-            const ImVec2 c = at + ImVec2(dot ? size.x / 2 : edge_x(spec.family, size, y, side == 1, u), y);
+            const float k = float(i + 1) / float(ports[side].size() + 1);  // spread along its edge
+            const float y = dot ? size.y / 2 : size.y * k;
+            const ImVec2 c = dot                ? at + size * 0.5f
+                             : s.graph.downward ? at + ImVec2(size.x * k, side ? size.y : 0)
+                                                : at + ImVec2(edge_x(spec.family, size, y, side == 1, u), y);
             const float r = (dot ? 6 : 4.5f) * u;
             ed::BeginPin(p.id, side ? ed::PinKind::Output : ed::PinKind::Input);
             // A zero-size item of its own: ImGui sizes an empty group to reach the last item drawn before it (another
@@ -1732,7 +1796,8 @@ ImVec2 draw_far_block(State& s, const remod::Node& n, const remod::NodeSpec& spe
             ed::PinRect(c - ImVec2(dot && side ? 0 : r, r), c + ImVec2(dot && !side ? 0 : r, r));
             ed::EndPin();
             s.pin_pos[p.id.Get()] = c;
-            s.pin_anchor[p.id.Get()] = ImVec2(at.x + (side ? size.x : 0), c.y);
+            s.pin_anchor[p.id.Get()] = s.graph.downward ? c : ImVec2(at.x + (side ? size.x : 0), c.y);
+            s.pin_top[p.id.Get()] = false;
             if (!dot) draw_pin_shape(d, c, p.type, p.look, p.wired, state == remod::NodeState::NotReached, u);
         }
     }
@@ -2081,7 +2146,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     s.pin_anchor.clear();
     const float button_width = ImGui::CalcTextSize("...").x + style.FramePadding.x * 2;
     const ImVec4 padding = ed::GetStyle().NodePadding;  // x = left, z = right
-    s.look = {padding};
+    s.look = {padding, s.graph.downward};
     std::string hovered_hint;  // tooltip drawn after the nodes, outside the canvas transform
     // Zoomed out: Far (handoff §3), every block a small symbol. Going there, a block first folds down to its title,
     // status and linked rows (`detail` eases from 1 to 0 over a quarter second, so blocks and lines change smoothly),
@@ -2142,7 +2207,9 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         if (spec && spec->view_size) node_width = ImMax(node_width, picture_size(n, *spec));  // as wide as its picture
         const float x0 = ImGui::GetCursorPosX();
         const float left_edge = ImGui::GetCursorScreenPos().x - padding.x;  // node border, where pins sit
-        const Outline o{family, ImVec2(left_edge, top), last_size, u, state == remod::NodeState::NotReached};
+        const Outline o{family, ImVec2(left_edge, top), last_size, u, state == remod::NodeState::NotReached, n.id,
+                        s.graph.downward};
+        s.ports_now = {};
         if (!spec) {
             ImGui::Text("%s (unknown node type)", n.type.c_str());
         } else if (far_view) {
@@ -2256,7 +2323,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 folding(linked.empty() ? detail : 1.0f, [&] {
                     const std::string label = in.required ? std::string(in.label) + " *" : std::string(in.label);
                     draw_pin(s, pin_id(n.id, false, slot), label, pin_type, false, !linked.empty(), x0, node_width, o,
-                             linked.empty() && in.editable() ? PinLook::Field : PinLook::Port);
+                             linked.empty() && in.editable() ? PinLook::Field : PinLook::Port,
+                             in.editable() && !linked.empty());
                     if (ImGui::IsItemHovered()) hovered_hint = linked.empty() ? std::string(in.hint) : from(linked[0]);
                     if (!in.editable()) return;
                     // Not SameLine(x): inside a node (an ImGui group) that offset is group-relative, so x0 would be
@@ -2463,6 +2531,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 draw_thumb(s, n.id, node_width, large ? picture_size(n, *spec) : font * 8, large, hovered_hint);
             });
         if (!far_view) ImGui::Dummy(ImVec2(node_width, 0));  // fixes the node width so the right edge (and its pins) line up
+        if (!far_view) s.port_count[n.id] = s.ports_now;  // (Far counts its own)
         ImGui::PopID();
         ed::EndNode();
         ed::PopStyleVar();
@@ -2550,7 +2619,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         if (it == s.graph.nodes.end()) {
             s.place_new = 0;
         } else if (sizes[size_t(it - s.graph.nodes.begin())][0] > 0) {
-            apply(remod::make_room(s.graph, positions, sizes, s.place_new, font * 4, min_gap));
+            apply(remod::make_room(s.graph, positions, sizes, s.place_new, font * 4, min_gap, s.graph.downward));
             s.place_new = 0;
         }
         const bool dragging = ImGui::IsMouseDown(ImGuiMouseButton_Left);
@@ -2578,7 +2647,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             n.y = p.y;
             sizes.push_back({size.x, size.y});
         }
-        const auto at = remod::tidy_layout(s.graph, sizes, font * 8, min_gap);
+        const auto at = remod::tidy_layout(s.graph, sizes, font * 8, min_gap, s.graph.downward);
         for (size_t i = 0; i < at.size(); ++i) ed::SetNodePosition(s.graph.nodes[i].id, ImVec2(at[i][0], at[i][1]));
         s.navigate = true;  // fit the view to the result
     }
@@ -2612,7 +2681,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         if (!s.pin_pos.contains(from_pin) || !s.pin_pos.contains(to_pin)) continue;
         const ImVec2 a = s.pin_anchor[from_pin], b = s.pin_anchor[to_pin];
         // Every link its own net: a value used in several places goes through a Split, so no line branches.
-        requests.push_back({int(i), {a.x, a.y}, {b.x, b.y}});
+        const auto top = s.pin_top.find(to_pin);
+        requests.push_back({int(i), {a.x, a.y}, {b.x, b.y}, top != s.pin_top.end() && top->second});
         routed.push_back(i);
         ends.push_back({remod::Pt{s.pin_pos[from_pin].x, s.pin_pos[from_pin].y}, remod::Pt{s.pin_pos[to_pin].x, s.pin_pos[to_pin].y}});
         const auto source = run_state(s, l.from_node), target = run_state(s, l.to_node);
@@ -2632,26 +2702,33 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !s.dragged.empty()) {
         const float gap = font * 0.8f;
         s.routes = {};
+        const bool down = s.graph.downward;  // worked out left to right; top to bottom swaps x and y
+        auto flip = [&](remod::Pt p) { return down ? remod::Pt{p.y, p.x} : p; };
         for (const remod::LinkRoute& l : requests) {
-            const remod::Pt a = l.from, b = l.to;
-            if (b.x - a.x >= 2 * gap) {  // forwards: across, down, across
+            const remod::Pt a = flip(l.from), b = flip(l.to);
+            std::vector<remod::Pt> path;
+            if (l.to_top) {  // into a top edge: out, across over it, down
+                path = {a, {a.x + gap, a.y}, {a.x + gap, b.y - gap}, {b.x, b.y - gap}, b};
+            } else if (b.x - a.x >= 2 * gap) {  // forwards: across, down, across
                 const float mx = (a.x + b.x) / 2;
-                s.routes.paths.push_back({a, {mx, a.y}, {mx, b.y}, b});
+                path = {a, {mx, a.y}, {mx, b.y}, b};
             } else {  // backwards: out, over to the middle height, back, in
                 const float my = (a.y + b.y) / 2;
-                s.routes.paths.push_back({a, {a.x + gap, a.y}, {a.x + gap, my}, {b.x - gap, my}, {b.x - gap, b.y}, b});
+                path = {a, {a.x + gap, a.y}, {a.x + gap, my}, {b.x - gap, my}, {b.x - gap, b.y}, b};
             }
+            for (auto& p : path) p = flip(p);
+            s.routes.paths.push_back(std::move(path));
         }
         s.routes.portals.assign(s.routes.paths.size(), 0);
         s.route_blocks.clear();  // routes properly once the blocks are let go
         s.route_requests.clear();
     } else if (blocks != s.route_blocks || requests != s.route_requests) {
-        s.routes = remod::route_links(blocks, requests, font * 0.8f, 1);
+        s.routes = remod::route_links(blocks, requests, font * 0.8f, 1, s.graph.downward);
         s.routes_settled = false;
         s.route_blocks = std::move(blocks);
         s.route_requests = std::move(requests);
     } else if (!s.routes_settled) {
-        s.routes = remod::route_links(s.route_blocks, s.route_requests, font * 0.8f);
+        s.routes = remod::route_links(s.route_blocks, s.route_requests, font * 0.8f, 3, s.graph.downward);
         s.routes_settled = true;
     }
     s.routed = std::move(routed);
