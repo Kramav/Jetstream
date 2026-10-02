@@ -1202,6 +1202,106 @@ TEST_CASE("preview_values: what links hold before a run; link_value prefers it t
     CHECK(run_in(texts, tmp.path).values.at({1, "text"}) == "Clean HUD");
 }
 
+TEST_CASE("run: the image blocks write PNGs; Save to keeps one and is the output, else it's temporary") {
+    TempDir tmp;
+    remod::Bgra pic{8, 4, {}};
+    for (int i = 0; i < 8 * 4; ++i) pic.pixels.insert(pic.pixels.end(), {40, 60, 100, 255});
+    remod::save_png(tmp.path / "pic.png", pic);
+
+    Graph g;
+    auto& adjust = g.add_node("AdjustColour");  // 1
+    adjust.params["image"] = "pic.png";
+    adjust.params["brightness"] = "20";
+    adjust.params["save_to"] = "out/bright.png";
+    const int seen = observe(g, 1, "image");
+    const fs::path kept = (tmp.path / "out/bright.png").lexically_normal();
+    CHECK(remod::preview_values(g, tmp.path).at({1, "image"}) == kept.string());  // known before the run
+    CHECK(run_in(g, tmp.path).nodes.at(seen).message == "\"" + kept.string() + "\"");
+    CHECK(remod::load_image(kept).pixels[2] > 100);  // red got brighter
+    CHECK(remod::load_image(kept).pixels[3] == 255);
+
+    g.find(1)->params["save_to"] = "";  // temporary: the run works, the file is gone afterwards
+    CHECK_FALSE(remod::preview_values(g, tmp.path).contains({1, "image"}));
+    const auto r = run_in(g, tmp.path);
+    CHECK_FALSE(fs::exists(r.values.at({1, "image"})));
+    g.find(1)->params["hue"] = "lots";
+    CHECK_THAT(run_fails(g, tmp.path), ContainsSubstring("Hue must be a number from -180 to 180"));
+
+    Graph resize;
+    auto& rs = resize.add_node("ResizeImage");
+    rs.params["image"] = "pic.png";
+    rs.params["save_to"] = "r.png";
+    CHECK_THAT(run_fails(resize, tmp.path), ContainsSubstring("Width and/or Height"));
+    rs.params["width"] = "10";  // height from the shape: 8x4 -> 10x5
+    run_in(resize, tmp.path);
+    CHECK(remod::load_image(tmp.path / "r.png").height == 5);
+    test::write_fake_tex(tmp.path / "orig.tex.143221013", 143221013, 64, 32, 1, 1, 98);
+    resize.find(1)->params["match"] = "orig.tex.143221013";  // a texture's size wins
+    run_in(resize, tmp.path);
+    CHECK(remod::load_image(tmp.path / "r.png").width == 64);
+    CHECK(remod::load_image(tmp.path / "r.png").height == 32);
+
+    Graph overlay;
+    auto& ov = overlay.add_node("OverlayImage");
+    ov.params["base"] = "pic.png";
+    ov.params["top"] = "r.png";  // bigger than the base: clipped
+    ov.params["x"] = "-4";
+    ov.params["save_to"] = "o.png";
+    run_in(overlay, tmp.path);
+    const remod::Bgra o = remod::load_image(tmp.path / "o.png");
+    CHECK(o.width == 8);  // the base's size
+    CHECK(o.height == 4);
+}
+
+TEST_CASE("preview_image: an image block's result in memory, at thumbnail size, before any run") {
+    TempDir tmp;
+    remod::Bgra pic{64, 32, {}};
+    for (int i = 0; i < 64 * 32; ++i) pic.pixels.insert(pic.pixels.end(), {40, 60, 100, 255});
+    remod::save_png(tmp.path / "pic.png", pic);
+    const remod::ImageLoader load = [](const fs::path& f) -> std::optional<remod::ImagePreview> {  // shrunk to 16
+        const remod::Bgra full = remod::load_image(f);
+        const float k = std::min(1.0f, 16.0f / float(std::max(full.width, full.height)));
+        return remod::ImagePreview{remod::resize_image(full, unsigned(full.width * k), unsigned(full.height * k),
+                                                       remod::Fit::Stretch),
+                                   k};
+    };
+
+    Graph g;
+    auto& adjust = g.add_node("AdjustColour");  // 1
+    adjust.params["image"] = "pic.png";
+    adjust.params["brightness"] = "50";
+    auto& resize = g.add_node("ResizeImage");  // 2: from Adjust colour, no file in between
+    resize.params["width"] = "128";
+    REQUIRE(g.connect({1, "image", 2, "image"}).empty());
+    auto& overlay = g.add_node("OverlayImage");  // 3: the resized one on the original
+    overlay.params["base"] = "pic.png";
+    overlay.params["x"] = "32";
+    REQUIRE(g.connect({2, "image", 3, "top"}).empty());
+    const auto preview = remod::preview_values(g, tmp.path);
+    auto at = [&](int node) { return remod::preview_image(g, preview, node, tmp.path, 16, load); };
+
+    const auto a = at(1);
+    REQUIRE(a);
+    CHECK(a->image.width == 16);  // the shrunk copy, adjusted
+    CHECK(a->image.pixels[2] > 100);
+    const auto r = at(2);
+    REQUIRE(r);
+    CHECK(r->image.width == 16);  // 128x64 for real, shown at 16x8
+    CHECK(r->image.height == 8);
+    CHECK(r->scale == 0.125f);
+    const auto o = at(3);
+    REQUIRE(o);
+    CHECK(o->image.width == 16);  // the base's thumbnail; the top went on at the base's scale, from x = 32 -> 8
+    CHECK(o->image.pixels[(0 * 16 + 7) * 4 + 2] == 100);  // left of x: the base as it was
+    CHECK(o->image.pixels[(0 * 16 + 8) * 4 + 2] > 100);   // from x: the brighter top
+
+    g.find(1)->params["image"] = "missing.png";  // an input image that isn't there: no thumbnail, all the way down
+    const auto none = remod::preview_values(g, tmp.path);
+    CHECK_FALSE(remod::preview_image(g, none, 1, tmp.path, 16, [](const fs::path&) { return std::optional<remod::ImagePreview>{}; }));
+    CHECK_FALSE(remod::preview_image(g, none, 3, tmp.path, 16, [](const fs::path&) { return std::optional<remod::ImagePreview>{}; }));
+    CHECK_FALSE(remod::preview_image(g, none, 1, tmp.path, 16, load));  // load_image throws: caught, nothing
+}
+
 TEST_CASE("a destination row has one circle: the result on the right, or flipped to the left for a link") {
     auto result = [](const char* type, const char* input) {
         const char* r = remod::find_input(*remod::find_spec(type), input)->result;

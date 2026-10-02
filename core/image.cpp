@@ -116,6 +116,21 @@ std::vector<std::uint8_t> read_tga(const fs::path& file, unsigned& w, unsigned& 
     return out;
 }
 
+// `pixels` (w x h, BGRA) scaled to sw x sh (WIC's Fant) and the `part` of that copied to `dst` (rows `stride` apart).
+// `what` names the image in errors.
+void scale_into(IWICImagingFactory* wic, const std::uint8_t* pixels, unsigned w, unsigned h, unsigned sw, unsigned sh,
+                const WICRect& part, std::uint8_t* dst, unsigned stride, const std::string& what) {
+    ComPtr<IWICBitmap> bitmap;  // WIC copies the pixels (WICBitmapCacheOnLoad)
+    check(wic->CreateBitmapFromMemory(w, h, GUID_WICPixelFormat32bppBGRA, w * 4, w * h * 4, const_cast<BYTE*>(pixels),
+                                      &bitmap),
+          "reading " + what);
+    ComPtr<IWICBitmapScaler> scaler;  // output keeps the input's 32-bit BGRA
+    check(wic->CreateBitmapScaler(&scaler), "CreateBitmapScaler");
+    check(scaler->Initialize(bitmap.Get(), sw, sh, WICBitmapInterpolationModeFant), "scaling " + what);
+    const UINT bytes = UINT(part.Height - 1) * stride + UINT(part.Width) * 4;
+    check(scaler->CopyPixels(&part, stride, bytes, dst), "copying " + what);
+}
+
 }  // namespace
 
 void save_png_bgra(const fs::path& out, unsigned width, unsigned height, const std::vector<std::uint8_t>& bgra) {
@@ -164,23 +179,83 @@ void tile_images(const std::vector<fs::path>& images, const fs::path& out, unsig
     for (unsigned i = 0; i < n; ++i) {
         unsigned w = 0, h = 0;
         const auto pixels = read_image_bgra(images[i], w, h);
-        ComPtr<IWICBitmap> bitmap;  // WIC copies the pixels (WICBitmapCacheOnLoad)
-        check(wic->CreateBitmapFromMemory(w, h, GUID_WICPixelFormat32bppBGRA, w * 4, UINT(pixels.size()),
-                                          const_cast<BYTE*>(pixels.data()), &bitmap),
-              "reading " + images[i].string());
         const double scale = std::min(double(tile) / w, double(tile) / h);
         const UINT sw = std::max(1u, UINT(std::lround(w * scale))), sh = std::max(1u, UINT(std::lround(h * scale)));
-        ComPtr<IWICBitmapScaler> scaler;  // output keeps the input's 32-bit BGRA
-        check(wic->CreateBitmapScaler(&scaler), "CreateBitmapScaler");
-        check(scaler->Initialize(bitmap.Get(), sw, sh, WICBitmapInterpolationModeFant), "scaling " + images[i].string());
-
         const unsigned x = (i % cols) * tile + (tile - sw) / 2, y = (i / cols) * tile + (tile - sh) / 2;
-        std::uint8_t* dst = canvas.data() + (size_t(y) * width + x) * 4;
-        const UINT stride = width * 4, bytes = (sh - 1) * stride + sw * 4;
-        const WICRect all{0, 0, INT(sw), INT(sh)};
-        check(scaler->CopyPixels(&all, stride, bytes, dst), "copying " + images[i].string());
+        scale_into(wic.Get(), pixels.data(), w, h, sw, sh, WICRect{0, 0, INT(sw), INT(sh)},
+                   canvas.data() + (size_t(y) * width + x) * 4, width * 4, images[i].string());
     }
     encode_png(wic.Get(), out, width, height, canvas.data());
+}
+
+Bgra load_image(const fs::path& file) {
+    Bgra image;
+    image.pixels = read_image_bgra(file, image.width, image.height);
+    return image;
+}
+
+void save_png(const fs::path& file, const Bgra& image) { save_png_bgra(file, image.width, image.height, image.pixels); }
+
+void adjust_colour(Bgra& image, float hue, float saturation, float brightness, float contrast) {
+    // The hue rotation matrix that keeps luminance (as CSS's hue-rotate), on R, G, B.
+    const float c = std::cos(hue * 3.14159265f / 180), s = std::sin(hue * 3.14159265f / 180);
+    const float m[3][3] = {{0.213f + c * 0.787f - s * 0.213f, 0.715f - c * 0.715f - s * 0.715f, 0.072f - c * 0.072f + s * 0.928f},
+                           {0.213f - c * 0.213f + s * 0.143f, 0.715f + c * 0.285f + s * 0.140f, 0.072f - c * 0.072f - s * 0.283f},
+                           {0.213f - c * 0.213f - s * 0.787f, 0.715f - c * 0.715f + s * 0.715f, 0.072f + c * 0.928f + s * 0.072f}};
+    for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        std::uint8_t* p = &image.pixels[i];  // B, G, R, A
+        const float r0 = p[2] / 255.0f, g0 = p[1] / 255.0f, b0 = p[0] / 255.0f;
+        float rgb[3] = {m[0][0] * r0 + m[0][1] * g0 + m[0][2] * b0, m[1][0] * r0 + m[1][1] * g0 + m[1][2] * b0,
+                        m[2][0] * r0 + m[2][1] * g0 + m[2][2] * b0};
+        const float lum = 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2];
+        for (float& v : rgb) {
+            v = lum + (v - lum) * (1 + saturation);
+            v = (v - 0.5f) * (1 + contrast) + 0.5f + brightness;
+        }
+        for (int k = 0; k < 3; ++k) p[2 - k] = std::uint8_t(std::lround(std::clamp(rgb[k], 0.0f, 1.0f) * 255));
+    }
+}
+
+Bgra resize_image(const Bgra& image, unsigned width, unsigned height, Fit fit) {
+    if (width == 0 || height == 0 || image.width == 0 || image.height == 0) throw std::runtime_error("can't resize to or from a zero size");
+    Bgra out{width, height, std::vector<std::uint8_t>(size_t(width) * height * 4, 0)};  // transparent
+    const double sx = double(width) / image.width, sy = double(height) / image.height;
+    const double scale = fit == Fit::Fit ? std::min(sx, sy) : std::max(sx, sy);
+    UINT sw = width, sh = height;
+    if (fit != Fit::Stretch) {
+        sw = std::max(1u, UINT(std::lround(image.width * scale)));
+        sh = std::max(1u, UINT(std::lround(image.height * scale)));
+    }
+    ComScope com;
+    const auto wic = factory();
+    if (fit == Fit::Fit) {  // the whole image, centred
+        const unsigned x = (width - std::min(sw, width)) / 2, y = (height - std::min(sh, height)) / 2;
+        sw = std::min(sw, width);
+        sh = std::min(sh, height);
+        scale_into(wic.Get(), image.pixels.data(), image.width, image.height, sw, sh, WICRect{0, 0, INT(sw), INT(sh)},
+                   out.pixels.data() + (size_t(y) * width + x) * 4, width * 4, "the image");
+    } else {  // Stretch: all of it; Fill: its centre
+        const WICRect part{INT((std::max(sw, width) - width) / 2), INT((std::max(sh, height) - height) / 2), INT(width), INT(height)};
+        scale_into(wic.Get(), image.pixels.data(), image.width, image.height, std::max(sw, width), std::max(sh, height), part,
+                   out.pixels.data(), width * 4, "the image");
+    }
+    return out;
+}
+
+void overlay_image(Bgra& base, const Bgra& top, int x, int y, float opacity) {
+    opacity = std::clamp(opacity, 0.0f, 1.0f);
+    for (unsigned ty = 0; ty < top.height; ++ty) {
+        const long by = long(y) + long(ty);
+        if (by < 0 || by >= long(base.height)) continue;
+        for (unsigned tx = 0; tx < top.width; ++tx) {
+            const long bx = long(x) + long(tx);
+            if (bx < 0 || bx >= long(base.width)) continue;
+            const std::uint8_t* t = &top.pixels[(size_t(ty) * top.width + tx) * 4];
+            std::uint8_t* b = &base.pixels[(size_t(by) * base.width + size_t(bx)) * 4];
+            const float a = t[3] / 255.0f * opacity;
+            for (int k = 0; k < 3; ++k) b[k] = std::uint8_t(std::lround(b[k] * (1 - a) + t[k] * a));  // b[3] kept
+        }
+    }
 }
 
 }  // namespace remod

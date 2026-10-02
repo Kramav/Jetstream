@@ -81,7 +81,8 @@ ExportImage/ImportImage reduce to handing that PNG to the user and checking the 
 Pixels never pass through the tool. The CLI exposes the steps as `tex2png`, `png2tex` and `package`.
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
-- Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, PackageMod; file steps CopyFile,
+- Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
+  OverlayImage, PackageMod; file steps CopyFile,
   MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
   CutText, RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
   utility.**
@@ -257,6 +258,20 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   "Replace existing" overwrites only a previous build of the same mod.
 - Old graph files are migrated on load: PackageMod's typed `screenshot` becomes ImportImage → preview.
 - LoadTex infers the game path when the `.tex` sits inside a `natives/STM/...` tree; otherwise set `game_path`.
+- **Image blocks (user, 2026-10-01): Adjust colour, Resize image, Overlay image** (steps, Transform family; core
+  `adjust_colour` / `resize_image` / `overlay_image` on `Bgra` pixels, WIC for reading, scaling and PNG). Each writes a
+  PNG to the run's temporary folder, or to its optional **Save to** (`InputSpec::result`, on the output row; written
+  again each run), which is then its output and known before a run (`preview`). Colour changes and overlays keep the
+  alpha channel as it is (RE textures often hold other data there). Resize: width / height (one empty keeps the
+  shape) or "Match size of" an image or texture (`read_tex_meta`); fit (bars) / fill (crop) / stretch. Numbers are
+  `Widget::Number` fields (range, display format, text for 0 such as "auto"; stored as text): a drag field in the
+  app (Ctrl+click types), checked again in the run ("Hue must be a number from -180 to 180").
+  **Live thumbnails (user, 2026-10-01):** core `preview_image` works out an image block's (`NodeSpec::thumbnail`)
+  result in memory at <= 256 px from its real input (an image block upstream, through Splits, or the file a preview
+  or field names), scaling sizes and positions to the shrunk copy (`ImagePreview::scale`). The app recomputes them in a
+  background job when the graph changes (positions aside; one job at a time, the next starts when it's done), caches
+  shrunk files by path and write time, and draws each under its block on a checkerboard. Without a known input image
+  (nothing exported yet) the block says to run once. Checked in the app on a test graph (thumbnail made and uploaded).
 - **Cut text (CutText, user 2026-10-01: "truncate text based on the character content"):** keeps the part of a text
   or path after / before / from / up to a marker, at its first or last occurrence (core `cut_text`), ignoring case and
   treating `\` and `/` alike; a missing marker fails the run. E.g. a texture path cut after `natives/STM/` gives the
@@ -434,6 +449,22 @@ Fill these in from the manual spike before implementing the affected code:
 
 ## 10. Later milestones (do not start)
 
+- **Future work (user, 2026-10-01; "we are building the engine, not the implementation yet"):**
+  - **Batch:** lists through links: an output can carry a list, a block fed one runs per item, collecting inputs
+    (Package's textures) take them all; a "Files in folder" source (folder, pattern, subfolders); Export image would
+    need a per-item name (e.g. a folder field). User: not yet, "dumb rebuilding textures isn't really helpful" until
+    there's more to do per texture.
+  - **Channel tools:** split / merge channels, so colour can be edited without touching data packed in another
+    channel. Which RE4R textures pack what (`_albm`, `_nrmr`, `_atos`...) is `[TBD-spike]`; don't assume.
+  - **Mod options:** one mod with variants to choose in Fluffy.
+  - **Fit into frame** (next candidate; opinion given): technically small with the image blocks (flood-fill
+    transparent pixels from the edges; the largest enclosed transparent area's rectangle is the window; Resize
+    fill/fit + composite behind the frame). `[TBD-spike]` whether RE4R frame textures have transparent openings:
+    check 2-3 in the Browser with Transparency on. Transparent → auto-detect; picture printed into an opaque frame →
+    a typed rectangle (later drag-select on the preview); in-world paintings usually have their own picture texture,
+    which Resize "Match size of" already covers.
+  - Declined: **Install to Fluffy** (the user installs by hand). A template library: only one real workflow exists
+    yet (the RE4R texture mod).
 - **Later (user, 2026-10-01): Tidy up should allow more vertical inputs** (lay blocks out with room for inputs that
   come in from above and below, not only the columns-by-step-order arrangement), **and maybe an option to rotate the
   connections from left-to-right to top-to-bottom** (outputs at a block's bottom, inputs at its top) for easier

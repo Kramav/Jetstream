@@ -405,6 +405,24 @@ struct State {
     // What links hold before a run (core preview_values), worked out again when the graph or its file changes.
     remod::RunValues preview;
     remod::Graph preview_of;
+    // Live thumbnails of the image blocks (core preview_image), worked out in the background when the graph changes
+    // (positions aside); a change meanwhile starts the next job once this one is done. `no_thumb`: blocks whose input
+    // image isn't known yet.
+    struct Thumb {
+        ID3D11ShaderResourceView* srv = nullptr;
+        float width = 0, height = 0;
+    };
+    std::map<int, Thumb> thumbs;
+    std::set<int> no_thumb;
+    std::future<std::map<int, std::optional<remod::ImagePreview>>> thumbs_job;
+    remod::Graph thumbs_of;
+    std::string thumbs_path = "\x01";
+    // Files shrunk for thumbnails, by path and write time: only the job thread uses it, one job at a time.
+    struct ShrunkFile {
+        std::filesystem::file_time_type time;
+        remod::ImagePreview image;
+    };
+    std::shared_ptr<std::map<std::string, ShrunkFile>> shrunk = std::make_shared<std::map<std::string, ShrunkFile>>();
     std::string preview_path = "\x01";
     std::future<remod::RunResult> run;
     std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
@@ -1753,6 +1771,107 @@ void draw_minimap(State& s, ImVec2 view_min, ImVec2 view_size) {
     ImGui::EndChild();
 }
 
+constexpr unsigned kThumbSide = 256;
+
+// Starts working out the image blocks' thumbnails when the graph has changed (in the background), and takes the
+// finished ones onto the GPU.
+void update_thumbs(State& s) {
+    using namespace std::chrono_literals;
+    if (s.thumbs_job.valid() && s.thumbs_job.wait_for(0s) == std::future_status::ready) {
+        const auto results = s.thumbs_job.get();
+        for (auto it = s.thumbs.begin(); it != s.thumbs.end();) {  // gone, or about to be replaced
+            it->second.srv->Release();
+            it = s.thumbs.erase(it);
+        }
+        s.no_thumb.clear();
+        for (const auto& [id, result] : results) {
+            if (!result) {
+                s.no_thumb.insert(id);
+                continue;
+            }
+            const remod::Bgra& img = result->image;
+            D3D11_TEXTURE2D_DESC desc{};
+            desc.Width = img.width;
+            desc.Height = img.height;
+            desc.MipLevels = desc.ArraySize = 1;
+            desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            desc.SampleDesc.Count = 1;
+            desc.Usage = D3D11_USAGE_IMMUTABLE;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            const D3D11_SUBRESOURCE_DATA data{img.pixels.data(), img.width * 4, 0};
+            ID3D11Texture2D* tex = nullptr;
+            State::Thumb thumb{nullptr, float(img.width), float(img.height)};
+            if (SUCCEEDED(g_device->CreateTexture2D(&desc, &data, &tex))) {
+                g_device->CreateShaderResourceView(tex, nullptr, &thumb.srv);
+                tex->Release();
+            }
+            if (thumb.srv) s.thumbs[id] = thumb;
+        }
+    }
+    if (s.thumbs_job.valid()) return;  // one job at a time
+    remod::Graph shape = s.graph;      // what decides the thumbnails: not where blocks stand
+    for (auto& n : shape.nodes) n.x = n.y = 0;
+    if (shape == s.thumbs_of && s.graph_path == s.thumbs_path) return;
+    s.thumbs_of = std::move(shape);
+    s.thumbs_path = s.graph_path;
+    std::vector<int> ids;
+    for (const auto& n : s.graph.nodes)
+        if (const remod::NodeSpec* spec = remod::find_spec(n.type); spec && spec->thumbnail) ids.push_back(n.id);
+    if (ids.empty()) return;
+    const auto p = std::ranges::find(s.profiles, s.graph.profile, &remod::Profile::id);
+    s.thumbs_job = std::async(std::launch::async, [graph = s.graph, ids, shrunk = s.shrunk,
+                                                   profile = p == s.profiles.end() ? std::optional<remod::Profile>()
+                                                                                   : std::optional<remod::Profile>(*p),
+                                                   base = std::filesystem::absolute(s.graph_path).parent_path()] {
+        const remod::ImageLoader load = [&](const std::filesystem::path& file) -> std::optional<remod::ImagePreview> {
+            std::error_code ec;
+            const auto time = std::filesystem::last_write_time(file, ec);
+            if (ec) return std::nullopt;
+            auto& cached = (*shrunk)[file.string()];
+            if (cached.time != time || cached.image.image.pixels.empty()) {
+                const remod::Bgra full = remod::load_image(file);
+                const float k = ImMin(1.0f, float(kThumbSide) / float(ImMax(full.width, full.height)));
+                cached = {time,
+                          {k < 1 ? remod::resize_image(full, ImMax(1u, unsigned(full.width * k)),
+                                                       ImMax(1u, unsigned(full.height * k)), remod::Fit::Stretch)
+                                 : full,
+                           k}};
+            }
+            return cached.image;
+        };
+        const remod::RunValues preview = remod::preview_values(graph, base);
+        std::map<int, std::optional<remod::ImagePreview>> out;
+        for (const int id : ids)
+            out[id] = remod::preview_image(graph, preview, id, base, kThumbSide, load, profile ? &*profile : nullptr);
+        return out;
+    });
+}
+
+// An image block's thumbnail, fitted to the block's width and at most eight lines tall, over a checkerboard (its
+// transparency shows); or why there's none yet.
+void draw_thumb(State& s, int node, float width, std::string& hint) {
+    const auto it = s.thumbs.find(node);
+    if (it == s.thumbs.end()) {
+        ImGui::TextDisabled(s.no_thumb.contains(node)
+                                ? "No preview yet: its input image doesn't exist yet (run once), or a value isn't set."
+                                : "Working out the preview...");
+        return;
+    }
+    const State::Thumb& t = it->second;
+    const float font = ImGui::GetFontSize(), k = ImMin(width / t.width, font * 8 / t.height);
+    const ImVec2 size(t.width * k, t.height * k), at = ImGui::GetCursorScreenPos();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const float cell = font * 0.5f;
+    for (float y = 0; y < size.y; y += cell)
+        for (float x = 0; x < size.x; x += cell)
+            d->AddRectFilled(at + ImVec2(x, y), at + ImVec2(ImMin(x + cell, size.x), ImMin(y + cell, size.y)),
+                             (int(x / cell) + int(y / cell)) % 2 ? pal::raised : pal::line);
+    ImGui::Image(ImTextureRef(t.srv), size);
+    if (ImGui::IsItemHovered())
+        hint = "The result, worked out from a small copy of the image. It follows the values as you change them; Run "
+               "makes the full-size one.";
+}
+
 void draw_canvas(State& s, ed::EditorContext* editor) {
     ImGui::Begin("Graph");
     draw_mode_switch(s);
@@ -1974,6 +2093,23 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     } else if (in.widget == remod::Widget::Checkbox) {
                         bool on = value == "true";
                         if (ImGui::Checkbox("##v", &on)) value = on ? "true" : "";
+                    } else if (in.widget == remod::Widget::Number) {
+                        // Drag left / right (about 400 pixels across the range), or Ctrl+click to type. Stored as
+                        // text, a whole number when it is one; a typed value core can't read shows as 0 until set.
+                        float v = 0;
+                        try {
+                            v = std::stof(value);
+                        } catch (const std::exception&) {
+                        }
+                        ImGui::SetNextItemWidth(field_width);
+                        const float speed = ImMax(0.1f, (in.max - in.min) / 400);
+                        if (ImGui::DragFloat("##v", &v, speed, in.min, in.max, v == 0 && in.zero ? in.zero : in.format,
+                                             ImGuiSliderFlags_AlwaysClamp)) {
+                            v = std::round(v);  // ponytail: whole numbers; a step setting if a field needs fractions
+                            value = std::to_string(int(v));
+                        }
+                        if (ImGui::IsItemHovered())
+                            hovered_hint = std::string(in.hint) + "\nDrag to change, Ctrl+click to type.";
                     } else if (in.widget == remod::Widget::Choice) {
                         // A button that opens the list (drawn with the menus, outside the canvas: a combo's popup
                         // inside a node lands in the wrong place when zoomed).
@@ -2114,6 +2250,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             for (size_t slot = 0; slot < spec->inputs.size(); ++slot)
                 if (spec->inputs[slot].multiple) draw_input(slot);
         }
+        if (!far_view && spec && spec->thumbnail) folding(detail, [&] { draw_thumb(s, n.id, node_width, hovered_hint); });
         if (!far_view) ImGui::Dummy(ImVec2(node_width, 0));  // fixes the node width so the right edge (and its pins) line up
         ImGui::PopID();
         ed::EndNode();
@@ -2767,6 +2904,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             state.pending_texture = picked;
         if (state.pinned != state.saved.pinned_folders) remember_paths(state);  // a folder was pinned or unpinned
         if (state.build_mode || state.show_pipeline) draw_side_panel(state);
+        update_thumbs(state);
         draw_canvas(state, editor);
         // Undo steps and the unsaved-changes baseline, once the graph is settled: nothing dragged or typed, no block
         // still being placed. After a load or New, the graph as the editor placed it is the baseline.
@@ -2800,6 +2938,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (state.run.valid()) state.run.wait();  // let a running graph finish (every tool call has a timeout)
     remember_paths(state);
     browser.reset();  // its GPU textures, before the device goes
+    if (state.thumbs_job.valid()) state.thumbs_job.wait();
+    for (auto& [_, thumb] : state.thumbs) thumb.srv->Release();
     if (nfd_ok) NFD_Quit();
     ed::DestroyEditor(editor);
     ImGui_ImplDX11_Shutdown();

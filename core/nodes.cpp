@@ -227,6 +227,178 @@ NodeSpec save_tex() {
     };
 }
 
+// ---- Image blocks: Adjust colour, Resize image, Overlay image. Each writes a PNG: to its Save to if set (then that's
+// its output, kept), else to the run's temporary folder (gone after the run). ----
+
+InputSpec image_input(const char* name, const char* label, const char* hint) {
+    return {.name = name, .label = label, .type = Image, .widget = Widget::Path, .required = true, .hint = hint,
+            .path = PathKind::OpenFile, .filter = kEditImageFormats};
+}
+
+InputSpec number_input(const char* name, const char* label, const char* hint, const char* initial, float min,
+                       float max, const char* format, const char* zero = nullptr) {
+    return {.name = name, .label = label, .type = Text, .widget = Widget::Number, .hint = hint, .initial = initial,
+            .min = min, .max = max, .format = format, .zero = zero};
+}
+
+InputSpec save_to_input() {
+    return {.name = "save_to", .label = "Save to", .type = Path, .widget = Widget::Path,
+            .hint = "Optional: keep the result as this PNG (written again each run); the block's output is then this "
+                    "file. Empty: a temporary file, gone after the run.",
+            .path = PathKind::SaveFile, .filter = "png", .result = "image"};
+}
+
+// Where an image block writes: its Save to (folders made), else the run's temporary folder.
+fs::path image_out(NodeRun& r) {
+    const std::string to = r.text("save_to");
+    if (to.empty()) return r.run.work_dir / (std::to_string(r.node.id) + ".png");
+    const fs::path out = clean_path(to, r.run.options.base_dir);
+    if (out.has_parent_path()) fs::create_directories(long_path(out.parent_path()));
+    return out;
+}
+
+// A Number field's value: empty is 0; else a number in the field's range (InputSpec::min / max), or nullopt.
+std::optional<float> parse_number(const InputSpec& in, std::string t) {
+    t.erase(0, t.find_first_not_of(' '));
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    if (t.empty()) return 0.0f;
+    try {
+        size_t used = 0;
+        const float v = std::stof(t, &used);
+        if (used == t.size() && v >= in.min && v <= in.max) return v;
+    } catch (const std::exception&) {
+    }
+    return std::nullopt;
+}
+
+float number(const NodeRun& r, const char* input) {
+    const InputSpec& in = *find_input(*find_spec(r.node.type), input);
+    const std::string t = r.text(input);
+    if (const auto v = parse_number(in, t)) return *v;
+    throw GraphError(std::string(in.label) + " must be a number from " + std::to_string(int(in.min)) + " to " +
+                     std::to_string(int(in.max)) + ", not '" + t + "'");
+}
+
+void write_image(NodeRun& r, const Bgra& image, const std::string& what) {
+    const fs::path out = image_out(r);
+    save_png(out, image);
+    r.output("image", file_value(out));
+    r.done(what + (r.text("save_to").empty() ? "" : ", saved " + out.filename().string()), out);
+}
+
+// Before a run: the result's path is known only when it's kept (Save to).
+void image_preview(NodeRun& r) {
+    const std::string to = r.text("save_to");
+    if (to.empty()) throw GraphError("a temporary file, made in the run");
+    r.output("image", file_value(clean_path(to, r.run.options.base_dir)));
+}
+
+NodeSpec adjust_colour_node() {
+    return {
+        .type = "AdjustColour",
+        .title = "Adjust colour",
+        .summary = "Shifts an image's hue, saturation, brightness and contrast. Only the colour changes: the alpha "
+                   "channel (often other data in RE textures) is kept as it is.",
+        .inputs = {image_input("image", "Image", "The image to change, e.g. Export image's."),
+                   number_input("hue", "Hue", "Degrees to turn the colours, -180 to 180. 0: as is.", "0", -180, 180,
+                                "%.0f deg"),
+                   number_input("saturation", "Saturation", "-100 (grey) to 100. 0: as is.", "0", -100, 100, "%.0f%%"),
+                   number_input("brightness", "Brightness", "-100 to 100. 0: as is.", "0", -100, 100, "%.0f%%"),
+                   number_input("contrast", "Contrast", "-100 (flat) to 100. 0: as is.", "0", -100, 100, "%.0f%%"),
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            Bgra image = load_image(clean_path(r.text("image"), r.run.options.base_dir));
+            adjust_colour(image, number(r, "hue"), number(r, "saturation") / 100, number(r, "brightness") / 100,
+                          number(r, "contrast") / 100);
+            write_image(r, image, "adjusted");
+        },
+        .preview = image_preview,
+    };
+}
+
+NodeSpec resize_image_node() {
+    return {
+        .type = "ResizeImage",
+        .title = "Resize image",
+        .summary = "Scales an image to a size, or to the size of another image or texture (e.g. a new picture to the "
+                   "original texture's size).",
+        .inputs = {image_input("image", "Image", "The image to resize."),
+                   number_input("width", "Width", "Pixels. 0 (auto): from Height, keeping the shape.", "0", 0, 16384,
+                                "%.0f px", "auto"),
+                   number_input("height", "Height", "Pixels. 0 (auto): from Width, keeping the shape.", "0", 0, 16384,
+                                "%.0f px", "auto"),
+                   {.name = "match", .label = "Match size of", .type = Path, .widget = Widget::Path,
+                    .hint = "Optional: an image or texture whose size to use (wins over Width and Height). Link "
+                            "Original texture to fit a picture to the texture it replaces.",
+                    .path = PathKind::OpenFile},
+                   {.name = "fit", .label = "Fit", .type = Text, .widget = Widget::Choice, .required = true,
+                    .hint = "How the shape is kept when the sizes' proportions differ.", .initial = "fit",
+                    .options = {{"fit", "Fit inside (bars)"}, {"fill", "Fill (crop)"}, {"stretch", "Stretch"}}},
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const Bgra image = load_image(clean_path(r.text("image"), r.run.options.base_dir));
+            unsigned w = 0, h = 0;
+            if (const std::string match = r.text("match"); !match.empty()) {
+                const fs::path file = clean_path(match, r.run.options.base_dir);
+                std::string name = file.filename().string();
+                std::ranges::transform(name, name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (name.find(".tex") != std::string::npos) {
+                    const TexMeta m = read_tex_meta(file, r.profile());
+                    w = m.width;
+                    h = m.height;
+                } else {
+                    const Bgra other = load_image(file);
+                    w = other.width;
+                    h = other.height;
+                }
+            } else {
+                w = unsigned(number(r, "width"));
+                h = unsigned(number(r, "height"));
+                if (!w && !h) throw GraphError("set Width and/or Height, or Match size of");
+                if (!w) w = std::max(1u, unsigned(std::lround(double(h) * image.width / image.height)));
+                if (!h) h = std::max(1u, unsigned(std::lround(double(w) * image.height / image.width)));
+            }
+            const std::string fit = r.text("fit");
+            write_image(r, resize_image(image, w, h, fit == "fill" ? Fit::Fill : fit == "stretch" ? Fit::Stretch : Fit::Fit),
+                        "resized to " + std::to_string(w) + "x" + std::to_string(h));
+        },
+        .preview = image_preview,
+    };
+}
+
+NodeSpec overlay_image_node() {
+    return {
+        .type = "OverlayImage",
+        .title = "Overlay image",
+        .summary = "Puts one image on top of another, e.g. a picture or logo on a UI plate. The base image's alpha "
+                   "(transparency, or other data in RE textures) is kept.",
+        .inputs = {image_input("base", "Base image", "The image underneath; the result has its size."),
+                   image_input("top", "Top image", "The image put on top (its own transparency counts)."),
+                   number_input("x", "X", "Pixels from the base's left edge to the top image's left edge.", "0",
+                                -16384, 16384, "%.0f px"),
+                   number_input("y", "Y", "Pixels from the base's top edge to the top image's top edge.", "0", -16384,
+                                16384, "%.0f px"),
+                   number_input("opacity", "Opacity", "0 to 100 percent.", "100", 0, 100, "%.0f%%"),
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            Bgra base = load_image(clean_path(r.text("base"), r.run.options.base_dir));
+            const Bgra top = load_image(clean_path(r.text("top"), r.run.options.base_dir));
+            overlay_image(base, top, int(number(r, "x")), int(number(r, "y")), number(r, "opacity") / 100);
+            write_image(r, base, "overlaid");
+        },
+        .preview = image_preview,
+    };
+}
+
 NodeSpec package_mod() {
     return {
         .type = "PackageMod",
@@ -725,7 +897,8 @@ NodeSpec require_file() {
 const std::vector<NodeSpec>& node_specs() {
     static const std::vector<NodeSpec> specs{
         // The main steps: the texture pipeline, then file steps.
-        load_tex(), export_image(), edit_image(), import_image(), save_tex(), package_mod(),
+        load_tex(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(), resize_image_node(),
+        overlay_image_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(),
         // Utilities.
         value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),
@@ -809,6 +982,103 @@ std::string fill_template(const std::string& text, const std::vector<std::string
     }
     out.append(last, text.cend());
     return out;
+}
+
+std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& preview, int id, const fs::path& base_dir,
+                                          unsigned max_side, const ImageLoader& load, const Profile* profile) {
+    const Node* n = g.find(id);
+    const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+    if (!spec) return std::nullopt;
+    auto source = [&](const char* input) -> const Link* {  // the link into `input`, if any
+        const auto links = g.links_into(id, input);
+        return links.empty() ? nullptr : &g.links[links[0]];
+    };
+    if (n->type == "Split") {  // passes on what comes in
+        const Link* l = source("in");
+        return l ? preview_image(g, preview, l->from_node, base_dir, max_side, load, profile) : std::nullopt;
+    }
+    if (!spec->thumbnail) return std::nullopt;
+    auto text = [&](const char* input) -> std::optional<std::string> {  // typed, or what the link holds
+        if (const Link* l = source(input)) {
+            const auto it = preview.find({l->from_node, l->from_port});
+            return it == preview.end() ? std::nullopt : std::optional<std::string>(it->second);
+        }
+        const auto it = n->params.find(input);
+        return it == n->params.end() ? std::string() : it->second;
+    };
+    auto number_of = [&](const char* input) -> std::optional<float> {
+        const auto t = text(input);
+        return t ? parse_number(*find_input(*spec, input), *t) : std::nullopt;
+    };
+    auto image = [&](const char* input) -> std::optional<ImagePreview> {  // an image block's result, else the file
+        if (const Link* l = source(input))
+            if (auto from_block = preview_image(g, preview, l->from_node, base_dir, max_side, load, profile))
+                return from_block;
+        const auto t = text(input);
+        if (!t || t->empty()) return std::nullopt;
+        return load(clean_path(*t, base_dir));
+    };
+    try {
+        if (n->type == "AdjustColour") {
+            auto img = image("image");
+            const auto hue = number_of("hue"), sat = number_of("saturation"), bri = number_of("brightness"),
+                       con = number_of("contrast");
+            if (!img || !hue || !sat || !bri || !con) return std::nullopt;
+            adjust_colour(img->image, *hue, *sat / 100, *bri / 100, *con / 100);
+            return img;
+        }
+        if (n->type == "ResizeImage") {
+            const auto img = image("image");
+            if (!img || img->scale <= 0) return std::nullopt;
+            const double real_w = img->image.width / img->scale, real_h = img->image.height / img->scale;
+            double w = 0, h = 0;  // the real result's size, as the run works it out
+            if (const auto match = text("match"); match && !match->empty()) {
+                const fs::path file = clean_path(*match, base_dir);
+                std::string name = file.filename().string();
+                std::ranges::transform(name, name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (name.find(".tex") != std::string::npos) {
+                    if (!profile) return std::nullopt;
+                    const TexMeta m = read_tex_meta(file, *profile);
+                    w = m.width;
+                    h = m.height;
+                } else {
+                    const auto other = load(file);
+                    if (!other || other->scale <= 0) return std::nullopt;
+                    w = other->image.width / other->scale;
+                    h = other->image.height / other->scale;
+                }
+            } else {
+                const auto wn = number_of("width"), hn = number_of("height");
+                if (!wn || !hn || (*wn == 0 && *hn == 0)) return std::nullopt;
+                w = *wn ? *wn : *hn * real_w / real_h;
+                h = *hn ? *hn : *wn * real_h / real_w;
+            }
+            const double k = std::min(1.0, double(max_side) / std::max(w, h));
+            const auto fit = text("fit");
+            const Fit how = fit == "fill" ? Fit::Fill : fit == "stretch" ? Fit::Stretch : Fit::Fit;
+            return ImagePreview{resize_image(img->image, std::max(1u, unsigned(std::lround(w * k))),
+                                             std::max(1u, unsigned(std::lround(h * k))), how),
+                                float(k)};
+        }
+        if (n->type == "OverlayImage") {
+            auto base = image("base");
+            auto top = image("top");
+            const auto x = number_of("x"), y = number_of("y"), opacity = number_of("opacity");
+            if (!base || !top || !x || !y || !opacity || top->scale <= 0) return std::nullopt;
+            const float k = base->scale;  // the top image goes on at the base's scale
+            if (std::abs(top->scale - k) > 1e-4f) {
+                const auto tw = unsigned(std::lround(top->image.width / top->scale * k));
+                const auto th = unsigned(std::lround(top->image.height / top->scale * k));
+                if (tw == 0 || th == 0) return base;  // too small to see at this size
+                top->image = resize_image(top->image, tw, th, Fit::Stretch);
+            }
+            overlay_image(base->image, top->image, int(std::lround(*x * k)), int(std::lround(*y * k)), *opacity / 100);
+            return base;
+        }
+    } catch (const std::exception&) {
+        // A file that can't be read, a size that can't be: no thumbnail.
+    }
+    return std::nullopt;
 }
 
 std::optional<std::string> cut_text(const std::string& text, const std::string& marker, CutKeep keep, bool last) {

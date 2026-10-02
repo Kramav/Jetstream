@@ -1,6 +1,7 @@
 #pragma once
 // Node graph (CLAUDE.md §3/§4): editing operations, JSON file format, runner. The node types themselves are in
 // nodes.hpp. Front ends (CLI, app) only call into these; they hold no graph logic.
+#include "image.hpp"
 #include "nodes.hpp"
 #include "profile.hpp"
 #include "texture_converter.hpp"
@@ -146,6 +147,21 @@ RunResult run_graph(const Graph& graph, const RunOptions& options);
 // nothing. Outputs only a run makes (a temporary .tex) are left out, and so is everything that depends on them.
 // Relative paths resolve against `base_dir`, as in a run.
 RunValues preview_values(const Graph& graph, const std::filesystem::path& base_dir);
+
+// An image block's result (NodeSpec::thumbnail) worked out in memory, for a live thumbnail of at most `max_side`
+// pixels: its input images come from linked image blocks (worked out the same way, through Splits) or from the files
+// the previews (`preview`, preview_values) or typed fields name, through the block's operation. `scale` = thumbnail
+// pixels per real pixel, so sizes and positions are scaled to match. `load` gives a file's image already shrunk to at
+// most max_side, with its scale (front ends cache it). `profile` reads a texture's size for Resize's "Match size of"
+// (none: unknown). nullopt if an input image isn't known yet (e.g. not exported) or a value isn't usable.
+struct ImagePreview {
+    Bgra image;
+    float scale = 1;
+};
+using ImageLoader = std::function<std::optional<ImagePreview>(const std::filesystem::path&)>;
+std::optional<ImagePreview> preview_image(const Graph& graph, const RunValues& preview, int node,
+                                          const std::filesystem::path& base_dir, unsigned max_side,
+                                          const ImageLoader& load, const Profile* profile = nullptr);
 
 // What link `link` holds: its source's preview value (`preview`, from preview_values: the graph as it is now), else
 // what the source gave in the last run (`last_run`, RunResult::values; `*from_run` set); "" if neither.

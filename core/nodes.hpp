@@ -25,8 +25,9 @@ enum class PortType { Tex, Image, Text, Path, Folder, Any };
 // (front ends build the filter from the profiles' tex suffixes).
 enum class PathKind { None, OpenFile, OpenTexture, SaveFile, Folder };
 
-// How an input can be typed in. None = link-only. Choice: one of InputSpec::options.
-enum class Widget { None, Text, Path, Checkbox, Choice };
+// How an input can be typed in. None = link-only. Choice: one of InputSpec::options. Number: from InputSpec::min to
+// max, stored as text (front ends offer a drag field).
+enum class Widget { None, Text, Path, Checkbox, Choice, Number };
 
 // `name`s are the stable ids stored in graph files; `title`, `label` and `hint` are what users read.
 // An output may carry a typed field for where the node writes it (e.g. Export's "Image file"): front ends show it
@@ -62,6 +63,11 @@ struct InputSpec {
     // circle passes the result on), on the left once flipped (Graph::flip: a link sets the field, e.g. from a Value,
     // and the result isn't passed on).
     const char* result = nullptr;
+    // Number: its range, how front ends show it (printf, e.g. "%.0f%%"), and what they show for 0 (e.g. "auto";
+    // nullptr: the number).
+    float min = 0, max = 0;
+    const char* format = "%.0f";
+    const char* zero = nullptr;
     bool editable() const { return widget != Widget::None; }
 };
 
@@ -84,6 +90,7 @@ struct NodeSpec {
     // a preview runs it; a step gives its predictable outputs through `preview` (e.g. the path it will write), without
     // doing anything. Neither: its outputs are known only in a run.
     bool pure = false;
+    bool thumbnail = false;  // an image block: front ends show a live thumbnail of its result (preview_image)
     void (*run)(NodeRun&) = nullptr;      // what it does in a run; throws to fail the run
     void (*preview)(NodeRun&) = nullptr;  // a step's outputs as far as known before running it; throws if unknown
 };

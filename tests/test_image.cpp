@@ -99,3 +99,80 @@ TEST_CASE("tile_images lays previews out in a near-square grid") {
     CHECK_THROWS_WITH(remod::tile_images({a, tmp.path / "junk.png"}, tmp.path / "x.png"), ContainsSubstring("junk.png"));
     CHECK_THROWS_AS(remod::tile_images({}, tmp.path / "y.png"), std::runtime_error);
 }
+
+namespace {
+
+// A w x h image of one BGRA colour.
+remod::Bgra solid(unsigned w, unsigned h, std::array<std::uint8_t, 4> bgra) {
+    remod::Bgra image{w, h, {}};
+    for (unsigned i = 0; i < w * h; ++i) image.pixels.insert(image.pixels.end(), bgra.begin(), bgra.end());
+    return image;
+}
+
+std::array<int, 4> at(const remod::Bgra& image, unsigned x, unsigned y) {
+    const std::uint8_t* p = &image.pixels[(size_t(y) * image.width + x) * 4];
+    return {p[0], p[1], p[2], p[3]};
+}
+
+}  // namespace
+
+TEST_CASE("adjust_colour changes colour only, never alpha") {
+    const remod::Bgra red = solid(2, 2, {20, 30, 200, 77});  // B, G, R, A
+    remod::Bgra same = red;
+    remod::adjust_colour(same, 0, 0, 0, 0);
+    CHECK(same.pixels == red.pixels);  // all zero: unchanged
+
+    remod::Bgra brighter = red;
+    remod::adjust_colour(brighter, 0, 0, 0.2f, 0);
+    CHECK(at(brighter, 0, 0)[2] > 200);
+    CHECK(at(brighter, 0, 0)[3] == 77);
+
+    remod::Bgra grey = red;
+    remod::adjust_colour(grey, 0, -1, 0, 0);
+    const auto g = at(grey, 1, 1);
+    CHECK(g[0] == g[1]);
+    CHECK(g[1] == g[2]);
+    CHECK(g[3] == 77);
+
+    remod::Bgra turned = red;
+    remod::adjust_colour(turned, 180, 0, 0, 0);  // red turns towards cyan: less red, more green and blue
+    CHECK(at(turned, 0, 0)[2] < 200);
+    CHECK(at(turned, 0, 0)[1] > 30);
+    CHECK(at(turned, 0, 0)[3] == 77);
+
+    remod::Bgra flat = red;
+    remod::adjust_colour(flat, 0, 0, 0, -1);  // no contrast: mid grey
+    CHECK(at(flat, 0, 0)[2] == 128);
+}
+
+TEST_CASE("resize_image: stretch, fit (transparent bars) and fill (cropped)") {
+    const remod::Bgra wide = solid(40, 20, {10, 20, 30, 255});
+    const remod::Bgra stretched = remod::resize_image(wide, 16, 16, remod::Fit::Stretch);
+    CHECK(stretched.width == 16);
+    CHECK(stretched.height == 16);
+    CHECK(at(stretched, 0, 0)[3] == 255);
+
+    const remod::Bgra fitted = remod::resize_image(wide, 16, 16, remod::Fit::Fit);  // 16x8 band in the middle
+    CHECK(fitted.width == 16);
+    CHECK(at(fitted, 8, 0)[3] == 0);    // bar above
+    CHECK(at(fitted, 8, 8)[3] == 255);  // the image
+    CHECK(at(fitted, 8, 15)[3] == 0);   // bar below
+
+    const remod::Bgra filled = remod::resize_image(wide, 16, 16, remod::Fit::Fill);  // 32x16, centre kept
+    CHECK(at(filled, 0, 0)[3] == 255);
+    CHECK(at(filled, 15, 15)[3] == 255);
+    CHECK_THROWS(remod::resize_image(wide, 0, 16, remod::Fit::Fit));
+}
+
+TEST_CASE("overlay_image: placed, blended by opacity, clipped, base alpha kept") {
+    remod::Bgra base = solid(4, 4, {0, 0, 0, 100});
+    const remod::Bgra top = solid(2, 2, {200, 200, 200, 255});
+    remod::overlay_image(base, top, 3, 3, 1);  // only its top-left pixel lands on the base
+    CHECK(at(base, 3, 3) == std::array<int, 4>{200, 200, 200, 100});
+    CHECK(at(base, 2, 2) == std::array<int, 4>{0, 0, 0, 100});
+
+    remod::Bgra half = solid(4, 4, {0, 0, 0, 255});
+    remod::overlay_image(half, top, -1, -1, 0.5f);  // half opacity, partly off the left and top
+    CHECK(at(half, 0, 0) == std::array<int, 4>{100, 100, 100, 255});
+    CHECK(at(half, 1, 1)[0] == 0);
+}
