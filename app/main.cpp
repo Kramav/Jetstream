@@ -3515,7 +3515,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         draw_warnings(state);
         // The window's title: the graph's file name, with * while it has unsaved changes.
         static std::wstring title;
-        if (std::wstring now = L"remod - " + std::filesystem::path(state.graph_path).filename().wstring() +
+        if (std::wstring now = L"remod " REMOD_VERSION " - " + std::filesystem::path(state.graph_path).filename().wstring() +
                                (unsaved(state) ? L"*" : L"");
             now != title) {
             title = now;

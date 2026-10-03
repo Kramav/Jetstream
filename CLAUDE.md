@@ -48,6 +48,13 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
 - Images (combining preview PNGs): **WIC**, built into Windows, used from core. No image library dependency.
 - Build (Developer PowerShell for VS 2026, which sets `VCPKG_ROOT`):
   `cmake --preset default` → `cmake --build build` → `ctest --test-dir build --output-on-failure`
+- **Release zip (2026-10-03):** preset `release` (`build-release`, triplet `x64-windows-static`, static CRT), then
+  `cpack` in it → `remod-<version>-win64.zip`: both exes, `vcomp140.dll` (DirectXTex's OpenMP has no static form;
+  shipped app-local), `profiles\`, `examples\texture_mod.json` (= `schemas/graph.v0.example.json`; the other example
+  graphs hold personal paths, not shipped), `docs/USER_GUIDE.md` as `README.md`. Version: `project(VERSION)`, shown
+  in the window title and CLI usage. Checked: Release tests pass (fixtures too), no warnings, the unzipped CLI runs
+  tex2png → png2tex → package with only System32 on PATH, the unzipped app starts. Not checked: a PC without
+  Visual Studio.
 - Long-term polished UI: undecided. Keep the core-to-UI boundary clean so it can be swapped.
 
 ## 3. Architecture

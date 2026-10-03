@@ -11,3 +11,4 @@ cache/
 build/
 out/
 vcpkg_installed/
+build-*/
