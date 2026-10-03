@@ -83,6 +83,17 @@ TEST_CASE("{game}: a path inside the game files folder is stored as {game}\\...,
     CHECK_THROWS_WITH(remod::fill_game("{game}/a.tex"), ContainsSubstring("Game files folder"));
 }
 
+TEST_CASE("the shipped examples are read-only: save_graph refuses them") {
+    const fs::path example = fs::path(REMOD_EXAMPLES_DIR) / "zz_refused.json";
+    CHECK(remod::is_example_path(fs::path(REMOD_EXAMPLES_DIR) / "01_edit_a_texture_by_hand.json"));
+    CHECK_THROWS_WITH(remod::save_graph(pipeline("a", "b.png", "c"), example), ContainsSubstring("read-only"));
+    CHECK_FALSE(fs::exists(example));
+    TempDir tmp;
+    CHECK_FALSE(remod::is_example_path(tmp.path / "mine.json"));
+    remod::save_graph(pipeline("a", "b.png", "c"), tmp.path / "mine.json");  // anywhere else: fine
+    CHECK(fs::exists(tmp.path / "mine.json"));
+}
+
 TEST_CASE("node types cover the pipeline") {
     for (const char* t : {"LoadTex", "ExportImage", "EditImage", "ImportImage", "SaveTex", "PackageMod", "Text"})
         CHECK(remod::find_spec(t) != nullptr);

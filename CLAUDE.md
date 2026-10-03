@@ -647,7 +647,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   `x.texout.tga` in the real game folder).
 - **Examples (2026-10-03; user: "a lot of example graphs for users"):** `examples/` (shipped), written by
   `scripts/make_examples.py` (no positions: tidied on open; `{game}` paths; sample `picture.png`, `logo.png`), listed
-  in `examples/README.md`. Eleven: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
+  (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
+  Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
+  (`edits/`, `mods/`) beside them. Eleven: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
   edit with streaming, conditions filter, channels, if / else, backup. **All eleven run** (CLI, `--edited true`, the
   real game files, outputs in a scratch copy); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).

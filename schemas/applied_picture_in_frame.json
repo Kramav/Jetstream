@@ -1,0 +1,323 @@
+{
+  "custom_nodes": [
+    {
+      "graph": {
+        "links": [
+          {
+            "from": [
+              1,
+              "tex"
+            ],
+            "to": [
+              12,
+              "value"
+            ]
+          },
+          {
+            "from": [
+              10,
+              "out"
+            ],
+            "to": [
+              1,
+              "tex"
+            ]
+          },
+          {
+            "from": [
+              10,
+              "out"
+            ],
+            "to": [
+              11,
+              "text"
+            ]
+          },
+          {
+            "from": [
+              11,
+              "text"
+            ],
+            "to": [
+              1,
+              "game_path"
+            ]
+          },
+          {
+            "from": [
+              13,
+              "value"
+            ],
+            "to": [
+              10,
+              "in"
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "id": 1,
+            "params": {
+              "game_path": "",
+              "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_039_00_iam.tex.143221013",
+              "title": "The framed photo"
+            },
+            "pos": [
+              -312.0,
+              -27.0
+            ],
+            "type": "LoadTex"
+          },
+          {
+            "id": 10,
+            "params": {},
+            "pos": [
+              -745.0,
+              22.0
+            ],
+            "type": "Split"
+          },
+          {
+            "id": 11,
+            "params": {
+              "keep": "after",
+              "marker": "natives/STM",
+              "occurrence": "first",
+              "text": ""
+            },
+            "pos": [
+              -672.0,
+              -27.0
+            ],
+            "type": "CutText"
+          },
+          {
+            "id": 12,
+            "params": {
+              "name": "texture"
+            },
+            "pos": [
+              192.0,
+              -27.0
+            ],
+            "type": "NodeOutput"
+          },
+          {
+            "id": 13,
+            "params": {
+              "default": "",
+              "name": "Path"
+            },
+            "pos": [
+              -1032.0,
+              -27.0
+            ],
+            "type": "NodeInput"
+          }
+        ],
+        "profile": "re4r",
+        "schema_version": 0
+      },
+      "summary": "",
+      "title": "Resident Evil .Tex Resolver",
+      "type": "custom:resident_evil_tex_resolver"
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "png"
+      ],
+      "to": [
+        5,
+        "frame"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "image"
+      ],
+      "to": [
+        5,
+        "picture"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "image"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        7,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        7,
+        "original"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "tex"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        8,
+        "preview"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "out12"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        22.0,
+        44.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        95.0,
+        -27.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": "picture.png",
+        "title": "Your picture (change me)"
+      },
+      "pos": [
+        95.0,
+        369.0
+      ],
+      "type": "ImportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "detail": "0",
+        "feather": "1",
+        "frame": "",
+        "frame_width": "0",
+        "grow": "0",
+        "picture": "",
+        "picture_x": "0",
+        "picture_y": "-30",
+        "save_to": "",
+        "shading": "100",
+        "show_outline": "",
+        "stains": "100",
+        "tone": "100",
+        "zoom": "100"
+      },
+      "pos": [
+        599.0,
+        -27.0
+      ],
+      "type": "ReplacePhoto"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        1030.0,
+        101.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        1103.0,
+        -27.0
+      ],
+      "type": "SaveTex"
+    },
+    {
+      "id": 8,
+      "params": {
+        "author": "",
+        "description": "My picture in place of an old photo",
+        "name": "My photo",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        1607.0,
+        -27.0
+      ],
+      "type": "PackageMod"
+    },
+    {
+      "id": 9,
+      "params": {
+        "in13": ""
+      },
+      "pos": [
+        -568.0,
+        49.0
+      ],
+      "type": "custom:resident_evil_tex_resolver"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
+}

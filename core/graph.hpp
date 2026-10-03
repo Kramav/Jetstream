@@ -136,7 +136,11 @@ void set_block_title(Graph& graph, int node, const std::string& title);  // trim
 // `added_blocks`: set to whether migrating added blocks, or no block has a position (a graph a program wrote): they have
 // no considered place yet, so front ends tidy up.
 Graph load_graph(const std::filesystem::path& file, bool* added_blocks = nullptr);
+// Refuses (GraphError) to write into the shipped examples folder (is_example_path).
 void save_graph(const Graph& graph, const std::filesystem::path& file);
+// In the tool's examples folder (<tool>\examples, beside profiles\)? Examples are read-only (user, 2026-10-03):
+// save_graph refuses them, so neither the app nor a program (the API, an AI) changes one; front ends save a copy.
+bool is_example_path(const std::filesystem::path& file);
 
 // A change a step makes to files: not counting the run's temporary folder and run cache (CLAUDE.md §10 M4,
 // guardrails). Remove: deleted, or moved away from there. Run: starts a program (`path`), which may change any file

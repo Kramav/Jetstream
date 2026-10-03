@@ -679,6 +679,14 @@ void close_custom(State& s) {
 bool save_graph_file(State& s) {
     if (s.parent) return save_custom(s);  // a custom node is open: Save saves it
     s.graph_path = unquote(s.graph_path);
+    if (remod::is_example_path(s.graph_path)) {  // read-only: Save is Save As, opening in Documents
+        std::string copy = std::filesystem::path(s.graph_path).filename().string();
+        if (!browse(remod::PathKind::SaveFile, "json", copy, env("USERPROFILE") + "\\Documents")) {
+            s.status = "The examples are read-only: save your copy somewhere else.";
+            return false;
+        }
+        s.graph_path = copy;  // one picked inside the examples folder again is refused below, with the reason
+    }
     try {
         remod::save_graph(s.graph, s.graph_path);
         s.saved_graph = s.graph;
@@ -1039,7 +1047,9 @@ void draw_side_panel(State& s) {
     if (ImGui::Button(unsaved(s) ? "Save*" : "Save")) save_graph_file(s);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(unsaved(s) ? "Unsaved changes. Ctrl+S" : "Ctrl+S");
     ImGui::SameLine();
-    if (ImGui::Button("Save As...") && browse(remod::PathKind::SaveFile, "json", s.graph_path)) save_graph_file(s);
+    if (ImGui::Button("Save As...") &&
+        (remod::is_example_path(unquote(s.graph_path)) || browse(remod::PathKind::SaveFile, "json", s.graph_path)))
+        save_graph_file(s);  // an example: save_graph_file asks where, outside the examples folder
     ImGui::SameLine();
     if (ImGui::Button("Fit view")) s.navigate = true;
     ImGui::BeginDisabled(!s.history.can_undo());
@@ -3628,7 +3638,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         // The window's title: the graph's file name, with * while it has unsaved changes.
         static std::wstring title;
         if (std::wstring now = L"remod " REMOD_VERSION " - " + std::filesystem::path(state.graph_path).filename().wstring() +
-                               (unsaved(state) ? L"*" : L"");
+                               (unsaved(state) ? L"*" : L"") +
+                               (remod::is_example_path(state.graph_path) ? L" (example: Save makes a copy)" : L"");
             now != title) {
             title = now;
             ::SetWindowTextW(hwnd, title.c_str());

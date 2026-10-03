@@ -736,7 +736,14 @@ Graph load_graph(const fs::path& file, bool* added_blocks) {
     }
 }
 
+bool is_example_path(const fs::path& file) {
+    const fs::path profiles = find_profiles_dir();
+    return !file.empty() && !profiles.empty() && inside(file, profiles.parent_path() / "examples");
+}
+
 void save_graph(const Graph& graph, const fs::path& file) {
+    if (is_example_path(file))
+        throw GraphError("the examples are read-only: save your copy somewhere else (Save As)");
     Graph g = graph;
     std::erase_if(g.customs, [&](const CustomNode& c) { return !uses(graph, c.type); });  // only the ones it uses
     std::ofstream out(file);

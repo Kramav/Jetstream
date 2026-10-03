@@ -4,8 +4,8 @@ Ready-made graphs for Resident Evil 4 (2023). Open one in remod (`...` next to *
 what each block did.
 
 **Before you start:** set **Game files** in the Pipeline panel to your REtool folder (`...\re_chunk_000\natives\stm`).
-The examples find the game's files through it: their paths start with `{game}`. Then use **Save As...** to save a copy
-somewhere of your own before changing one. Each writes its mod to a `mods` folder next to the graph.
+The examples find the game's files through it: their paths start with `{game}`. The examples are read-only: **Save** asks where to put your
+copy, somewhere of your own. Each writes its mod to a `mods` folder next to the graph.
 
 | Example | Shows |
 |---|---|

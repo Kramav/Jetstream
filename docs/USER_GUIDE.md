@@ -26,7 +26,7 @@ Keep the `profiles` folder next to `remod-app.exe`.
    meshes. Reading the folder takes a few seconds each time the app starts.
 3. Open one of the **examples** (the `...` button next to *Graph file*, in the `examples` folder): eleven ready-made
    mods, from a hand-edited document to recolouring part of a character. `examples\README.md` says what each shows.
-   Their game paths start with `{game}`, your Game files folder. Save a copy (**Save As...**) before you change one.
+   Their game paths start with `{game}`, your Game files folder. They're read-only: **Save** asks where to put your copy.
 
 The app remembers its settings in `%APPDATA%\remod`. It keeps converted textures in `%LOCALAPPDATA%\remod\run_cache`
 (at most 512 MB) so a run that changed nothing writes nothing.
