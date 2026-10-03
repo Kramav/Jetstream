@@ -466,6 +466,25 @@ std::string fill_game(const std::string& text) {
     return out;
 }
 
+namespace {
+bool inside(const fs::path& path, const fs::path& dir);  // below
+}  // namespace
+
+std::string with_game_token(const std::string& path) {
+    fs::path dir;
+    {
+        std::lock_guard lock(g_game_mutex);
+        dir = g_game_files;
+    }
+    if (path.empty() || dir.empty() || !inside(path, dir)) return path;
+    // The part after the folder (inside() compares ignoring case and slashes, so cut by length).
+    std::wstring folder = fs::absolute(dir).lexically_normal().make_preferred().wstring();
+    while (!folder.empty() && folder.back() == L'\\') folder.pop_back();
+    std::wstring rest = fs::absolute(path).lexically_normal().make_preferred().wstring().substr(folder.size());
+    while (!rest.empty() && rest.front() == L'\\') rest.erase(rest.begin());
+    return rest.empty() ? "{game}" : "{game}\\" + fs::path(rest).string();
+}
+
 bool is_flipped(const Node& node, std::string_view input) {
     const auto it = node.params.find("flip:" + std::string(input));
     return it != node.params.end() && it->second == "true";

@@ -308,8 +308,13 @@ std::string env(const char* name) {
 bool browse(remod::PathKind kind, const char* filter, std::string& value, const std::string& start_dir = {}) {
     std::string dir;
     std::error_code ec;
-    if (!value.empty()) {
-        const std::filesystem::path p(value);
+    std::string current;  // {game} filled in, to open the picker where the file is
+    try {
+        current = remod::fill_game(value);
+    } catch (const remod::GraphError&) {
+    }
+    if (!current.empty()) {
+        const std::filesystem::path p(current);
         dir = (std::filesystem::is_directory(p, ec) ? p : p.parent_path()).string();
         if (!std::filesystem::is_directory(dir, ec)) dir.clear();
     }
@@ -333,7 +338,7 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value, const 
     for (const auto& [name, exts] : types) items.push_back({name.c_str(), exts.c_str()});
     const nfdu8filteritem_t* filters = items.empty() ? nullptr : items.data();
     const auto count = nfdfiltersize_t(items.size());
-    const std::string name = value.empty() ? "" : std::filesystem::path(value).filename().string();
+    const std::string name = current.empty() ? "" : std::filesystem::path(current).filename().string();
 
     nfdu8char_t* out = nullptr;
     nfdresult_t r = NFD_CANCEL;
@@ -350,6 +355,7 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value, const 
     // A name typed without an extension in the save dialog gets the filter's first one.
     if (kind == remod::PathKind::SaveFile && filter && std::filesystem::path(value).extension().empty())
         value += "." + std::string(filter).substr(0, std::string(filter).find(','));
+    value = remod::with_game_token(value);  // inside the game files: {game}\..., so the graph works on any PC
     return true;
 }
 
@@ -540,7 +546,12 @@ std::string game_files_dir(const State& s) {
 }
 
 // After a texture is picked: switch the graph to that texture's game, or say why not.
-void detect_game(State& s, const std::string& texture) {
+void detect_game(State& s, const std::string& field) {
+    std::string texture = field;
+    try {
+        texture = remod::fill_game(field);
+    } catch (const remod::GraphError&) {
+    }
     if (const remod::Profile* p = remod::profile_for_texture(texture, s.profiles)) {
         s.graph.profile = p->id;
         s.status = "Detected a " + p->name + " texture.";
@@ -564,7 +575,7 @@ void accept_path(State& s, std::string& value, remod::PathKind kind, const char*
         if (!problem.empty()) {
             hint = problem;
         } else if (ImGui::AcceptDragDropPayload("remod_path")) {
-            value = path;
+            value = remod::with_game_token(path);
             if (kind == remod::PathKind::OpenTexture) detect_game(s, value);
         }
     }
@@ -3414,7 +3425,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             s.place_new = target;
         }
         if (remod::Node* n = s.graph.find(target)) {
-            n->params["tex"] = s.pending_texture;
+            n->params["tex"] = remod::with_game_token(s.pending_texture);
             detect_game(s, s.pending_texture);
             s.status = "Original texture: " + std::filesystem::path(s.pending_texture).filename().string() + ". " + s.status;
         } else {

@@ -83,8 +83,9 @@ struct MeshTextures {
     std::vector<bool> found;              // per texture: in the index
     std::vector<MeshMaterial> materials;
 };
+// `material_file`: read this one instead (e.g. a costume variant, cha000_00b.mdf2.32), absolute.
 MeshTextures mesh_textures(const std::filesystem::path& natives_root, const std::string& mesh,
-                           const std::vector<std::string>& textures);
+                           const std::vector<std::string>& textures, const std::filesystem::path& material_file = {});
 
 // A mesh file's material names, in its material file's order (the material found as mesh_textures finds it), for a
 // Materials field's dropdown. Throws if there's no material file or it can't be read.

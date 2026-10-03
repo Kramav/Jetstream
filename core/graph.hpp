@@ -118,6 +118,9 @@ std::string known_value(const Graph& graph, int node, const std::string& input);
 void set_game_files_dir(const std::filesystem::path& dir);
 // `text` with {game} filled in; throws GraphError if it uses {game} while no folder is set.
 std::string fill_game(const std::string& text);
+// The other way, for front ends storing a picked path: one inside the game files folder as {game}\<the rest>, so the
+// graph keeps working on another PC; any other path as it is.
+std::string with_game_token(const std::string& path);
 
 // Is this destination row flipped (circle on the left, set by a link)? Stored as the node param "flip:<input>".
 bool is_flipped(const Node& node, std::string_view input);

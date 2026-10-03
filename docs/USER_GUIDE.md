@@ -101,7 +101,7 @@ Undo / redo: **Ctrl+Z** / **Ctrl+Y**. Save: **Ctrl+S**. A `*` in the title means
 | Adjust colour, Resize image, Overlay image | Change an image. *Save to* keeps the result as a file. |
 | Replace photo | Puts your picture into a photo frame texture, keeping the frame and the photo's ageing. |
 | Pick channel, Merge channels | Work on one channel (e.g. the colour) without touching data in another. |
-| Part texture | The texture some parts of a mesh use, by material name (e.g. Leon's `Pants_Mat`): no hunting in the Browser. The ▼ beside Materials lists the mesh's materials. |
+| Part texture | The texture some parts of a mesh use, by material name (e.g. Leon's `Pants_Mat`): no hunting in the Browser. The ▼ beside Materials lists the mesh's materials. *Material file* picks a costume variant (e.g. `cha000_00b.mdf2`). |
 | Mesh mask, Blend in mask | Change only one part of a texture, e.g. a character's trousers. |
 | Recolour part | Built from blocks: a mesh, its parts' material names and a colour change give both new textures (the texture and its streaming copy), changed on those parts only. |
 | Preview | Shows a picture on the graph. |
@@ -118,7 +118,8 @@ file, and the conditions: If, First of, File exists, Text matches, Not (below).
 - **Linked fields show their values.** A linked field shows what it will hold, or *known after a run*. Hover a field
   for its whole value.
 - **Paths in a graph** are relative to the graph file's folder. A path starting with `{game}` is inside your Game
-  files folder (`{game}\_chainsaw\...`), so a graph works on another PC whose game files are elsewhere.
+  files folder (`{game}\_chainsaw\...`), so a graph works on another PC whose game files are elsewhere. Picking or
+  dragging a file from your Game files folder stores it that way by itself.
 - **Settings at their defaults** fold into one "+ N settings" row; click it to open them.
 
 Image blocks show a live thumbnail. Click it for a larger view, or pop it out into its own window. The wheel zooms,

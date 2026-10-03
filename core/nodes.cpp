@@ -876,7 +876,11 @@ NodeSpec part_texture_node() {
                             "Empty: every part (they must share one texture). A run that finds none lists them."},
                    advanced({.name = "texture", .label = "Texture name", .type = Text, .widget = Widget::Text,
                              .hint = "Optional: another of the parts' textures, by file name (* for anything), e.g. "
-                                     "*_nrmr* for the normal map. Empty: their colour texture."})},
+                                     "*_nrmr* for the normal map. Empty: their colour texture."}),
+                   advanced({.name = "material", .label = "Material file", .type = Path, .widget = Widget::Path,
+                             .hint = "Optional: another .mdf2 than the mesh's own, e.g. a costume variant "
+                                     "(cha000_00b.mdf2.32 next to cha000_00's mesh). Empty: the mesh's own.",
+                             .path = PathKind::OpenFile})},
         .outputs = {{"tex", Tex, "texture"}},
         .family = Family::Source,
         .pure = true,  // only reads files, like Streaming copy
@@ -892,7 +896,9 @@ NodeSpec part_texture_node() {
             MeshTextures m;
             try {  // the material's textures that are on disk, then matched as the Browser matches its index
                 std::vector<std::string> present;
-                for (const std::string& t : mesh_textures(natives->first, natives->second, {}).textures)
+                const std::string chosen = r.text("material");
+                const fs::path material = chosen.empty() ? fs::path() : clean_path(chosen, r.run.options.base_dir);
+                for (const std::string& t : mesh_textures(natives->first, natives->second, {}, material).textures)
                     if (std::error_code ec; fs::is_regular_file(long_path(natives->first / (t + "." + profile.tex_suffix)), ec))
                         present.push_back(t + "." + profile.tex_suffix);
                 std::ranges::sort(present, [](const std::string& a, const std::string& b) {
@@ -900,7 +906,7 @@ NodeSpec part_texture_node() {
                         return std::tolower(static_cast<unsigned char>(x)) < std::tolower(static_cast<unsigned char>(y));
                     });
                 });
-                m = mesh_textures(natives->first, natives->second, present);
+                m = mesh_textures(natives->first, natives->second, present, material);
             } catch (const std::runtime_error& e) {
                 throw GraphError(e.what());
             }

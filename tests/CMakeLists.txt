@@ -6,7 +6,8 @@ target_link_libraries(remod_tests PRIVATE remod_core Catch2::Catch2WithMain nloh
 target_compile_definitions(remod_tests PRIVATE
     REMOD_PROFILES_DIR="${PROJECT_SOURCE_DIR}/profiles"
     REMOD_SCHEMAS_DIR="${PROJECT_SOURCE_DIR}/schemas"
-    REMOD_BLOCKS_DIR="${PROJECT_SOURCE_DIR}/blocks")
+    REMOD_BLOCKS_DIR="${PROJECT_SOURCE_DIR}/blocks"
+    REMOD_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
 
 include(Catch)
 catch_discover_tests(remod_tests)

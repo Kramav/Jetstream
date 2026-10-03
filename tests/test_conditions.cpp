@@ -330,4 +330,45 @@ TEST_CASE("built-in blocks: each one loads and validates; a block inside another
     REQUIRE(recolour);
     CHECK(recolour->inputs[0].type == remod::PortType::Path);  // mesh
     CHECK(recolour->outputs.size() == 3);  // texture, streaming texture, preview
+    // Pins are typed like the field they feed inside: hue is Adjust colour's slider, with the pin's default.
+    CHECK(recolour->inputs[2].widget == remod::Widget::Number);
+    CHECK(recolour->inputs[2].min == -180);
+    CHECK(std::string(recolour->inputs[2].initial) == "0");
+    CHECK(recolour->inputs[1].widget == remod::Widget::Text);  // materials
+}
+
+// ---- The shipped examples (examples\): each one runs on the real game files ----
+
+#include "texture_converter.hpp"
+
+TEST_CASE("every example graph runs on the game files (set REMOD_GAME to the extracted natives/STM)") {
+    char* v = nullptr;
+    size_t n = 0;
+    _dupenv_s(&v, &n, "REMOD_GAME");
+    const std::string game = v ? v : "";
+    std::free(v);
+    if (game.empty()) SKIP("set REMOD_GAME to your extracted natives/STM folder to run the examples");
+
+    for (const remod::CustomNode& c : remod::load_custom_library(REMOD_BLOCKS_DIR)) remod::register_custom(c);
+    remod::set_game_files_dir(game);
+    TempDir tmp;  // a copy: they write next to themselves (edits\, mods\, backups\)
+    fs::copy(REMOD_EXAMPLES_DIR, tmp.path, fs::copy_options::recursive);
+    const auto converter = remod::make_converter({});
+    int ran = 0;
+    for (const auto& e : fs::directory_iterator(tmp.path)) {
+        if (e.path().extension() != ".json") continue;
+        INFO(e.path().filename().string());
+        const Graph g = remod::load_graph(e.path());
+        CHECK(g.validate().empty());
+        const remod::RunOptions opt{.profile = re4r(), .converter = *converter, .base_dir = tmp.path,
+                                    .edits_done = true, .cache_dir = tmp.path / "cache"};
+        const auto result = remod::run_graph(g, opt);
+        CHECK_FALSE(result.paused);
+        CHECK(std::ranges::any_of(result.nodes, [&](const auto& kv) {  // its mod was built
+            return g.find(kv.first)->type == "PackageMod" && kv.second.state == NodeState::Done;
+        }));
+        ++ran;
+    }
+    CHECK(ran >= 11);
+    remod::set_game_files_dir({});
 }

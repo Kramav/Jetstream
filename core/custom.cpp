@@ -80,7 +80,25 @@ Registry& registry() {
 struct Pin {
     std::string name, label, initial;
     PortType type = PortType::Any;
+    const InputSpec* inner = nullptr;  // an input pin: the field it feeds inside (through Splits), if any
 };
+
+// The input an Input block's value goes into first, followed on through Splits (as Graph::wanted_type follows it).
+const InputSpec* fed_input(const Graph& g, int node) {
+    std::string port = "value";
+    for (size_t hop = 0; hop <= g.nodes.size(); ++hop) {
+        const auto from = g.links_from(node, port);
+        if (from.empty()) return nullptr;
+        const Link& l = g.links[from[0]];
+        const Node* to = g.find(l.to_node);
+        const NodeSpec* spec = to ? find_spec(to->type) : nullptr;
+        if (!spec) return nullptr;
+        if (to->type != "Split") return find_input(*spec, l.to_port);
+        node = to->id;
+        port = "out";
+    }
+    return nullptr;
+}
 
 // An Input or Output block's pin name, by the inner block's id (stable while the block stays).
 std::string pin_name(const char* side, int id) { return side + std::to_string(id); }
@@ -140,7 +158,7 @@ void register_custom(const CustomNode& node) {
     std::vector<Pin> inputs, outputs;
     for (const Node* n : by_position(node.graph, "NodeInput"))
         inputs.push_back({pin_name("in", n->id), param(*n, "name"), param(*n, "default"),
-                          node.graph.wanted_type(n->id, "value")});
+                          node.graph.wanted_type(n->id, "value"), fed_input(node.graph, n->id)});
     for (const Node* n : by_position(node.graph, "NodeOutput")) {
         PortType type = PortType::Any;
         if (const auto in = node.graph.links_into(n->id, "value"); !in.empty())
@@ -157,9 +175,23 @@ void register_custom(const CustomNode& node) {
     for (const Pin& p : inputs) {
         const bool text = p.type == PortType::Text || p.type == PortType::Any;
         const Widget widget = p.type == PortType::Bool ? Widget::Checkbox : text ? Widget::Text : Widget::Path;
-        spec.inputs.push_back({.name = keep(p.name), .label = keep(p.label.empty() ? "input" : p.label),
-                               .type = p.type, .widget = widget,
-                               .required = p.initial.empty(), .path = picker_for(p.type), .initial = keep(p.initial)});
+        InputSpec in{.name = keep(p.name), .label = keep(p.label.empty() ? "input" : p.label), .type = p.type,
+                     .widget = widget, .required = p.initial.empty(), .path = picker_for(p.type),
+                     .initial = keep(p.initial)};
+        // A pin is typed like the field it feeds (user, 2026-10-03: Recolour part's hue as a slider, not text): its
+        // slider (range, reset to the pin's default), checkbox, list, picker and hint.
+        if (const InputSpec* inner = p.inner; inner && inner->editable()) {
+            in.widget = inner->widget;
+            in.hint = inner->hint;
+            in.path = inner->path;
+            in.filter = inner->filter;
+            in.options = inner->options;
+            in.min = inner->min;
+            in.max = inner->max;
+            in.format = inner->format;
+            in.zero = inner->zero;
+        }
+        spec.inputs.push_back(std::move(in));
     }
     for (const Pin& p : outputs)
         spec.outputs.push_back({.name = keep(p.name), .type = p.type, .label = keep(p.label.empty() ? "output" : p.label)});

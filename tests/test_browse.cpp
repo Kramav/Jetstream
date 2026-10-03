@@ -547,6 +547,14 @@ TEST_CASE("Part texture: the parts' colour texture by material name, {game} path
     CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("different textures") && ContainsSubstring("top_albd"));
     g.find(1)->params["materials"] = "*sleeve*";
     CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("has: Pants_Mat, Shirt_Mat, Belt_Mat"));
+    // A costume variant's material file: the same parts, other textures.
+    test::write_file(stm / "ch/body_b.mdf2.32", mdf2({{"Pants_Mat", base_maps({"ch/legs_b_albd.tex"})}}));
+    test::write_fake_tex(stm / "ch/legs_b_albd.tex.143221013", 143221013, 64, 32, 1, 2, 99);
+    g.find(1)->params["materials"] = "Pants_Mat";
+    g.find(1)->params["material"] = "{game}/ch/body_b.mdf2.32";
+    CHECK_THAT(remod::run_graph(g, opt).nodes.at(1).message, ContainsSubstring("legs_b_albd"));
+    g.find(1)->params["material"] = "";
+
     fs::remove(stm / "ch/top_albd.tex.143221013");  // not extracted
     g.find(1)->params["materials"] = "Shirt_Mat";
     CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("Shirt_Mat: no colour texture in your game files"));

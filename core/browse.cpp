@@ -211,15 +211,23 @@ std::vector<std::string> mesh_material_names(const fs::path& mesh_file) {
     return names;
 }
 
-MeshTextures mesh_textures(const fs::path& natives_root, const std::string& mesh, const std::vector<std::string>& textures) {
+MeshTextures mesh_textures(const fs::path& natives_root, const std::string& mesh, const std::vector<std::string>& textures,
+                           const fs::path& material_file) {
     const std::string stem = lower(file_name(mesh).substr(0, lower(file_name(mesh)).rfind(".mesh.")));
-    const fs::path dir = (natives_root / mesh).parent_path();
+    fs::path dir = (natives_root / mesh).parent_path();
     std::vector<std::string> names;
     std::error_code ec;
-    for (const auto& e : fs::directory_iterator(dir, ec)) names.push_back(e.path().filename().string());
+    if (material_file.empty())
+        for (const auto& e : fs::directory_iterator(dir, ec)) names.push_back(e.path().filename().string());
     std::ranges::sort(names, less_nocase);
     std::string material;
+    if (!material_file.empty()) {  // chosen: e.g. a costume variant
+        if (!fs::is_regular_file(material_file, ec)) throw std::runtime_error("no material file " + material_file.string());
+        dir = material_file.parent_path();
+        material = material_file.filename().string();
+    }
     for (const std::string& want : {stem + ".mdf2.", stem + "_mat.mdf2.", stem + "_00.mdf2.", std::string()}) {
+        if (!material.empty()) break;
         const auto it = std::ranges::find_if(names, [&](const std::string& n) {
             return is_kind(lower(n), ".mdf2.") && (want.empty() || lower(n).starts_with(want));
         });

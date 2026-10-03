@@ -622,6 +622,15 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
     contrast -> texture, streaming texture, preview. Part texture -> Streaming copy -> Export (no file) -> Adjust
     colour -> Blend in mask (Mesh mask of the parts at the full size) -> Convert with streaming copy. Checked on Leon
     (`Pants_Mat`, hue 120): only the trouser panels changed (the result image looked at); 2 textures packaged.
+- **Polish (2026-10-03):**
+  - Pickers, Browser drops and "Use in graph" store a path inside the Game files folder as `{game}\...`
+    (`with_game_token`; ignoring case and slashes), so the user's own graphs move between PCs too.
+  - A custom node's input pin is typed like the field it feeds inside (`fed_input`, through Splits): its slider
+    (range, format, reset to the pin's default), checkbox, list, picker and hint. Recolour part's hue is a slider.
+  - Part texture's advanced *Material file* (`mesh_textures`' `material_file`): a costume variant's `.mdf2`. Checked:
+    Leon's `cha000_00b.mdf2` gives `cha000_00b_LowerBody_ALBD`.
+  - Test "every example graph runs" (needs `REMOD_GAME` = the extracted natives\STM; skipped otherwise): loads, validates
+    and runs all examples in a copy with the real converter. Passes on the user's files.
 - **Export image without a file (2026-10-03):** `PortSpec::field_optional`. Empty = a working copy in the run cache
   (named by the texture's bytes and the converter; reused), for graphs and built blocks nobody edits by hand. Still
   required when it goes to an Edit image (validate says so). Export image now makes its file's folder.
@@ -743,7 +752,8 @@ in a txt file next to the plugin — the tool must set/verify this.
 - `modinfo.ini` contents and package folder layout.
 - Profile loading/validation.
 - Round-trip: original TEX → image → TEX reproduces the original's TexMeta and image data.
-  Fixtures are **local only**, located via env var `REMOD_FIXTURES`. Tests skip if unset.
+  Fixtures are **local only**, located via env var `REMOD_FIXTURES`. Tests skip if unset. `REMOD_GAME` (the
+  extracted natives\STM) runs the shipped examples on the real game files.
   Never commit fixture game files.
 
 ## 9. Open questions / spike results  [TBD-spike]

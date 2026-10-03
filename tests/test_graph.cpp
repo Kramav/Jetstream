@@ -71,6 +71,18 @@ Graph pipeline(const std::string& tex, const std::string& png, const std::string
 
 }  // namespace
 
+TEST_CASE("{game}: a path inside the game files folder is stored as {game}\\..., and filled in again") {
+    remod::set_game_files_dir("C:/Games/RE4/natives/STM");
+    CHECK(remod::with_game_token(R"(c:\games\re4\natives\stm\_chainsaw\ui\a.tex.143221013)") ==
+          R"({game}\_chainsaw\ui\a.tex.143221013)");  // ignoring case and slashes, as Windows does
+    CHECK(remod::with_game_token("D:/elsewhere/a.png") == "D:/elsewhere/a.png");
+    CHECK(remod::with_game_token("C:/Games/RE4/natives/STM_old/a.tex") == "C:/Games/RE4/natives/STM_old/a.tex");
+    CHECK(fs::path(remod::fill_game(R"({game}\_chainsaw\a.tex)")) == fs::path(R"(C:/Games/RE4/natives/STM\_chainsaw\a.tex)"));
+    remod::set_game_files_dir({});
+    CHECK(remod::with_game_token("C:/Games/RE4/natives/STM/a.tex") == "C:/Games/RE4/natives/STM/a.tex");
+    CHECK_THROWS_WITH(remod::fill_game("{game}/a.tex"), ContainsSubstring("Game files folder"));
+}
+
 TEST_CASE("node types cover the pipeline") {
     for (const char* t : {"LoadTex", "ExportImage", "EditImage", "ImportImage", "SaveTex", "PackageMod", "Text"})
         CHECK(remod::find_spec(t) != nullptr);
