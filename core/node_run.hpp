@@ -23,12 +23,6 @@ inline Value file_value(const std::filesystem::path& p, std::string game_path = 
     return {p.string(), p, std::move(game_path)};
 }
 
-// One item of a list (fan-out): {name} in the repeated blocks' fields, and the key its per-item state is kept under.
-struct ListItem {
-    std::string name;  // e.g. "cs_ui3210_file_039_00_iam" for .../cs_ui3210_file_039_00_iam.tex.143221013
-    std::string key;   // its path relative to the list's folder, e.g. "ui/cs_ui3210_file_039_00_iam.tex.143221013"
-};
-
 // A block's output, by (node, output, item); item -1 for a block that isn't repeated.
 using OutputKey = std::tuple<int, std::string, int>;
 

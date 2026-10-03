@@ -355,3 +355,20 @@ TEST_CASE("replace_photo carries the dirt, not the old picture") {
     const remod::Bgra stains_only = remod::replace_photo(frame, grey, area.mask, {0, 0, 1, 0});
     CHECK(luma(stains_only, 117, 112) < luma(stains_only, 140, 100) - 10);  // and it darkens
 }
+
+TEST_CASE("channel tools: one channel as grey, and channels merged back") {
+    const remod::Bgra image{1, 1, {10, 20, 30, 40}};  // B, G, R, A
+    CHECK(remod::channel_image(image, remod::Channel::Red).pixels == std::vector<std::uint8_t>{30, 30, 30, 255});
+    CHECK(remod::channel_image(image, remod::Channel::Alpha).pixels == std::vector<std::uint8_t>{40, 40, 40, 255});
+    CHECK(remod::channel_image(image, remod::Channel::Colour).pixels == std::vector<std::uint8_t>{10, 20, 30, 255});
+
+    remod::Bgra base{1, 1, {1, 2, 3, 4}};
+    const remod::Bgra colour{1, 1, {100, 110, 120, 0}}, grey{1, 1, {9, 9, 99, 255}};
+    remod::merge_channels(base, &colour, {nullptr, nullptr, nullptr, nullptr});
+    CHECK(base.pixels == std::vector<std::uint8_t>{100, 110, 120, 4});  // the alpha (data) kept
+    remod::merge_channels(base, nullptr, {nullptr, &grey, nullptr, &grey});  // green and alpha from its red
+    CHECK(base.pixels == std::vector<std::uint8_t>{100, 99, 120, 99});
+
+    const remod::Bgra wide{2, 1, std::vector<std::uint8_t>(8, 0)};
+    CHECK_THROWS_WITH(remod::merge_channels(base, &wide, {}), ContainsSubstring("same size"));
+}

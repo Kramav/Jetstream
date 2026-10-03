@@ -187,8 +187,15 @@ struct NodeStatus {
     std::vector<ItemStatus> items;  // a block repeated for a list: per item, in list order (state/message sum them up)
 };
 
-// What each output gave in a run, by (node, output): its text (the text itself, or a file's full path).
+// What each output gave in a run, by (node, output): its text (the text itself, or a file's full path). A block
+// repeated for a list gives the shown item's (its list block's "show" param: an item key), else the first one's.
 using RunValues = std::map<std::pair<int, std::string>, std::string>;
+
+// One item of a list (fan-out): {name} in the repeated blocks' fields, and the key its per-item state is kept under.
+struct ListItem {
+    std::string name;  // e.g. "cs_ui3210_file_039_00_iam" for .../cs_ui3210_file_039_00_iam.tex.143221013
+    std::string key;   // its path relative to the list's folder, e.g. "ui/cs_ui3210_file_039_00_iam.tex.143221013"
+};
 
 struct RunResult {
     bool paused = false;  // an Edit image step is waiting for the user
@@ -216,7 +223,9 @@ RunResult run_graph(const Graph& graph, const RunOptions& options);
 // (NodeSpec::pure), steps give their predictable outputs (NodeSpec::preview, e.g. the path they'll write) and touch
 // nothing. Outputs only a run makes (a temporary .tex) are left out, and so is everything that depends on them.
 // Relative paths resolve against `base_dir`, as in a run.
-RunValues preview_values(const Graph& graph, const std::filesystem::path& base_dir);
+// `lists`: each list block's items as far as known (front ends offer which one the previews show).
+RunValues preview_values(const Graph& graph, const std::filesystem::path& base_dir,
+                         std::map<int, std::vector<ListItem>>* lists = nullptr);
 
 // An image block's result (NodeSpec::thumbnail) worked out in memory, for a live thumbnail of at most `max_side`
 // pixels: its input images come from linked image blocks (worked out the same way, through Splits) or from the files

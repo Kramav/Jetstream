@@ -831,4 +831,32 @@ void overlay_image(Bgra& base, const Bgra& top, int x, int y, float opacity) {
     }
 }
 
+Bgra channel_image(const Bgra& image, Channel channel) {
+    Bgra out = image;
+    constexpr int offset[] = {2, 1, 0, 3};  // BGRA bytes: red is the third
+    for (size_t i = 0; i < out.pixels.size(); i += 4) {
+        std::uint8_t* p = &out.pixels[i];
+        if (channel != Channel::Colour) p[0] = p[1] = p[2] = image.pixels[i + size_t(offset[int(channel)])];
+        p[3] = 255;
+    }
+    return out;
+}
+
+void merge_channels(Bgra& base, const Bgra* colour, const std::array<const Bgra*, 4>& channels) {
+    auto check = [&](const Bgra* img) {
+        if (img && (img->width != base.width || img->height != base.height))
+            throw std::runtime_error("an image is " + std::to_string(img->width) + "x" + std::to_string(img->height) +
+                                     ", the base " + std::to_string(base.width) + "x" + std::to_string(base.height) +
+                                     ": they must be the same size (Resize image can match them)");
+    };
+    check(colour);
+    for (const Bgra* c : channels) check(c);
+    constexpr int offset[] = {2, 1, 0, 3};
+    for (size_t i = 0; i < base.pixels.size(); i += 4) {
+        if (colour) std::copy_n(&colour->pixels[i], 3, &base.pixels[i]);
+        for (int c = 0; c < 4; ++c)
+            if (channels[size_t(c)]) base.pixels[i + size_t(offset[c])] = channels[size_t(c)]->pixels[i + 2];
+    }
+}
+
 }  // namespace remod

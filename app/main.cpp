@@ -408,6 +408,7 @@ struct State {
     remod::RunValues values;  // what every output gave in the last run (linked fields show it)
     // What links hold before a run (core preview_values), worked out again when the graph or its file changes.
     remod::RunValues preview;
+    std::map<int, std::vector<remod::ListItem>> lists;  // each Files in folder block's files, with the previews
     remod::Graph preview_of;
     // Live previews of the image blocks (core preview_image) at one size, worked out in the background when the graph
     // (positions aside) or the blocks wanted change; a change meanwhile starts the next job once this one is done.
@@ -2353,7 +2354,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.dest_checked = ImGui::GetTime();
     }
     if (remod::Graph shape = shape_of(s.graph); shape != s.preview_of || s.graph_path != s.preview_path) {
-        s.preview = remod::preview_values(s.graph, std::filesystem::absolute(s.graph_path).parent_path());
+        s.preview = remod::preview_values(s.graph, std::filesystem::absolute(s.graph_path).parent_path(), &s.lists);
         s.preview_of = std::move(shape);
         s.preview_path = s.graph_path;
     }
@@ -2641,6 +2642,25 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 if (ImGui::IsItemHovered())
                     hovered_hint = folded > 0 ? "Show this block's other settings (shown anyway once changed or linked)."
                                               : "Fold away the settings still at their defaults.";
+            }
+            // A list: which of its files the previews, thumbnails and link values show (user, 2026-10-02).
+            if (const auto list = s.lists.find(n.id); list != s.lists.end() && list->second.size() > 1) {
+                const auto& items = list->second;
+                const auto show = n.params.find("show");
+                size_t at = 0;
+                for (size_t i = 0; i < items.size(); ++i)
+                    if (show != n.params.end() && items[i].key == show->second) at = i;
+                if (ImGui::ArrowButton("##previous", ImGuiDir_Left))
+                    n.params["show"] = items[(at + items.size() - 1) % items.size()].key;
+                if (ImGui::IsItemHovered()) hovered_hint = "Preview the file before.";
+                ImGui::SameLine();
+                if (ImGui::ArrowButton("##next", ImGuiDir_Right)) n.params["show"] = items[(at + 1) % items.size()].key;
+                if (ImGui::IsItemHovered()) hovered_hint = "Preview the next file.";
+                ImGui::SameLine();
+                ImGui::Text("Previews: %s (%d of %d)", items[at].name.c_str(), int(at + 1), int(items.size()));
+                if (ImGui::IsItemHovered())
+                    hovered_hint = "Which file the previews, thumbnails and link values after it show. A run does "
+                                   "them all.";
             }
             if (manual) {  // Edit image: the user's own step
                 const std::filesystem::path file = status ? status->file : std::filesystem::path();

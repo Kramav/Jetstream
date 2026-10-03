@@ -758,9 +758,26 @@ void sum_up(NodeStatus& status) {
     status.message = std::to_string(status.items.size()) + " items: " + message;
 }
 
-// What each output gave, for front ends: a repeated block's first item stands for the list.
+// The item a list's previews show: the one its "show" param names, else the first.
+int shown_item(const RunState& run, int list) {
+    const Node* n = run.graph.find(list);
+    const auto items = run.items.find(list);
+    const auto show = n ? n->params.find("show") : std::map<std::string, std::string>::const_iterator();
+    if (n && show != n->params.end() && items != run.items.end())
+        for (size_t i = 0; i < items->second.size(); ++i)
+            if (items->second[i].key == show->second) return int(i);
+    return 0;
+}
+
+// What each output gave, for front ends: a repeated block's shown item stands for the list (its first, where the
+// shown one didn't get that far).
 RunValues first_values(const RunState& run) {
     RunValues values;
+    for (const auto& [key, value] : run.outputs) {
+        const auto& [node, port, item] = key;
+        const int list = item < 0 ? 0 : list_of(run, node, port);
+        if (!list || item == shown_item(run, list)) values[{node, port}] = value.text;
+    }
     for (const auto& [key, value] : run.outputs) values.try_emplace({std::get<0>(key), std::get<1>(key)}, value.text);
     return values;
 }
@@ -959,6 +976,7 @@ namespace {
 struct PreviewPass {
     RunValues values;
     std::set<int> unknown;  // a block with a preview (or pure) that threw, or one with neither
+    std::map<int, std::vector<ListItem>> lists;  // each list block's items
 };
 
 PreviewPass preview_pass(const Graph& g, const fs::path& base_dir, std::vector<FileChange>* planned = nullptr) {
@@ -994,6 +1012,7 @@ PreviewPass preview_pass(const Graph& g, const fs::path& base_dir, std::vector<F
         run.item = -1;
     }
     pass.values = first_values(run);
+    pass.lists = run.items;
     return pass;
 }
 
@@ -1026,12 +1045,20 @@ bool inside(const fs::path& path, const fs::path& dir) {
 
 }  // namespace
 
-RunValues preview_values(const Graph& g, const fs::path& base_dir) {
-    if (!has_customs(g)) return preview_pass(g, base_dir).values;
+RunValues preview_values(const Graph& g, const fs::path& base_dir, std::map<int, std::vector<ListItem>>* lists) {
+    if (!has_customs(g)) {
+        PreviewPass pass = preview_pass(g, base_dir);
+        if (lists) *lists = std::move(pass.lists);
+        return pass.values;
+    }
     try {
         const ExpandedGraph e = expand_customs(g);
-        RunValues values = preview_pass(e.graph, base_dir).values;
+        PreviewPass pass = preview_pass(e.graph, base_dir);
+        RunValues values = std::move(pass.values);
         fold_results(e, nullptr, &values, nullptr, nullptr);
+        if (lists)  // the graph's own list blocks (one inside a custom node keeps its first)
+            for (auto& [id, items] : pass.lists)
+                if (g.find(id)) (*lists)[id] = std::move(items);
         return values;
     } catch (const GraphError&) {
         return {};  // an unknown custom node: validate() says so

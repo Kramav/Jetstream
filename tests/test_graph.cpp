@@ -1773,7 +1773,14 @@ TEST_CASE("fan-out: previews and the plan cover every item; {name} and two lists
         CHECK(std::ranges::any_of(plan.changes, [&](const remod::FileChange& c) {
             return c.node == 4 && c.path == tmp.path / "edits" / (std::string(name) + ".png");
         }));
-    CHECK(remod::preview_values(g, tmp.path).at({4, "png"}) == (tmp.path / "edits" / "a.png").string());
+    std::map<int, std::vector<remod::ListItem>> lists;
+    CHECK(remod::preview_values(g, tmp.path, &lists).at({4, "png"}) == (tmp.path / "edits" / "a.png").string());
+    REQUIRE(lists.at(1).size() == 3);
+    CHECK(lists.at(1)[2].name == "c");
+    g.find(1)->params["show"] = "b.tex.143221013";  // the previews show b
+    CHECK(remod::preview_values(g, tmp.path).at({4, "png"}) == (tmp.path / "edits" / "b.png").string());
+    REQUIRE(g.validate().empty());  // "show" is the list block's own state
+    g.find(1)->params.erase("show");
 
     g.find(7)->params["name"] = "{name}";  // Package isn't repeated
     CHECK(has(g.validate(), "{name} only works in a block repeated for a list"));
@@ -1784,4 +1791,39 @@ TEST_CASE("fan-out: previews and the plan cover every item; {name} and two lists
     g.disconnect(g.links_into(6, "original").at(0));
     REQUIRE(g.connect({other, "files", 6, "original"}).empty());
     CHECK(has(g.validate(), "two lists meet here"));
+}
+
+TEST_CASE("run: Merge channels puts a new picture into the original's colour, its alpha kept; Pick channel shows it") {
+    TempDir tmp;
+    remod::save_png_bgra(tmp.path / "original.png", 2, 1, {10, 10, 10, 77, 10, 10, 10, 200});  // alpha = data
+    remod::save_png_bgra(tmp.path / "new.png", 2, 1, {0, 0, 255, 255, 255, 0, 0, 255});
+    Graph g;
+    g.add_node("ImportImage").params["png"] = "original.png";
+    g.add_node("Split");
+    g.add_node("ImportImage").params["png"] = "new.png";
+    auto& merge = g.add_node("MergeChannels");
+    merge.params["save_to"] = "merged.png";
+    auto& pick = g.add_node("PickChannel");
+    pick.params["save_to"] = "alpha.png";
+    for (const remod::Link& l : {remod::Link{1, "image", 2, "in"}, remod::Link{2, "out", 4, "base"},
+                                 remod::Link{3, "image", 4, "colour"}, remod::Link{2, "out", 5, "image"}})
+        REQUIRE(g.connect(l).empty());
+    REQUIRE(g.validate().empty());
+    FakeConverter conv;
+    remod::run_graph(g, {.profile = re4r(), .converter = conv, .base_dir = tmp.path});
+    CHECK(remod::load_image(tmp.path / "merged.png").pixels ==
+          std::vector<std::uint8_t>{0, 0, 255, 77, 255, 0, 0, 200});
+    CHECK(remod::load_image(tmp.path / "alpha.png").pixels ==
+          std::vector<std::uint8_t>{77, 77, 77, 255, 200, 200, 200, 255});
+
+    const remod::ImageLoader load = [](const fs::path& p) -> std::optional<remod::ImagePreview> {
+        return remod::ImagePreview{remod::load_image(p), 1};
+    };
+    const auto thumb = remod::preview_image(g, remod::preview_values(g, tmp.path), 4, tmp.path, 256, load);
+    REQUIRE(thumb);  // the live thumbnail works it out the same way
+    CHECK(thumb->image.pixels == std::vector<std::uint8_t>{0, 0, 255, 77, 255, 0, 0, 200});
+
+    g.disconnect(g.links_into(4, "colour").at(0));  // nothing to merge in
+    CHECK_THROWS_WITH(remod::run_graph(g, {.profile = re4r(), .converter = conv, .base_dir = tmp.path}),
+                      ContainsSubstring("nothing to merge in"));
 }

@@ -723,14 +723,17 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
     std::error_code ec;
     if (!mesh_loading_.valid() && !mesh_.empty() && shown_mesh_ != mesh_) {
         shown_mesh_ = loading_mesh_ = mesh_;
-        if (!fs::is_regular_file(noesis_exe, ec)) {
-            model_error_ = "The 3D view needs Noesis (optional, installed by you): set Noesis64.exe in the Pipeline panel.";
-        } else {
-            mesh_loading_ = std::async(std::launch::async, [exe = fs::path(noesis_exe), file = fs::path(mesh_)] {
-                return remod::NoesisConverter(exe).load_mesh(file);
-            });
-            shown_mesh_.clear();  // set when it arrives
-        }
+        // Read by the tool itself; Noesis (optional) only for what that can't read (another game's mesh version).
+        const fs::path noesis = fs::is_regular_file(noesis_exe, ec) ? fs::path(noesis_exe) : fs::path();
+        mesh_loading_ = std::async(std::launch::async, [noesis, file = fs::path(mesh_)] {
+            try {
+                return remod::read_mesh(file);
+            } catch (const std::exception&) {
+                if (noesis.empty()) throw;
+                return remod::NoesisConverter(noesis).load_mesh(file);
+            }
+        });
+        shown_mesh_.clear();  // set when it arrives
     }
 
     // One window, same place: the caller's picture (show_in_viewer), else the 3D view while a picked mesh is open
@@ -765,7 +768,7 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
     ImGui::PushTextWrapPos(0);
     if (!mesh_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "%s", mesh_error_.c_str());
     if (mesh_loading_.valid() && loading_mesh_ == mesh_)
-        ImGui::TextDisabled("Converting with Noesis... (a big mesh takes several seconds)");
+        ImGui::TextDisabled("Reading the mesh...");
     if (!model_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "No 3D view: %s", model_error_.c_str());
     ImGui::PopTextWrapPos();
     if (view_.empty() || shown_mesh_ != mesh_) {

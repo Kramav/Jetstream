@@ -1,8 +1,9 @@
 #pragma once
-// A mesh's shape for the browser's 3D view (CLAUDE.md §10). Noesis exports the game's .mesh to OBJ
-// (NoesisConverter::load_mesh); this reads that OBJ. Textures are applied by the viewer from the material
-// (mesh_textures), not from the OBJ.
+// A mesh's shape for the browser's 3D view (CLAUDE.md §10): read from the game's .mesh itself (read_mesh), or from the
+// OBJ Noesis exports (NoesisConverter::load_mesh, parse_obj). Textures are applied by the viewer from the material
+// (mesh_textures).
 #include <array>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -30,5 +31,10 @@ struct MeshModel {
 // (group, material). Faces without
 // normals get the face's normal. Throws std::runtime_error on a bad face index or no faces at all.
 MeshModel parse_obj(const std::string& text);
+
+// Reads a game .mesh itself, no Noesis (user, 2026-10-02): the most detailed LOD whose triangles are in this file, one
+// part per (group, material). Layout [REE-Lib MeshFile.cs, MIT], RE4R's version only (220822879); others, and meshes
+// whose geometry is only in their streaming/ copy, throw std::runtime_error saying so (Noesis can read those).
+MeshModel read_mesh(const std::filesystem::path& file);
 
 }  // namespace remod

@@ -46,6 +46,17 @@ Bgra resize_image(const Bgra& image, unsigned width, unsigned height, Fit fit);
 // Base's alpha is kept.
 void overlay_image(Bgra& base, const Bgra& top, int x, int y, float opacity);
 
+// ---- Channel tools (CLAUDE.md §9: RE textures pack data in channels, e.g. albd's alpha, nrrc's normal in G and A) ----
+
+// Red, green, blue, alpha; Colour = red, green and blue together.
+enum class Channel { Red, Green, Blue, Alpha, Colour };
+// One channel as a grey image (opaque), to see or edit it alone; Colour: the colour with the alpha made opaque.
+Bgra channel_image(const Bgra& image, Channel channel);
+// `base` with channels replaced: its colour by `colour`'s (if given), then each single channel by a grey image's
+// brightness (its red; `channels` in Red, Green, Blue, Alpha order, nullptr = kept). Every image given must be base's
+// size (throws std::runtime_error naming the size).
+void merge_channels(Bgra& base, const Bgra* colour, const std::array<const Bgra*, 4>& channels);
+
 // ---- Replace photo: a picture into a framed photo's place, keeping the old photo's ageing ----
 
 // The old photo's area inside an opaque frame. A frame's inner edge runs parallel to its outer outline (alpha, or the

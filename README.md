@@ -131,11 +131,11 @@ Two panels along the bottom show what you pick there:
   with its colour textures; close the 3D view to see the texture again, pick the mesh again to reopen it. The last
   mesh stays while you browse other textures. Drag to turn it, right-drag to move, the wheel zooms, double-click
   resets. Click one of its textures to highlight the parts that use it (click it again to show all). The Groups
-  checkboxes show or hide the mesh's groups (e.g. a character's bare arms, a weapon). The 3D view needs Noesis
-  (optional): it converts the mesh first, under a second for most, several seconds for a character.
+  checkboxes show or hide the mesh's groups (e.g. a character's bare arms, a weapon). The tool reads RE4R meshes
+  itself; for other games' meshes it uses Noesis, if you've set it.
 
 Reading the folder takes a few seconds each time the app starts. Nothing is written to disk, except the
-temporary file Noesis converts a mesh into (deleted straight away). A folder that
+temporary file Noesis converts a mesh into when it's used (deleted straight away). A folder that
 doesn't end in `natives\stm` is only read after you click **Index it anyway**.
 
 ## Making a texture mod with a graph
@@ -196,6 +196,15 @@ Start the graph with a **Files in folder** block instead of picking one texture:
   finish it (or **Done editing all**), then Run again. Finished images move on; Package waits until all are done.
 - **If a file fails:** the block's **If a file fails** setting stops the run (the default) or skips that file and
   goes on with the rest.
+- **Which file the previews show:** the ◀ ▶ arrows on the Files in folder block pick it. A run always does them all.
+
+## Channels
+
+RE textures often keep data, not transparency, in a channel. An `albd` texture's alpha is one example. To change a
+picture's colour without disturbing that data:
+- **Pick channel** shows one channel as a grey picture, to see or edit it on its own.
+- **Merge channels** puts channels back: the colour from one image (for example an edited or AI-made picture), and
+  any single channel from a grey image. Everything else stays as the base image has it.
 
 ## Custom nodes
 

@@ -173,6 +173,7 @@ NodeSpec files_in_folder() {
                     .hint = "Stop the run, or leave that file out and go on with the rest (it's listed as failed).",
                     .initial = "stop", .options = {{"stop", "Stop the run"}, {"skip", "Skip that file"}}}},
         .outputs = {{.name = "files", .type = Any, .label = "each file", .list = true}},
+        .state = {"show"},  // the item previews show (its key); front ends set it
         .family = Family::Source,
         .pure = true,
         .run = [](NodeRun& r) {
@@ -653,6 +654,89 @@ NodeSpec overlay_image_node() {
             const Bgra top = load_image(clean_path(r.text("top"), r.run.options.base_dir));
             overlay_image(base, top, int(number(r, "x")), int(number(r, "y")), number(r, "opacity") / 100);
             write_image(r, base, "overlaid");
+        },
+        .preview = image_preview,
+    };
+}
+
+// ---- Channel tools (CLAUDE.md §9, §10: RE textures pack data in channels; a colour edit or an AI result must leave
+// those alone) ----
+
+constexpr std::array<std::array<const char*, 2>, 5> kChannels{
+    {{"red", "Red"}, {"green", "Green"}, {"blue", "Blue"}, {"alpha", "Alpha"}, {"colour", "Colour (no alpha)"}}};
+
+Channel channel_of(const std::string& value) {
+    for (size_t i = 0; i < kChannels.size(); ++i)
+        if (value == kChannels[i][0]) return Channel(i);
+    throw GraphError("no channel '" + value + "'");
+}
+
+NodeSpec pick_channel_node() {
+    return {
+        .type = "PickChannel",
+        .title = "Pick channel",
+        .summary = "One channel of an image as a grey picture, to see or edit it alone (e.g. the alpha of an albd "
+                   "texture, which is data, not transparency). Colour: the colour with the alpha made opaque.",
+        .inputs = {image_input("image", "Image", "The image to take the channel from."),
+                   {.name = "channel", .label = "Channel", .type = Text, .widget = Widget::Choice, .required = true,
+                    .hint = "Which channel. RE textures often keep data in one (CLAUDE.md: nrrc's normal is in green "
+                            "and alpha).",
+                    .initial = "alpha", .options = {kChannels.begin(), kChannels.end()}},
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const Bgra image = load_image(clean_path(r.text("image"), r.run.options.base_dir));
+            write_image(r, channel_image(image, channel_of(r.text("channel"))), r.text("channel") + " channel");
+        },
+        .preview = image_preview,
+    };
+}
+
+// The optional images Merge channels takes: colour, then one per channel.
+constexpr const char* kMergeInputs[] = {"colour", "red", "green", "blue", "alpha"};
+
+NodeSpec merge_channels_node() {
+    auto optional_image = [](const char* name, const char* label, const char* hint) {
+        InputSpec in = image_input(name, label, hint);
+        in.required = false;
+        return in;
+    };
+    return {
+        .type = "MergeChannels",
+        .title = "Merge channels",
+        .summary = "Puts channels back into an image: its colour from one image, any single channel from a grey one. "
+                   "E.g. an edited or AI-made picture as the colour of the original, keeping the original's alpha "
+                   "(data in RE textures). Every image must be the base's size.",
+        .inputs = {image_input("base", "Base image", "The image whose channels are kept unless replaced."),
+                   optional_image("colour", "Colour from", "Its red, green and blue replace the base's; alpha kept."),
+                   optional_image("red", "Red from", "A grey image: its brightness becomes the red channel."),
+                   optional_image("green", "Green from", "A grey image: its brightness becomes the green channel."),
+                   optional_image("blue", "Blue from", "A grey image: its brightness becomes the blue channel."),
+                   optional_image("alpha", "Alpha from", "A grey image: its brightness becomes the alpha channel."),
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            Bgra base = load_image(clean_path(r.text("base"), r.run.options.base_dir));
+            std::array<std::optional<Bgra>, 5> parts;
+            std::string merged;
+            for (size_t i = 0; i < parts.size(); ++i)
+                if (const std::string t = r.text(kMergeInputs[i]); !t.empty()) {
+                    parts[i] = load_image(clean_path(t, r.run.options.base_dir));
+                    merged += std::string(merged.empty() ? "" : ", ") + kMergeInputs[i];
+                }
+            if (merged.empty()) throw GraphError("nothing to merge in: link a colour or a channel image");
+            try {
+                merge_channels(base, parts[0] ? &*parts[0] : nullptr,
+                               {parts[1] ? &*parts[1] : nullptr, parts[2] ? &*parts[2] : nullptr,
+                                parts[3] ? &*parts[3] : nullptr, parts[4] ? &*parts[4] : nullptr});
+            } catch (const std::runtime_error& e) {
+                throw GraphError(e.what());
+            }
+            write_image(r, base, "merged " + merged);
         },
         .preview = image_preview,
     };
@@ -1498,7 +1582,8 @@ const std::vector<NodeSpec>& node_specs() {
     static const std::vector<NodeSpec> specs{
         // The main steps: the texture pipeline, then file steps.
         load_tex(), files_in_folder(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
-        resize_image_node(), overlay_image_node(), replace_photo_node(), preview_node(), package_mod(),
+        resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), replace_photo_node(),
+        preview_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),
@@ -1705,6 +1790,28 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
                     px[0] = 255, px[1] = 255, px[2] = 0;
                 }
             return out;
+        }
+        if (n->type == "PickChannel") {
+            auto img = image("image");
+            if (!img) return std::nullopt;
+            img->image = channel_image(img->image, channel_of(text("channel").value_or("alpha")));
+            return img;
+        }
+        if (n->type == "MergeChannels") {
+            auto base = image("base");
+            if (!base) return std::nullopt;
+            std::array<std::optional<ImagePreview>, 5> parts;
+            for (size_t i = 0; i < parts.size(); ++i) {
+                if (!source(kMergeInputs[i]) && text(kMergeInputs[i]).value_or("").empty()) continue;  // not given
+                parts[i] = image(kMergeInputs[i]);
+                if (!parts[i]) return std::nullopt;  // given, not known yet
+                if (parts[i]->image.width != base->image.width || parts[i]->image.height != base->image.height)
+                    parts[i]->image = resize_image(parts[i]->image, base->image.width, base->image.height, Fit::Stretch);
+            }
+            merge_channels(base->image, parts[0] ? &parts[0]->image : nullptr,
+                           {parts[1] ? &parts[1]->image : nullptr, parts[2] ? &parts[2]->image : nullptr,
+                            parts[3] ? &parts[3]->image : nullptr, parts[4] ? &parts[4]->image : nullptr});
+            return base;
         }
         if (n->type == "OverlayImage") {
             auto base = image("base");

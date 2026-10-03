@@ -99,7 +99,8 @@ authors).** `make_converter` picks one:
 - **Noesis (optional), `NoesisConverter`.** The app's "Convert textures with Noesis" (`Settings::noesis_textures`);
   `--noesis` in the CLI; `noesis` in the API. Its behaviour is in §9.
 - **The run cache** keys each texture on `ITextureConverter::id`, so switching converters converts again.
-- **Still Noesis-only:** the Browser's 3D mesh view (no native `.mesh` reader yet, §10).
+- **The 3D view reads meshes natively too** (2026-10-02, `read_mesh`, §10 browser). Noesis is its fallback only for
+  what that can't read.
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
@@ -435,8 +436,12 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   - **Statuses:** `NodeStatus::items` (name, key, state, message, file). The block's own state and message sum them
     up: waiting > failed > not reached > done, e.g. "3 items: 1 done, 2 waiting for you". The API's run reply gives
     each node's `items`.
-  - **Previews and the plan** run every item, so `plan_changes` lists every item's writes. RunValues, link values and
-    thumbnails show the first item.
+  - **Previews and the plan** run every item, so `plan_changes` lists every item's writes.
+  - **Which file previews show (2026-10-02, user):** RunValues, link values and thumbnails show one item of a list:
+    - the one the list block's `show` state names (an item key), else the first;
+    - if the shown one didn't get that far, the first (`first_values`, `shown_item`).
+    - `preview_values(..., &lists)` hands front ends each list block's items; the app's Files in folder block has
+      ◀ ▶ arrows and "Previews: <name> (n of N)".
   - **Not done:** see §10 Batch.
   - Checked: tests (a 3-texture pipeline with per-item edits, one file name for all, stop / skip on a bad texture,
     plan and validate, an API copy of two files). **Not checked by eye** (the YOUR STEP list, the block buttons).
@@ -527,6 +532,15 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
     vs default; save / load; library round trip and differs / update; nested; unknown and self-containing types;
     plan; API types and add). **Not checked by eye** (the menu items, the popup, the edit / Back flow, the Custom
     nodes folder).
+- **Channel tools (2026-10-02; §9's survey, §10).** Image blocks with thumbnails; core `channel_image` /
+  `merge_channels` (image.*).
+  - **Pick channel:** one channel as a grey image (opaque), or Colour (alpha made opaque), to see or edit data
+    alone.
+  - **Merge channels:** a base image with its colour from "Colour from" (alpha kept) and any single channel from a
+    grey image (its red), e.g. an AI picture as the colour of the original `albd`, keeping its alpha.
+  - Every image must be the base's size (the run says so, pointing to Resize image); the thumbnail stretches to fit.
+  - Merging nothing in fails the run.
+  - Checked: tests (pixels both ways, a graph run, the thumbnail).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> [--noesis <exe>]` and from the app's Run button. Programs edit graphs through
   `remod api` (core `ApiSession`, §10 M2).
@@ -605,7 +619,7 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 
 | Tool | Role | License status | Handling |
 |---|---|---|---|
-| Noesis | **Optional** (2026-10-02): the 3D mesh view; texture conversion if chosen | Freeware, no redistribution terms found | Don't bundle. Offer `winget install -e --id RichWhitehouse.Noesis`, or detect existing install |
+| Noesis | **Optional** (2026-10-02): texture conversion if chosen; the 3D view's fallback for meshes the tool can't read | Freeware, no redistribution terms found | Don't bundle. Offer `winget install -e --id RichWhitehouse.Noesis`, or detect existing install |
 | fmt_RE_MESH Noesis plugin | **Optional**, with Noesis | Fork checked had **no license file** (all rights reserved by default); original repo not checked | Don't bundle, don't copy from it; the user installs it. Format knowledge is cited from REE-Lib (MIT) instead |
 | REE-Lib (kagenocookie/RE-Engine-Lib) | Reference only: `.tex` and `.mdf2` layouts (`TexFile.cs`, `MdfFile.cs`); later `.mesh` (`MeshFile.cs`) | MIT [official] | Not linked (C#). No code copied; if any ever is, add its MIT notice |
 | REtool | PAK extraction / optional PAK creation | No license found | Don't bundle. Detect path; guide manual install |
@@ -787,7 +801,7 @@ propose them as next steps before then.
     need a per-item name (e.g. a folder field). User (2026-10-01): not yet, "dumb rebuilding textures isn't really
     helpful" until there's more to do per texture. **Now priority 1 (2026-10-02). First version built (§4 Fan-out):
     lists through links, Files in folder, `{name}`, done per item, stop / skip.** Not done yet:
-    - thumbnails, link values and the viewer show the first item only (an item picker);
+    - ~~thumbnails show the first item only~~: done, the list block picks which (§4 Fan-out);
     - list links look like any other (a doubled line?);
     - two lists meeting (zip or cross product) is refused;
     - other list sources (the Browser's selection, a typed list);
@@ -795,7 +809,8 @@ propose them as next steps before then.
       one folder);
     - a Package repeated per item shares one temporary preview file (sequential, so it works).
   - **Channel tools:** split / merge channels, so colour can be edited without touching data packed in another
-    channel. Which RE4R textures pack what: §9 (spike 2026-10-02; meanings inferred, layouts observed).
+    channel. Which RE4R textures pack what: §9 (spike 2026-10-02; meanings inferred, layouts observed). **Built
+    2026-10-02** (§4 Channel tools).
   - **Mod options:** one mod with variants to choose in Fluffy.
   - Frames: done as **Replace photo** (§4; RE4R's UI frames are opaque, no transparent opening). Open: a picture
     printed at an angle or in perspective (four-corner warp) if one turns up; in-world paintings usually have their
@@ -835,9 +850,10 @@ propose them as next steps before then.
 - **Far future (user, 2026-10-01): drop a Browser path on empty canvas to add a block holding it** (.tex → Original
   texture, image → Use existing image, anything else → Value), as an option in an options menu. Not started; today
   a drop only fills a field.
-- **Later (user, 2026-10-02): a native `.mesh` reader**, so the 3D view needs no Noesis either (the last thing
-  that does). Reference: REE-Lib `MeshFile.cs` (MIT). Several layouts by game version; the material side
-  (`read_mdf2`, `mesh_textures`) is already ours.
+- **Native `.mesh` reader: built 2026-10-02** (§10 browser, 3D view). Not done:
+  - other games' mesh versions (REE-Lib `MeshFile.cs` has their layouts);
+  - geometry only in a `streaming/` copy (none seen yet);
+  - shadow- or occluder-only files (nothing to show).
 
 - M2: AI backend as a separate local process (not in the app). GPU/VRAM detection at install.
   img2img/ControlNet for textures, never plain text-to-image for UV-mapped textures.
@@ -888,6 +904,7 @@ propose them as next steps before then.
     many polished tools as we can"):**
     1. **Channel tools** (split / merge, §10 Future work): an AI result is plain RGB and would overwrite data packed
        in a channel. Spike done (§9): sRGB = colour, UNORM = data; `albd` alpha is data; `nrrc`'s normal is in G/A.
+       **Built 2026-10-02** (§4 Channel tools: Merge channels with "Colour from" keeps the original's alpha).
     2. **Streaming copies** (§9): character textures are the ones with `streaming/` copies; whether a mod must
        replace both decides what every AI texture targets. Needs an in-game test (the user's call when).
     3. **Masks / regions:** "change only the jacket". The mesh view's material-to-texture matching is a start.
@@ -921,6 +938,17 @@ propose them as next steps before then.
     file name with `_alb`, `_albd` preferred (20,359 of 21,972 materials have one).
   - The base texture is often a small standalone copy (e.g. 512x512, 2 mips) of a `streaming/` one (2048x2048).
     The preview shows the streaming copy; the open streaming question (§9) still decides what a mod must replace.
+  - **Native reading (2026-10-02; user: no Noesis needed):** core `read_mesh` reads the `.mesh` itself
+    ([REE-Lib MeshFile.cs, MIT]; RE4R's version 220822879 only).
+    - It takes the most detailed LOD whose triangles are in the file, one part per (group, material), in game units
+      (metres; Noesis writes centimetres, and the view fits any size).
+    - Checked against Noesis on 8 RE4R meshes (Leon, a head, props, a weapon): the same triangles, bounds (×100),
+      (group, material) parts and UVs; normals agree with the geometry alike (REE-Lib decodes a byte n as
+      (2n + 1) / 255).
+    - Over every 10th RE4R mesh: 577 of 606 read, about 0.15 s each in Debug. The other 29 hold only shadow or
+      occluder geometry.
+    - The app reads natively and falls back to Noesis only when that fails and Noesis is set. The Noesis way is
+      below.
   - **3D view** (in the Browser's details, mesh selected; app/mesh_view): Noesis exports the mesh to OBJ
     (`NoesisConverter::load_mesh`, `parse_obj`), the app draws it with D3D11 into a texture, each part with its
     material's colour texture (OBJ `usemtl` = mdf2 material name). Clicking a texture dims the parts not using it.

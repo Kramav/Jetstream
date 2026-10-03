@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <stdexcept>
 
@@ -116,6 +120,188 @@ MeshModel parse_obj(const std::string& text) {
     }
     std::erase_if(model.parts, [](const MeshPart& m) { return m.vertices.empty(); });
     if (model.triangles == 0) throw std::runtime_error("the mesh has no triangles");
+    return model;
+}
+
+// ---- Native .mesh reading (user, 2026-10-02: no Noesis needed for the 3D view) ----
+
+namespace {
+
+// Little-endian reads with bounds checks: a damaged file throws instead of reading past the end.
+struct Bytes {
+    const std::string& b;
+    const std::filesystem::path& file;
+    template <class T>
+    T at(std::uint64_t offset) const {
+        if (offset > b.size() || sizeof(T) > b.size() - offset)
+            throw std::runtime_error(file.string() + " is cut short or damaged");
+        T v;
+        std::memcpy(&v, b.data() + offset, sizeof(T));
+        return v;
+    }
+    std::string text(std::uint64_t offset) const {  // zero-terminated ASCII
+        std::string s;
+        for (char c; (c = at<char>(offset)) != 0; ++offset) s += c;
+        return s;
+    }
+};
+
+float half_to_float(std::uint16_t h) {
+    const std::uint32_t sign = std::uint32_t(h & 0x8000) << 16, exp = (h >> 10) & 0x1F, mant = h & 0x3FF;
+    std::uint32_t bits;
+    if (exp == 0) {
+        if (mant == 0) {
+            bits = sign;
+        } else {  // subnormal: normalise
+            int e = -1;
+            std::uint32_t m = mant;
+            do {
+                ++e;
+                m <<= 1;
+            } while (!(m & 0x400));
+            bits = sign | std::uint32_t(127 - 15 - e) << 23 | (m & 0x3FF) << 13;
+        }
+    } else if (exp == 31) {
+        bits = sign | 0x7F800000 | mant << 13;
+    } else {
+        bits = sign | (exp + 127 - 15) << 23 | mant << 13;
+    }
+    float f;
+    std::memcpy(&f, &bits, 4);
+    return f;
+}
+
+}  // namespace
+
+MeshModel read_mesh(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) throw std::runtime_error("can't open " + file.string());
+    const std::string data((std::istreambuf_iterator<char>(in)), {});
+    const Bytes b{data, file};
+    // [REE-Lib MeshFile.cs, MIT] Header, RE4 layout (internal version 220822879, RE4R's .mesh.221108797): name count
+    // @20, offsets (u64) of the LODs @32, the vertex buffer header @72, material name indices @112, name offsets
+    // @144.
+    if (b.at<std::uint32_t>(0) != 0x4853454D) throw std::runtime_error(file.string() + " is not an RE Engine mesh");
+    if (const auto version = b.at<std::uint32_t>(4); version != 220822879)
+        throw std::runtime_error("mesh version " + std::to_string(version) +
+                                 " isn't read yet (RE4R's is); set Noesis64.exe in the Pipeline panel for it");
+    const auto name_count = b.at<std::uint16_t>(20);
+    const auto lods_at = b.at<std::uint64_t>(32), buffer_at = b.at<std::uint64_t>(72),
+               materials_at = b.at<std::uint64_t>(112), names_at = b.at<std::uint64_t>(144);
+    if (!lods_at || !buffer_at) throw std::runtime_error(file.string() + " holds no mesh (only shadow or collision?)");
+
+    // The vertex buffer: element headers {i16 type, i16 size, i32 offset}, then positions (3 floats), normals (4
+    // signed bytes, then the tangent's 4), UVs (2 halfs) at their offsets from the buffer's start, then the indices.
+    const auto elements_at = b.at<std::uint64_t>(buffer_at), vertices_at = b.at<std::uint64_t>(buffer_at + 8);
+    const auto total_size = b.at<std::uint32_t>(buffer_at + 24), vertices_size = b.at<std::uint32_t>(buffer_at + 28);
+    const auto element_count = b.at<std::uint16_t>(buffer_at + 32);
+    struct Element {
+        std::int16_t type, size;
+        std::int32_t offset;
+    };
+    std::map<int, Element> elements;  // by type: 0 position, 1 normal and tangent, 2 UV
+    for (std::uint64_t i = 0; i < element_count; ++i) {
+        const Element e{b.at<std::int16_t>(elements_at + 8 * i), b.at<std::int16_t>(elements_at + 8 * i + 2),
+                        b.at<std::int32_t>(elements_at + 8 * i + 4)};
+        elements.try_emplace(e.type, e);
+    }
+    if (element_count < 2 || !elements.contains(0)) throw std::runtime_error(file.string() + ": no vertex positions");
+    const Element positions = elements.at(0);
+    const auto second = b.at<std::int32_t>(elements_at + 8 + 4);  // the next element starts where positions end
+    const std::uint64_t vertex_count =
+        positions.size > 0 && second > positions.offset ? std::uint64_t(second - positions.offset) / positions.size : 0;
+
+    // Mesh data: LOD count @0, material count @1, integer indices @6, then the LOD offsets' offset @56 (after a
+    // bounding sphere and box).
+    const auto lod_count = b.at<std::uint8_t>(lods_at), material_count = b.at<std::uint8_t>(lods_at + 1);
+    const bool integer_indices = b.at<std::uint8_t>(lods_at + 6) != 0;
+    const auto lod_list = b.at<std::uint64_t>(lods_at + 56);
+    const std::uint64_t index_size = integer_indices ? 4 : 2;
+    const std::uint64_t indices_at = vertices_at + vertices_size,
+                        index_count = total_size > vertices_size ? (std::uint64_t(total_size) - vertices_size) / index_size : 0;
+
+    std::vector<std::string> names(name_count), materials(material_count);
+    for (std::uint64_t i = 0; i < name_count && names_at; ++i) names[i] = b.text(b.at<std::uint64_t>(names_at + 8 * i));
+    for (std::uint64_t i = 0; i < material_count && materials_at; ++i) {
+        const auto index = b.at<std::uint16_t>(materials_at + 2 * i);
+        materials[i] = index < names.size() ? names[index] : "material" + std::to_string(i);
+    }
+
+    // The most detailed LOD whose triangles are all in this file (a streamed mesh keeps the best ones in its
+    // streaming/ copy). Group: {u8 id, u8 submesh count, 6 empty, i32 vertices, i32 indices}, then per submesh
+    // {u16 material, u8, u8, i32 index count, i32 first index, i32 first vertex, i32, i32}.
+    struct Sub {
+        int group;
+        std::uint16_t material;
+        std::uint64_t count, first_index, first_vertex;
+    };
+    std::vector<Sub> subs;
+    for (std::uint64_t lod = 0; lod < lod_count && subs.empty(); ++lod) {
+        const auto lod_at = b.at<std::uint64_t>(lod_list + 8 * lod);
+        const auto group_count = b.at<std::uint8_t>(lod_at);
+        const auto groups_at = b.at<std::uint64_t>(lod_at + 8);
+        std::vector<Sub> found;
+        bool fits = true;
+        for (std::uint64_t g = 0; g < group_count; ++g) {
+            const auto group_at = b.at<std::uint64_t>(groups_at + 8 * g);
+            const int id = b.at<std::uint8_t>(group_at);
+            const auto sub_count = b.at<std::uint8_t>(group_at + 1);
+            for (std::uint64_t k = 0; k < sub_count; ++k) {
+                const std::uint64_t at = group_at + 16 + 24 * k;
+                const Sub sub{id, b.at<std::uint16_t>(at), b.at<std::uint32_t>(at + 4), b.at<std::uint32_t>(at + 8),
+                              b.at<std::uint32_t>(at + 12)};
+                fits = fits && sub.first_index + sub.count <= index_count && sub.first_vertex < vertex_count;
+                found.push_back(sub);
+            }
+        }
+        if (fits) subs = std::move(found);
+    }
+    if (subs.empty())
+        throw std::runtime_error(file.string() + ": its geometry is in its streaming/ copy, which isn't read yet");
+
+    MeshModel model;
+    model.min = {FLT_MAX, FLT_MAX, FLT_MAX};
+    model.max = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    std::map<std::pair<int, std::string>, size_t> parts;  // (group, material) -> part
+    const auto normals = elements.find(1), uvs = elements.find(2);
+    for (const Sub& sub : subs) {
+        const std::string material = sub.material < materials.size() ? materials[sub.material] : "";
+        const auto [it, added] = parts.try_emplace({sub.group, material}, model.parts.size());
+        if (added) model.parts.push_back({material, sub.group, {}});
+        std::vector<float>& out = model.parts[it->second].vertices;
+        for (std::uint64_t i = 0; i + 2 < sub.count; i += 3) {
+            for (std::uint64_t c = 0; c < 3; ++c) {
+                const std::uint64_t at = indices_at + (sub.first_index + i + c) * index_size;
+                const std::uint64_t v =
+                    sub.first_vertex + (integer_indices ? b.at<std::uint32_t>(at) : b.at<std::uint16_t>(at));
+                if (v >= vertex_count) throw std::runtime_error(file.string() + ": a triangle points past the vertices");
+                const std::uint64_t p = vertices_at + std::uint64_t(positions.offset) + v * 12;
+                const float x = b.at<float>(p), y = b.at<float>(p + 4), z = b.at<float>(p + 8);
+                float nx = 0, ny = 1, nz = 0, u = 0, w = 0;
+                if (normals != elements.end()) {  // a signed byte n stands for (2n + 1) / 255
+                    const std::uint64_t q = vertices_at + std::uint64_t(normals->second.offset) + v * normals->second.size;
+                    nx = (2 * b.at<std::int8_t>(q) + 1) / 255.0f;
+                    ny = (2 * b.at<std::int8_t>(q + 1) + 1) / 255.0f;
+                    nz = (2 * b.at<std::int8_t>(q + 2) + 1) / 255.0f;
+                    if (const float len = std::sqrt(nx * nx + ny * ny + nz * nz); len > 0) nx /= len, ny /= len, nz /= len;
+                }
+                if (uvs != elements.end()) {
+                    const std::uint64_t q = vertices_at + std::uint64_t(uvs->second.offset) + v * uvs->second.size;
+                    u = half_to_float(b.at<std::uint16_t>(q));
+                    w = half_to_float(b.at<std::uint16_t>(q + 2));
+                }
+                out.insert(out.end(), {x, y, z, nx, ny, nz, u, w});
+                const float pos[] = {x, y, z};
+                for (size_t a = 0; a < 3; ++a) {
+                    model.min[a] = std::min(model.min[a], pos[a]);
+                    model.max[a] = std::max(model.max[a], pos[a]);
+                }
+            }
+            ++model.triangles;
+        }
+    }
+    std::erase_if(model.parts, [](const MeshPart& m) { return m.vertices.empty(); });
+    if (model.triangles == 0) throw std::runtime_error(file.string() + " has no triangles");
     return model;
 }
 
