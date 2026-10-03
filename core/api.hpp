@@ -4,19 +4,24 @@
 // reads one request per line from stdin and writes one reply per line.
 //
 // Request: {"op": "<name>", ...}. Reply: {"ok": true, ...} or {"ok": false, "error": "<why>"}.
-//   types                                  every block type: inputs, outputs, kinds, fields
+//   types                                  every block type: inputs, outputs, kinds, fields, and an "ai" note on when to
+//                                          use it
 //   new      [profile]                     an empty graph (profile "re4r" by default)
 //   open     file                          load a graph file (older files migrated, as in the app)
 //   save     [file]                        write it (to the file opened or last saved if none given)
 //   graph                                  blocks (id, type, title, params) and links
 //   add      type                          -> id
 //   remove   id                            the block and its links
-//   set      id, input, value              a typed field (an input's, or an output's field such as Export's "png")
+//   set      id, input, value              a typed field (an input's, or an output's field such as Export's "png"; a
+//                                          Files in folder block's "show": which file previews show)
 //   link     from, from_port, to, to_port  refused with the reason if the rules don't allow it
 //   unlink   from, from_port, to, to_port
 //   next     id, port, output (bool)       block types that could attach to that pin, and through which port
 //   validate                               every problem that would stop a run
-//   preview                                every output's value as known without running (nothing is touched)
+//   preview                                every output's value as known without running (nothing is touched), and
+//                                          "lists": each list block's files (name, item)
+//   image    id, [size]                    a block's picture as it is now, as the app's thumbnails work it out: "png"
+//                                          (base64), width, height; size 16 to 1024 (default 512)
 //   plan     [noesis], [game_files]        the file changes a run would make, each judged by the guardrails (Guard):
 //                                          ok, needs approval (removing a file; writing outside the graph's folder),
 //                                          refused (game_files, the folder in Noesis's RE plugin's NativesPath.txt,

@@ -57,6 +57,13 @@ Bgra channel_image(const Bgra& image, Channel channel);
 // size (throws std::runtime_error naming the size).
 void merge_channels(Bgra& base, const Bgra* colour, const std::array<const Bgra*, 4>& channels);
 
+// ---- Masks (CLAUDE.md §10: "change only the jacket") ----
+
+// `edited` over `base` where `mask` is white (its red; grey between mixes), `base` where black: the colour only, base's
+// alpha kept. `feather`: pixels the mask's edge is softened over; `invert`: the other way round. Every image must be
+// base's size (throws std::runtime_error).
+void masked_blend(Bgra& base, const Bgra& edited, const Bgra& mask, float feather, bool invert);
+
 // ---- Replace photo: a picture into a framed photo's place, keeping the old photo's ageing ----
 
 // The old photo's area inside an opaque frame. A frame's inner edge runs parallel to its outer outline (alpha, or the

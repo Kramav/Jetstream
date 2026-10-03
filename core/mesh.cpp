@@ -305,4 +305,59 @@ MeshModel read_mesh(const std::filesystem::path& file) {
     return model;
 }
 
+std::vector<std::uint8_t> uv_mask(const std::vector<const MeshPart*>& parts, unsigned width, unsigned height,
+                                  unsigned grow) {
+    std::vector<std::uint8_t> on(size_t(width) * height, 0);
+    const auto wrap = [](long v, unsigned n) { return size_t(((v % long(n)) + long(n)) % long(n)); };
+    for (const MeshPart* part : parts) {
+        const std::vector<float>& v = part->vertices;
+        for (size_t t = 0; t + 3 * MeshPart::kStride <= v.size(); t += 3 * MeshPart::kStride) {
+            // The triangle in pixels, moved by whole tiles so it sits near the first one (it stays in one piece).
+            float x[3], y[3];
+            float cu = 0, cv = 0;
+            for (size_t c = 0; c < 3; ++c) {
+                cu += v[t + c * MeshPart::kStride + 6] / 3;
+                cv += v[t + c * MeshPart::kStride + 7] / 3;
+            }
+            const float tu = std::floor(cu), tv = std::floor(cv);
+            for (size_t c = 0; c < 3; ++c) {
+                x[c] = (v[t + c * MeshPart::kStride + 6] - tu) * float(width);
+                y[c] = (v[t + c * MeshPart::kStride + 7] - tv) * float(height);  // v = 0 at the top, as stored
+            }
+            const float area = (x[1] - x[0]) * (y[2] - y[0]) - (x[2] - x[0]) * (y[1] - y[0]);
+            const long x0 = long(std::floor(std::min({x[0], x[1], x[2]}))), x1 = long(std::ceil(std::max({x[0], x[1], x[2]})));
+            const long y0 = long(std::floor(std::min({y[0], y[1], y[2]}))), y1 = long(std::ceil(std::max({y[0], y[1], y[2]})));
+            if (x1 - x0 > long(width) * 4 || y1 - y0 > long(height) * 4) continue;  // broken UVs: skip, don't stall
+            for (long py = y0; py <= y1; ++py)
+                for (long px = x0; px <= x1; ++px) {
+                    const float sx = float(px) + 0.5f, sy = float(py) + 0.5f;
+                    float e[3];
+                    for (int k = 0; k < 3; ++k) {  // each edge's side, by the triangle's own winding
+                        const int a = k, b = (k + 1) % 3;
+                        e[k] = ((x[b] - x[a]) * (sy - y[a]) - (y[b] - y[a]) * (sx - x[a])) * (area < 0 ? -1.0f : 1.0f);
+                    }
+                    if (area != 0 && e[0] >= 0 && e[1] >= 0 && e[2] >= 0) on[wrap(py, height) * width + wrap(px, width)] = 1;
+                }
+        }
+    }
+    for (unsigned g = 0; g < grow; ++g) {  // one pixel out each time, to the 8 neighbours
+        std::vector<std::uint8_t> next = on;
+        for (unsigned py = 0; py < height; ++py)
+            for (unsigned px = 0; px < width; ++px)
+                if (on[size_t(py) * width + px])
+                    for (int dy = -1; dy <= 1; ++dy)
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            const long nx = long(px) + dx, ny = long(py) + dy;
+                            if (nx >= 0 && ny >= 0 && nx < long(width) && ny < long(height)) next[size_t(ny) * width + size_t(nx)] = 1;
+                        }
+        on = std::move(next);
+    }
+    std::vector<std::uint8_t> bgra(on.size() * 4);
+    for (size_t i = 0; i < on.size(); ++i) {
+        bgra[i * 4] = bgra[i * 4 + 1] = bgra[i * 4 + 2] = on[i] ? 255 : 0;
+        bgra[i * 4 + 3] = 255;
+    }
+    return bgra;
+}
+
 }  // namespace remod

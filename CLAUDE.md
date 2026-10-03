@@ -541,6 +541,25 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   - Every image must be the base's size (the run says so, pointing to Resize image); the thumbnail stretches to fit.
   - Merging nothing in fails the run.
   - Checked: tests (pixels both ways, a graph run, the thumbnail).
+- **Masks (2026-10-02; §10's "change only the jacket").** Image blocks with thumbnails.
+  - **Mesh mask (`MeshMask`):**
+    - a mesh (read natively, `read_mesh`), the texture or image it's for ("Size of": the mask's size) and Materials
+      (wildcards, `any_pattern`; empty = all);
+    - gives a mask: white where those parts' UV triangles fall (core `uv_mask`; UVs past 0-1 wrap, a triangle moved
+      by whole tiles to stay in one piece), then grown by Grow (advanced, 2 px) over the seams;
+    - no matching material fails the run listing the mesh's materials (`pick_parts`), for the user and an AI;
+    - the thumbnail draws it straight at its own size.
+  - **Blend in mask (`MaskBlend`):** Original, Edited and Mask (any grey image: a Mesh mask, Pick channel, a painted
+    file) give the edit where white, the original where black, mixed between (core `masked_blend`).
+    - Feather (px, softened inwards and outwards: a box blur of the mask) and Invert (advanced).
+    - The original's alpha is kept. Sizes must match (the thumbnail stretches).
+  - Masks from pictures need no block of their own.
+  - Checked: tests (`uv_mask` on a triangle, wrapped and grown; blend pixels, invert, feather, sizes; a graph run; a
+    real mesh: one material's area, and a wrong name listing them). Looked at (an image file, not a screenshot): the
+    mask of Leon's `Pants_Mat` blended white over `cha000_00_lowerbody_albd` covers exactly the trouser panels, so
+    the UV orientation is right.
+  - Not done: a materials dropdown filled from the mesh (the field is text), and matching a mesh's textures
+    automatically (`mesh_textures` needs the game files index).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> [--noesis <exe>]` and from the app's Run button. Programs edit graphs through
   `remod api` (core `ApiSession`, §10 M2).
@@ -892,11 +911,30 @@ propose them as next steps before then.
        - **The app and the CLI's `run` aren't guarded:** there the user runs their own graph.
        - Checked: tests, plus a `plan` of the user's example graph against their real Noesis setup. Its two writes
          to `C:\spike` needed approval and its package write was fine. No API run with real Noesis yet.
-    3. **Results it can see:** thumbnail / Preview pixels handed to the AI, not only drawn in the app.
+    3. **Results it can see. Done 2026-10-02:** API op `image` (id, size 16 to 1024): the block's picture as the app's
+       thumbnails work it out (`preview_image`, a loader shrinking images and decoding textures' mips), as base64
+       PNG. `preview` also gives each list's files, and `set` takes a list block's `show`.
     4. **Manual steps. Done 2026-10-02:** a run stopped at an Edit image replies `"paused": true`, with the step
        "waiting for the user" and its file. The program hands control back, and `edit_done` marks the step done once
        the user has finished.
-    5. Block descriptions for an AI (when to use, when not, examples) beside the tooltip text.
+    5. **Block descriptions for an AI. Done 2026-10-02:** `ai_note(type)` (one table in nodes.cpp), `types`' "ai";
+       custom nodes give their summary. Keep them current when blocks change (they name rules: {name}, Merge
+       channels after AI pictures, never edit_done without the user).
+    6. **The MCP server. Done 2026-10-02 (user: inside remod.exe, approval by a Windows dialog):** core `McpServer`
+       (`core/mcp.*`) speaks MCP (JSON-RPC 2.0, one message per line: initialize, ping, tools/list, tools/call;
+       notifications get no reply) over `ApiSession`; `remod mcp` runs it on stdio.
+       - **Tools, one per op:** list_blocks, new_graph, open_graph, save_graph, show_graph, add_block, remove_block,
+         set_field, link, unlink, next_blocks, validate, preview, view_image (an MCP image), plan_run, run, edit_done.
+         The server's instructions teach the order of work.
+       - **Approval is the user's alone:** no tool takes `approve` (one sent is dropped).
+         - `run` plans, and if anything needs approval, asks `McpOptions::approve` with the list of changes.
+         - The CLI's answer is a Windows dialog (Yes / No, No by default, topmost), which the AI can't click.
+         - Then it runs against that plan, with approve = the answer.
+       - The user's settings decide Noesis-or-built-in and the game files folder; the library's custom nodes are
+         block types for `remod mcp` and `remod api` too.
+       - Checked: tests (handshake, no approve anywhere, a run declined then allowed by the answer only, an AI's own
+         "approve" ignored, view_image's PNG), and a stdio smoke test of `remod mcp`. **Not tried from a real Claude
+         client yet**, nor the dialog itself (it needs the user).
   - **Order (2026-10-02; see also the priority order at the top of §10):** the orchestrator first, over the existing blocks (no generation needed: "replace this
     frame's photo with my picture and package it" works with today's blocks), then the generation block. The texture
     tools below move from "before M2" to "before the generation block".
@@ -907,8 +945,7 @@ propose them as next steps before then.
        **Built 2026-10-02** (§4 Channel tools: Merge channels with "Colour from" keeps the original's alpha).
     2. **Streaming copies** (§9): character textures are the ones with `streaming/` copies; whether a mod must
        replace both decides what every AI texture targets. Needs an in-game test (the user's call when).
-    3. **Masks / regions:** "change only the jacket". The mesh view's material-to-texture matching is a start.
-       Design work.
+    3. **Masks / regions:** "change only the jacket". **Built 2026-10-02** (§4 Masks: Mesh mask, Blend in mask).
     4. **Batch** (§10 Future work): worth it once there's real work per texture, which AI is.
     Done: an unchanged run writes nothing (the run cache, §4); AI iteration means many runs.
 - M3: REFramework Lua runtime reading manifests (triggers → actions).

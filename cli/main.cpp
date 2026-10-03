@@ -1,10 +1,16 @@
 // remod CLI: runs a saved graph headlessly (`run`), plus the pipeline steps as single commands.
 #include "api.hpp"
+#include "custom.hpp"
 #include "graph.hpp"
+#include "mcp.hpp"
 #include "package.hpp"
 #include "profile.hpp"
 #include "settings.hpp"
 #include "texture_converter.hpp"
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 
 #include <algorithm>
 #include <iostream>
@@ -27,7 +33,9 @@ constexpr const char* kUsage =
     "                --out <dir> [--version v] [--author a] [--description d] [--screenshot file]\n"
     "                [--replace true]\n"
     "  remod api     graph editing for programs: one JSON request per line on stdin, one JSON reply per line\n"
-    "                (requests: core/api.hpp)\n";
+    "                (requests: core/api.hpp)\n"
+    "  remod mcp     an MCP server on stdin/stdout for an AI (Claude Code, Claude Desktop): the same graph editing,\n"
+    "                images, and runs whose changes you approve in a dialog (core/mcp.hpp)\n";
 
 struct Command {
     std::vector<std::string> required;
@@ -37,6 +45,7 @@ struct Command {
 const std::map<std::string, Command> kCommands{
     {"run", {{"graph"}, {"profiles", "edited", "noesis"}}},
     {"api", {{}, {}}},
+    {"mcp", {{}, {}}},
     {"tex2png", {{"profile", "tex", "out"}, {"noesis"}}},
     {"png2tex", {{"profile", "png", "original", "out"}, {"noesis"}}},
     {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot", "replace"}}},
@@ -77,6 +86,30 @@ int run(int argc, char** argv) {
         }
     }
 
+    if (cmd->first == "api" || cmd->first == "mcp")  // the user's custom nodes are block types there too
+        for (const remod::CustomNode& c : remod::load_custom_library(remod::custom_library_dir())) remod::register_custom(c);
+    if (cmd->first == "mcp") {
+        // The user's own settings decide how textures convert and which folder is the game files; the approval is a
+        // dialog on the user's screen, which the AI on the other end of stdin can't answer.
+        const remod::Settings settings = remod::load_settings(remod::default_settings_path());
+        remod::McpServer server({.noesis = settings.noesis_textures ? settings.noesis_path : std::string(),
+                                 .game_files = settings.game_files_dir,
+                                 .approve = [](const std::string& changes) {
+                                     const std::string text =
+                                         "An AI working through remod wants to run a graph that makes these changes:"
+                                         "\n\n" + changes + "\nAllow them?";
+                                     const int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+                                     std::wstring wide(size_t(n), L'\0');
+                                     MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), n);
+                                     return MessageBoxW(nullptr, wide.c_str(), L"remod: allow these changes?",
+                                                        MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST |
+                                                            MB_SETFOREGROUND) == IDYES;
+                                 }});
+        for (std::string line; std::getline(std::cin, line);)
+            if (const std::string reply = line.empty() ? "" : server.handle(line); !reply.empty())
+                std::cout << reply << std::endl;  // one message per line, flushed: the client waits for it
+        return 0;
+    }
     if (cmd->first == "api") {
         remod::ApiSession session;
         for (std::string line; std::getline(std::cin, line);)

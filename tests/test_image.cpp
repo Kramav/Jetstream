@@ -372,3 +372,22 @@ TEST_CASE("channel tools: one channel as grey, and channels merged back") {
     const remod::Bgra wide{2, 1, std::vector<std::uint8_t>(8, 0)};
     CHECK_THROWS_WITH(remod::merge_channels(base, &wide, {}), ContainsSubstring("same size"));
 }
+
+TEST_CASE("masked_blend: the edit where the mask is white, the original's alpha kept") {
+    remod::Bgra base{2, 1, {10, 10, 10, 77, 10, 10, 10, 88}};
+    const remod::Bgra edited{2, 1, {200, 200, 200, 255, 200, 200, 200, 255}};
+    const remod::Bgra mask{2, 1, {255, 255, 255, 255, 0, 0, 0, 255}};
+    remod::Bgra a = base;
+    remod::masked_blend(a, edited, mask, 0, false);
+    CHECK(a.pixels == std::vector<std::uint8_t>{200, 200, 200, 77, 10, 10, 10, 88});
+    remod::Bgra b = base;
+    remod::masked_blend(b, edited, mask, 0, true);
+    CHECK(b.pixels == std::vector<std::uint8_t>{10, 10, 10, 77, 200, 200, 200, 88});
+    remod::Bgra c = base;
+    remod::masked_blend(c, edited, mask, 4, false);  // feathered: both pixels in between
+    CHECK(c.pixels[0] > 10);
+    CHECK(c.pixels[0] < 200);
+    CHECK(c.pixels[4] > 10);
+    const remod::Bgra wide{3, 1, std::vector<std::uint8_t>(12, 0)};
+    CHECK_THROWS_WITH(remod::masked_blend(base, wide, mask, 0, false), ContainsSubstring("same size"));
+}

@@ -3,6 +3,7 @@
 // OBJ Noesis exports (NoesisConverter::load_mesh, parse_obj). Textures are applied by the viewer from the material
 // (mesh_textures).
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -36,5 +37,10 @@ MeshModel parse_obj(const std::string& text);
 // part per (group, material). Layout [REE-Lib MeshFile.cs, MIT], RE4R's version only (220822879); others, and meshes
 // whose geometry is only in their streaming/ copy, throw std::runtime_error saying so (Noesis can read those).
 MeshModel read_mesh(const std::filesystem::path& file);
+
+// Where `parts` sit on their texture: a width x height mask, opaque, white where their UV triangles fall (UVs past 0-1
+// wrap, as the game tiles them), black elsewhere, then grown by `grow` pixels (the seams). As 32-bit BGRA rows.
+std::vector<std::uint8_t> uv_mask(const std::vector<const MeshPart*>& parts, unsigned width, unsigned height,
+                                  unsigned grow);
 
 }  // namespace remod

@@ -206,6 +206,16 @@ picture's colour without disturbing that data:
 - **Merge channels** puts channels back: the colour from one image (for example an edited or AI-made picture), and
   any single channel from a grey image. Everything else stays as the base image has it.
 
+## Masks: changing one area only
+
+To change only part of a texture, such as a character's jacket:
+- **Mesh mask** makes the mask. Give it the mesh, the texture, and the material names to include (`*jacket*`; the
+  run lists the names if none match). It's white where those parts sit on the texture.
+- **Blend in mask** takes the original, the edited (or AI-made) picture and a mask. The edit shows where the mask is
+  white and the original where it's black. **Feather** softens the edge.
+
+Any grey picture works as a mask too, for example one you painted, or one made with Pick channel.
+
 ## Custom nodes
 
 Turn a group of blocks you use often into one block of your own.
@@ -247,6 +257,32 @@ The **Run program** block runs a program or script as one step of the graph: an 
 The program runs as you and can change any of your files; nothing checks what it does. Graphs run by the API (an
 AI) need your approval before any program starts. Batch-file arguments can't contain `& | < > ^ % !` or quotes,
 because Windows would run them as commands; use the program's `.exe`, or a `.ps1` / `.py` script.
+
+## Letting an AI build mods (MCP)
+
+`remod mcp` is an MCP server. An AI client such as Claude Code or Claude Desktop can use it to:
+- build and change graphs with the same blocks and rules as the app;
+- check them, and look at their preview pictures;
+- run them.
+
+**Claude Code:**
+
+```powershell
+claude mcp add remod -- "E:\path\to\Jetstream\build\cli\remod.exe" mcp
+```
+
+**Claude Desktop:** add this to `claude_desktop_config.json`:
+
+```json
+{ "mcpServers": { "remod": { "command": "E:\\path\\to\\Jetstream\\build\\cli\\remod.exe", "args": ["mcp"] } } }
+```
+
+**What stays yours:**
+- **Approving changes:** when a run would remove a file, write outside the graph's folder or start a program, a
+  Windows dialog asks **you**, listing the changes. The AI can't answer it, and nothing runs without your Yes.
+- **Edit image steps:** these wait for you. The AI is told to mark one done only after you say you've finished.
+- **Game files:** never changed.
+- **Settings:** it uses the app's choice of texture converter and your Game files folder.
 
 ## Single steps with the CLI
 

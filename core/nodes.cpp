@@ -20,6 +20,7 @@
 #include <iterator>
 #include <optional>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <tuple>
 
@@ -124,6 +125,8 @@ NodeSpec load_tex() {
 
 // Files in folder's patterns: "*" any run of characters, "?" one; ";" or "," between several; ignoring case. Empty:
 // every texture (is_tex_name).
+bool any_pattern(const std::string& name, const std::string& patterns);
+
 bool name_matches(const std::string& name, const std::string& patterns) {
     auto low = [](std::string s) {
         std::ranges::transform(s, s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -131,6 +134,16 @@ bool name_matches(const std::string& name, const std::string& patterns) {
     };
     const std::string n = low(name);
     if (patterns.find_first_not_of(" ;,") == std::string::npos) return is_tex_name(n);
+    return any_pattern(n, patterns);
+}
+
+// `name` matches one of `patterns` ("*" any run of characters, "?" one; ";" or "," between several; ignoring case).
+bool any_pattern(const std::string& name, const std::string& patterns) {
+    auto low = [](std::string s) {
+        std::ranges::transform(s, s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+    const std::string n = low(name);
     std::function<bool(size_t, const std::string&, size_t)> match = [&](size_t i, const std::string& p, size_t j) {
         if (j == p.size()) return i == n.size();
         if (p[j] == '*') return match(i, p, j + 1) || (i < n.size() && match(i + 1, p, j));
@@ -737,6 +750,105 @@ NodeSpec merge_channels_node() {
                 throw GraphError(e.what());
             }
             write_image(r, base, "merged " + merged);
+        },
+        .preview = image_preview,
+    };
+}
+
+// ---- Masks (CLAUDE.md §10: "change only the jacket") ----
+
+// The mesh's parts whose material matches `patterns` (all if empty). Throws, naming the materials there are, if none.
+std::vector<const MeshPart*> pick_parts(const MeshModel& mesh, const std::string& patterns) {
+    std::vector<const MeshPart*> out;
+    std::set<std::string> names;
+    for (const MeshPart& p : mesh.parts) {
+        names.insert(p.material);
+        if (patterns.find_first_not_of(" ;,") == std::string::npos || any_pattern(p.material, patterns)) out.push_back(&p);
+    }
+    if (out.empty()) {
+        std::string list;
+        for (const std::string& n : names) list += (list.empty() ? "" : ", ") + n;
+        throw GraphError("no material matches '" + patterns + "'; this mesh has: " + list);
+    }
+    return out;
+}
+
+// A texture's or image's size: a texture by its header (for this game), an image by its own.
+std::pair<std::uint32_t, std::uint32_t> picture_size(const fs::path& file, const Profile& profile) {
+    if (read_tex_version(file)) {
+        const TexMeta m = read_tex_meta(file, profile);
+        return {m.width, m.height};
+    }
+    return image_size(file);
+}
+
+NodeSpec mesh_mask_node() {
+    return {
+        .type = "MeshMask",
+        .title = "Mesh mask",
+        .summary = "A mask of where some of a mesh's parts sit on their texture: white where their materials' UV "
+                   "triangles fall, black elsewhere. E.g. only the jacket of a character, for Blend in mask.",
+        .inputs = {{.name = "mesh", .label = "Mesh", .type = Path, .widget = Widget::Path, .required = true,
+                    .hint = "The game's .mesh file (RE4R), e.g. from your REtool folder.", .path = PathKind::OpenFile},
+                   {.name = "size_of", .label = "Size of", .type = Path, .widget = Widget::Path, .required = true,
+                    .hint = "The texture (or an image of it) the mask is for: the mask gets its size.",
+                    .path = PathKind::OpenTexture},
+                   {.name = "materials", .label = "Materials", .type = Text, .widget = Widget::Text,
+                    .hint = "Which parts, by material name: * stands for anything, ; between several (e.g. "
+                            "*jacket*). Empty: every part. A run that finds none lists the mesh's materials."},
+                   advanced(number_input("grow", "Grow", "Pixels the mask reaches past the parts' edges, to cover "
+                                         "the seams.", "2", 0, 64, "%.0f px")),
+                   save_to_input()},
+        .outputs = {{"image", Image, "mask"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const fs::path& base = r.run.options.base_dir;
+            const MeshModel mesh = [&] {
+                try {
+                    return read_mesh(clean_path(r.text("mesh"), base));
+                } catch (const std::runtime_error& e) {
+                    throw GraphError(e.what());
+                }
+            }();
+            const auto [w, h] = picture_size(clean_path(r.text("size_of"), base), r.profile());
+            const auto parts = pick_parts(mesh, r.text("materials"));
+            const Bgra mask{w, h, uv_mask(parts, w, h, unsigned(number(r, "grow")))};
+            write_image(r, mask, "mask of " + std::to_string(parts.size()) + " part(s)");
+        },
+        .preview = image_preview,
+    };
+}
+
+NodeSpec mask_blend_node() {
+    return {
+        .type = "MaskBlend",
+        .title = "Blend in mask",
+        .summary = "The edited image where the mask is white, the original where it's black, mixed in between: an "
+                   "edit or an AI picture on one area only (e.g. a Mesh mask's jacket). The original's alpha is kept.",
+        .inputs = {image_input("base", "Original", "The image to change in places; the result has its size."),
+                   image_input("edited", "Edited", "The changed image (same size): what shows where the mask is white."),
+                   image_input("mask", "Mask", "A grey image: white takes the edit, black keeps the original (e.g. a "
+                                               "Mesh mask, or Pick channel of a painted mask)."),
+                   number_input("feather", "Feather", "Pixels the mask's edge is softened over. 0: a hard edge.", "0",
+                                0, 256, "%.0f px"),
+                   advanced({.name = "invert", .label = "Invert", .type = Text, .widget = Widget::Checkbox,
+                             .hint = "Change where the mask is black instead."}),
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const fs::path& base_dir = r.run.options.base_dir;
+            Bgra base = load_image(clean_path(r.text("base"), base_dir));
+            const Bgra edited = load_image(clean_path(r.text("edited"), base_dir));
+            const Bgra mask = load_image(clean_path(r.text("mask"), base_dir));
+            try {
+                masked_blend(base, edited, mask, number(r, "feather"), r.text("invert") == "true");
+            } catch (const std::runtime_error& e) {
+                throw GraphError(e.what());
+            }
+            write_image(r, base, "blended in the mask");
         },
         .preview = image_preview,
     };
@@ -1582,7 +1694,8 @@ const std::vector<NodeSpec>& node_specs() {
     static const std::vector<NodeSpec> specs{
         // The main steps: the texture pipeline, then file steps.
         load_tex(), files_in_folder(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
-        resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), replace_photo_node(),
+        resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), mesh_mask_node(),
+        mask_blend_node(), replace_photo_node(),
         preview_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
@@ -1590,6 +1703,69 @@ const std::vector<NodeSpec>& node_specs() {
         node_input(), node_output(),
     };
     return specs;
+}
+
+const char* ai_note(std::string_view type) {
+    // For an AI building graphs (CLAUDE.md §10 M2, item 5): when to use a block, when not, an example. The tooltip
+    // text (summary) says what it does; this says how it fits in.
+    static const std::map<std::string_view, const char*> notes{
+        {"LoadTex", "Start of most graphs: the game's original texture. Pick a file inside an extracted natives/STM "
+                    "folder so its in-game path is known; otherwise fill In-game path. For many textures use Files in "
+                    "folder instead and link it into Texture file."},
+        {"FilesInFolder", "Repeats everything it feeds once per matching file (fan-out). Put {name} in every file "
+                          "name those blocks write (e.g. edits/{name}.png). Package collects all items. Use 'show' "
+                          "(set) to pick which file previews and images show."},
+        {"ExportImage", "Texture -> editable image file. Needed before any image block or Edit image. Its Image file "
+                        "is required; a file going to Edit image is kept between runs (the user's edit)."},
+        {"EditImage", "The user's manual step: a run pauses here. Never mark it done yourself: tell the user which "
+                      "file to edit and call edit_done only after they say they've finished."},
+        {"ImportImage", "Bring in a picture that already exists (a photo, a logo, an AI result written by Run "
+                        "program). Not for game textures: use Original texture."},
+        {"SaveTex", "Image -> game texture with the original's size, format and mips. Link the original texture "
+                    "(through a Split if it also feeds Export image). The image must be the original's size."},
+        {"AdjustColour", "Hue, saturation, brightness, contrast on the colour; alpha kept. Not for data textures "
+                         "(nrrc, nrmr, atos, occ, msk: their channels are data, not colour)."},
+        {"ResizeImage", "To a size or to match another image or texture (Match size of). Use before Save as texture "
+                        "or Merge channels when sizes differ."},
+        {"OverlayImage", "One image on top of another at x, y (logos, stamps). The base's alpha is kept."},
+        {"PickChannel", "One channel as a grey image, to look at or edit data (e.g. an albd texture's alpha)."},
+        {"MeshMask", "A mask of some of a mesh's parts on their texture, by material name (e.g. *jacket*). Use it to "
+                     "change one area only: feed Blend in mask. A wrong name fails the run listing the materials."},
+        {"MaskBlend", "Puts an edited or AI-made image into the original only where a mask is white (a Mesh mask, a "
+                      "painted mask); feather the edge a few pixels. Then Merge channels if the texture packs data, "
+                      "and Convert image to texture."},
+        {"MergeChannels", "Put an edited or AI-made picture into an original's colour while keeping its alpha (data): "
+                          "base = the original image, Colour from = the new picture. Required after any AI image "
+                          "result that will replace a texture with packed channels."},
+        {"ReplacePhoto", "Only for RE4R UI frames holding an old photo (cs_ui3210_file_*): puts a new picture in the "
+                         "photo's place, keeping the frame and the photo's ageing. Not for general overlays."},
+        {"Preview", "Shows an image on the graph; changes nothing. Use image on it to see an intermediate result."},
+        {"PackageMod", "End of a mod graph: textures (any number, or every item of a list) into a Fluffy Mod Manager "
+                       ".zip. Needs a mod name and output folder; Replace existing to rebuild."},
+        {"CopyFile", "Copy a file (backups, staging). Writing outside the graph's folder needs the user's approval."},
+        {"MoveFile", "Move a file; removing the original needs the user's approval."},
+        {"RenameFile", "Rename a file in place; needs the user's approval (it removes the old name)."},
+        {"DeleteFile", "Delete a file (to the Recycle Bin). Always needs the user's approval; avoid unless asked."},
+        {"MakeFolder", "Make a folder before steps write into it (they also make folders themselves)."},
+        {"RunProgram", "Run a program or script (claude -p, python, an upscaler) with {in}/{out}/{name} in its "
+                       "arguments; passes on what it printed and the file it wrote. Starting it always needs the "
+                       "user's approval. Reruns only when its inputs change (Always run to force)."},
+        {"Value", "A value kept in the graph (output folder, version, author). Feed several places through a Split."},
+        {"Text", "Builds text from parts: {1}, {2}... (mod names, file names, arguments for Run program)."},
+        {"Split", "One output to several inputs (an output feeds one input). Use whenever a value is needed twice."},
+        {"JoinPath", "Folder + relative path -> a path (Add must be relative)."},
+        {"PathParts", "A path's folder, name or extension."},
+        {"ChangeExtension", "Same path with another extension (e.g. .png for a texture's edit file)."},
+        {"CutText", "Keep the part of a text or path after / before a marker (e.g. after natives/STM/ for an "
+                    "in-game path)."},
+        {"RequireFile", "Fail early with a clear message when a needed file isn't there."},
+        {"NodeInput", "Only inside a custom node's own graph: one of its input pins."},
+        {"NodeOutput", "Only inside a custom node's own graph: one of its output pins."},
+    };
+    const auto it = notes.find(type);
+    if (it != notes.end()) return it->second;
+    const NodeSpec* spec = find_spec(type);  // a custom node: its own summary
+    return spec ? spec->summary : "";
 }
 
 const NodeSpec* find_spec(std::string_view type) {
@@ -1790,6 +1966,31 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
                     px[0] = 255, px[1] = 255, px[2] = 0;
                 }
             return out;
+        }
+        if (n->type == "MeshMask") {  // drawn straight at the thumbnail's size
+            const auto mesh_file = text("mesh"), size_file = text("size_of");
+            const auto grow = number_of("grow");
+            if (!mesh_file || mesh_file->empty() || !size_file || size_file->empty() || !grow || !profile)
+                return std::nullopt;
+            const MeshModel mesh = read_mesh(clean_path(*mesh_file, base_dir));
+            const auto [w, h] = picture_size(clean_path(*size_file, base_dir), *profile);
+            const float scale = std::min(1.0f, float(max_side) / float(std::max(w, h)));
+            const unsigned sw = std::max(1u, unsigned(w * scale)), sh = std::max(1u, unsigned(h * scale));
+            const auto parts = pick_parts(mesh, text("materials").value_or(""));
+            return ImagePreview{{sw, sh, uv_mask(parts, sw, sh, unsigned(std::lround(*grow * scale)))}, scale};
+        }
+        if (n->type == "MaskBlend") {
+            auto base = image("base");
+            auto edited = image("edited");
+            auto mask = image("mask");
+            const auto feather = number_of("feather");
+            if (!base || !edited || !mask || !feather) return std::nullopt;
+            for (ImagePreview* p : {&*edited, &*mask})
+                if (p->image.width != base->image.width || p->image.height != base->image.height)
+                    p->image = resize_image(p->image, base->image.width, base->image.height, Fit::Stretch);
+            masked_blend(base->image, edited->image, mask->image, *feather * base->scale,
+                         text("invert").value_or("") == "true");
+            return base;
         }
         if (n->type == "PickChannel") {
             auto img = image("image");

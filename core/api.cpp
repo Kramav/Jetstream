@@ -1,13 +1,19 @@
 #include "api.hpp"
 
+#include "image.hpp"
 #include "settings.hpp"
 #include "setup.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <functional>
+#include <iterator>
+#include <optional>
+#include <random>
 
 namespace remod {
 
@@ -57,8 +63,8 @@ json types() {
             if (out.field) o["field"] = out.field;  // typed with `set`, under this name
             outputs.push_back(std::move(o));
         }
-        all.push_back({{"type", s.type}, {"title", s.title}, {"summary", s.summary}, {"family", family(s.family)},
-                       {"manual", s.manual}, {"inputs", inputs}, {"outputs", outputs}});
+        all.push_back({{"type", s.type}, {"title", s.title}, {"summary", s.summary}, {"ai", ai_note(s.type)},
+                       {"family", family(s.family)}, {"manual", s.manual}, {"inputs", inputs}, {"outputs", outputs}});
     }
     return all;
 }
@@ -102,6 +108,49 @@ json statuses(const std::map<int, NodeStatus>& nodes) {
             n["items"].push_back(std::move(item));
         }
         out.push_back(std::move(n));
+    }
+    return out;
+}
+
+// A file's picture at most `size` pixels on a side, with its scale (preview_image's loader): a texture by its own mip
+// (decode_tex), an image file through WIC or our TGA reader.
+std::optional<ImagePreview> shrunk_image(const fs::path& file, unsigned size) {
+    try {
+        unsigned full_w = 0, full_h = 0;
+        Bgra img;
+        if (read_tex_version(file)) {
+            img = decode_tex(file, size, &full_w, &full_h);
+        } else {
+            img = load_image(file);
+            full_w = img.width, full_h = img.height;
+        }
+        if (const unsigned side = std::max(img.width, img.height); side > size)
+            img = resize_image(img, std::max(1u, img.width * size / side), std::max(1u, img.height * size / side),
+                               Fit::Stretch);
+        return ImagePreview{img, full_w ? float(img.width) / float(full_w) : 1.0f};
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+// A picture as base64 PNG text (JSON carries no bytes).
+std::string png_base64(const Bgra& image) {
+    const fs::path file = fs::temp_directory_path() / ("remod_api_" + std::to_string(std::random_device{}()) + ".png");
+    save_png(file, image);
+    std::ifstream in(file, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), {});
+    in.close();
+    std::error_code ec;
+    fs::remove(file, ec);
+    static constexpr char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        const unsigned n = std::uint8_t(bytes[i]) << 16 | (i + 1 < bytes.size() ? std::uint8_t(bytes[i + 1]) << 8 : 0) |
+                           (i + 2 < bytes.size() ? std::uint8_t(bytes[i + 2]) : 0);
+        out += digits[n >> 18 & 63];
+        out += digits[n >> 12 & 63];
+        out += i + 1 < bytes.size() ? digits[n >> 6 & 63] : '=';
+        out += i + 2 < bytes.size() ? digits[n & 63] : '=';
     }
     return out;
 }
@@ -158,7 +207,9 @@ std::string ApiSession::call(const std::string& request) {
             const NodeSpec& spec = *find_spec(n.type);
             const InputSpec* in = find_input(spec, input);
             const bool field = std::ranges::any_of(spec.outputs, [&](const PortSpec& o) { return o.field && input == o.field; });
-            if (!field && !(in && in->editable()))
+            // A list block's "show": which of its files previews and images show (an item key from `preview`'s lists).
+            const bool shown = input == "show" && std::ranges::any_of(spec.outputs, [](const PortSpec& o) { return o.list; });
+            if (!field && !shown && !(in && in->editable()))
                 throw GraphError(std::string(spec.title) + " has no typed field '" + input + "'");
             n.params[input] = r.at("value").get<std::string>();
         } else if (op == "link") {
@@ -173,6 +224,26 @@ std::string ApiSession::call(const std::string& request) {
             for (const auto& c : graph_.choices_for_pin(n.id, r.at("port").get<std::string>(), r.at("output").get<bool>()))
                 choices.push_back({{"type", c.spec->type}, {"port", c.port}});
             reply["choices"] = choices;
+        } else if (op == "image") {
+            // What a block's picture looks like now, worked out as the app's thumbnails are (CLAUDE.md §10 M2: results
+            // an AI can see): an image block's result, a texture, a Preview block's input.
+            const Node& n = node_of(graph_, r);
+            const unsigned size = std::clamp(r.value("size", 512u), 16u, 1024u);
+            const fs::path base = file_.empty() ? fs::current_path() : fs::absolute(file_).parent_path();
+            std::optional<Profile> profile;
+            if (const fs::path profiles = find_profiles_dir(); !profiles.empty()) try {
+                    profile = load_profile_by_id(profiles, graph_.profile);
+                } catch (const std::exception&) {  // Resize's "Match size of" then can't read a texture's size
+                }
+            std::string why;
+            const auto made = preview_image(graph_, preview_values(graph_, base), n.id, base, size,
+                                            [&](const fs::path& p) { return shrunk_image(p, size); },
+                                            profile ? &*profile : nullptr, &why);
+            if (!made) throw GraphError(why.empty() ? "no picture for that block yet (nothing it shows is known before a run?)"
+                                                    : why);
+            reply["png"] = png_base64(made->image);
+            reply["width"] = made->image.width;
+            reply["height"] = made->image.height;
         } else if (op == "plan" || op == "run") {
             // Guardrails (CLAUDE.md §10 M2): a run only after a plan, and only against that plan.
             if (file_.empty()) throw GraphError("save the graph first: a run's folder and relative paths come from its file");
@@ -246,9 +317,12 @@ std::string ApiSession::call(const std::string& request) {
         } else if (op == "preview") {
             const fs::path base = file_.empty() ? fs::current_path() : fs::absolute(file_).parent_path();
             json values = json::array();
-            for (const auto& [key, value] : preview_values(graph_, base))
+            std::map<int, std::vector<ListItem>> lists;
+            for (const auto& [key, value] : preview_values(graph_, base, &lists))
                 values.push_back({{"node", key.first}, {"output", key.second}, {"value", value}});
             reply["values"] = values;
+            for (const auto& [id, items] : lists)  // a list block's files: `set` its "show" to an item to see that one
+                for (const ListItem& it : items) reply["lists"][std::to_string(id)].push_back({{"name", it.name}, {"item", it.key}});
         } else {
             throw GraphError("unknown op '" + op + "'");
         }

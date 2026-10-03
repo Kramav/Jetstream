@@ -110,6 +110,8 @@ struct NodeSpec {
 const std::vector<NodeSpec>& node_specs();
 const NodeSpec* find_spec(std::string_view type);  // built in, else a registered custom node (custom.hpp)
 std::vector<const NodeSpec*> all_specs();           // node_specs, then the custom nodes: for menus and palettes
+// For an AI building graphs (the API's `types`): when to use the block, when not, an example ("" if none).
+const char* ai_note(std::string_view type);
 const InputSpec* find_input(const NodeSpec& spec, std::string_view name);
 
 // The picker a typed value of `type` gets (a Value's field takes the kind it feeds); None for text.

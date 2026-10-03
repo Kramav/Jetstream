@@ -1,3 +1,5 @@
+#include "graph.hpp"
+#include "image.hpp"
 #include "mesh.hpp"
 #include "texture_converter.hpp"
 
@@ -143,5 +145,57 @@ TEST_CASE("read_mesh says what it can't read") {
     other.replace(0, 8, std::string("MESH\x01\x02\x03\x04", 8));  // another game's version
     CHECK_THROWS_WITH(remod::read_mesh(write("other.mesh", other)), Catch::Matchers::ContainsSubstring("isn't read yet"));
     CHECK_THROWS_WITH(remod::read_mesh(write("short.mesh", "MESH")), Catch::Matchers::ContainsSubstring("cut short"));
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("uv_mask: a part's triangles on its texture, wrapped UVs, grown") {
+    // One triangle over the top-left half of the texture: UVs (0,0), (1,0), (0,1).
+    remod::MeshPart part{"Jacket", 0, {0, 0, 0, 0, 0, 1, 0, 0, /**/ 0, 0, 0, 0, 0, 1, 1, 0, /**/ 0, 0, 0, 0, 0, 1, 0, 1}};
+    auto at = [](const std::vector<std::uint8_t>& m, unsigned x, unsigned y) { return m[(y * 4 + x) * 4]; };
+    const auto mask = remod::uv_mask({&part}, 4, 4, 0);
+    CHECK(at(mask, 0, 0) == 255);
+    CHECK(at(mask, 3, 3) == 0);
+    CHECK(mask[3] == 255);  // opaque
+
+    remod::MeshPart tiled = part;  // the same triangle one tile over: wraps to the same place
+    for (size_t i = 6; i < tiled.vertices.size(); i += remod::MeshPart::kStride) tiled.vertices[i] += 1;
+    CHECK(remod::uv_mask({&tiled}, 4, 4, 0) == mask);
+
+    CHECK(at(mask, 2, 2) == 0);  // lit: the pixels whose centres are inside, x + y <= 3
+    const auto grown = remod::uv_mask({&part}, 4, 4, 1);
+    CHECK(at(grown, 2, 2) == 255);  // one pixel past the diagonal
+    CHECK(at(grown, 3, 3) == 0);
+}
+
+TEST_CASE("Mesh mask on a real mesh: one material's area, and a wrong name lists the materials") {
+    const std::string fixtures = env_var("REMOD_FIXTURES");
+    if (fixtures.empty()) SKIP("set REMOD_FIXTURES to run");
+    const std::filesystem::path mesh = std::filesystem::path(fixtures) / "cha000_00.mesh.221108797";
+    const std::filesystem::path tex = std::filesystem::path(fixtures) / "cha000_00b_watches_albd.tex.143221013";
+    if (!std::filesystem::exists(mesh) || !std::filesystem::exists(tex)) SKIP("needs cha000_00 and a texture");
+    const std::string material = remod::read_mesh(mesh).parts.at(0).material;
+
+    const auto dir = std::filesystem::temp_directory_path() / "remod_mesh_mask_test";
+    std::filesystem::create_directories(dir);
+    remod::Graph g;
+    auto& m = g.add_node("MeshMask");
+    m.params["mesh"] = mesh.string();
+    m.params["size_of"] = tex.string();
+    m.params["materials"] = material;
+    m.params["save_to"] = (dir / "mask.png").string();
+    REQUIRE(g.validate().empty());
+    const remod::Profile profile = remod::load_profile(REMOD_PROFILES_DIR "/re4r.toml");
+    remod::NativeConverter conv;
+    remod::run_graph(g, {.profile = profile, .converter = conv, .base_dir = dir});
+    const remod::Bgra mask = remod::load_image(dir / "mask.png");
+    size_t white = 0;
+    for (size_t i = 0; i < mask.pixels.size(); i += 4) white += mask.pixels[i] == 255;
+    CHECK(white > 0);
+    CHECK(white < mask.pixels.size() / 4);  // one material: part of the texture, not all of it
+
+    g.find(1)->params["materials"] = "no_such_material";
+    CHECK_THROWS_WITH(remod::run_graph(g, {.profile = profile, .converter = conv, .base_dir = dir}),
+                      Catch::Matchers::ContainsSubstring("this mesh has: ") &&
+                          Catch::Matchers::ContainsSubstring(material));
     std::filesystem::remove_all(dir);
 }

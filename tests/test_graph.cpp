@@ -1827,3 +1827,22 @@ TEST_CASE("run: Merge channels puts a new picture into the original's colour, it
     CHECK_THROWS_WITH(remod::run_graph(g, {.profile = re4r(), .converter = conv, .base_dir = tmp.path}),
                       ContainsSubstring("nothing to merge in"));
 }
+
+TEST_CASE("run: Blend in mask changes only where the mask is white") {
+    TempDir tmp;
+    remod::save_png_bgra(tmp.path / "original.png", 2, 1, {10, 10, 10, 77, 10, 10, 10, 88});
+    remod::save_png_bgra(tmp.path / "ai.png", 2, 1, {200, 200, 200, 255, 200, 200, 200, 255});
+    remod::save_png_bgra(tmp.path / "mask.png", 2, 1, {255, 255, 255, 255, 0, 0, 0, 255});
+    Graph g;
+    g.add_node("ImportImage").params["png"] = "original.png";
+    g.add_node("ImportImage").params["png"] = "ai.png";
+    g.add_node("ImportImage").params["png"] = "mask.png";
+    g.add_node("MaskBlend").params["save_to"] = "out.png";
+    for (const remod::Link& l : {remod::Link{1, "image", 4, "base"}, remod::Link{2, "image", 4, "edited"},
+                                 remod::Link{3, "image", 4, "mask"}})
+        REQUIRE(g.connect(l).empty());
+    REQUIRE(g.validate().empty());
+    FakeConverter conv;
+    remod::run_graph(g, {.profile = re4r(), .converter = conv, .base_dir = tmp.path});
+    CHECK(remod::load_image(tmp.path / "out.png").pixels == std::vector<std::uint8_t>{200, 200, 200, 77, 10, 10, 10, 88});
+}

@@ -859,4 +859,23 @@ void merge_channels(Bgra& base, const Bgra* colour, const std::array<const Bgra*
     }
 }
 
+void masked_blend(Bgra& base, const Bgra& edited, const Bgra& mask, float feather, bool invert) {
+    for (const Bgra* img : {&edited, &mask})
+        if (img->width != base.width || img->height != base.height)
+            throw std::runtime_error("an image is " + std::to_string(img->width) + "x" + std::to_string(img->height) +
+                                     ", the base " + std::to_string(base.width) + "x" + std::to_string(base.height) +
+                                     ": they must be the same size (Resize image can match them)");
+    Plane m(size_t(base.width) * base.height);
+    for (size_t i = 0; i < m.size(); ++i) {
+        const float v = mask.pixels[i * 4 + 2] / 255.0f;
+        m[i] = invert ? 1 - v : v;
+    }
+    if (feather > 0) m = box_blur(std::move(m), base.width, base.height, std::max(1, int(std::lround(feather / 2))), 2);
+    for (size_t i = 0; i < m.size(); ++i)
+        for (size_t k = 0; k < 3; ++k) {  // [3], the alpha, stays
+            std::uint8_t& b = base.pixels[i * 4 + k];
+            b = std::uint8_t(std::lround(b + (edited.pixels[i * 4 + k] - b) * std::clamp(m[i], 0.0f, 1.0f)));
+        }
+}
+
 }  // namespace remod
