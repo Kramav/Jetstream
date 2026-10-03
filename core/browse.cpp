@@ -204,6 +204,13 @@ std::vector<fs::path> drive_roots() {
     return out;
 }
 
+std::vector<std::string> mesh_material_names(const fs::path& mesh_file) {
+    std::vector<std::string> names;
+    for (const MeshMaterial& m : mesh_textures(mesh_file.parent_path(), mesh_file.filename().string(), {}).materials)
+        names.push_back(m.name);
+    return names;
+}
+
 MeshTextures mesh_textures(const fs::path& natives_root, const std::string& mesh, const std::vector<std::string>& textures) {
     const std::string stem = lower(file_name(mesh).substr(0, lower(file_name(mesh)).rfind(".mesh.")));
     const fs::path dir = (natives_root / mesh).parent_path();

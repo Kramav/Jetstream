@@ -1,6 +1,7 @@
 #include "node_run.hpp"
 #include "custom.hpp"
 
+#include "browse.hpp"
 #include "image.hpp"
 #include "package.hpp"
 #include "process.hpp"
@@ -115,7 +116,7 @@ NodeSpec load_tex() {
             if (natives && !natives->second.starts_with("streaming/") &&
                 fs::exists(natives->first / "streaming" / natives->second))
                 r.log("note: the game also has a high-resolution streaming/" + natives->second +
-                      "; if your change doesn't show in game, that copy may need replacing too (CLAUDE.md §9)");
+                      ": add a Streaming copy block to replace both (CLAUDE.md §9)");
         },
         .preview = [](NodeRun& r) {
             r.output("tex", file_value(r.resolve(r.text("tex"))));
@@ -194,8 +195,12 @@ NodeSpec files_in_folder() {
             std::error_code ec;
             if (!fs::is_directory(folder, ec)) throw GraphError("no folder " + folder.string());
             std::vector<fs::path> files;
+            // Into texture inputs, only textures: a pattern such as *.tex* also matches a tool's leftover x.texout.tga.
+            const bool textures = r.run.graph.output_type(r.node.id, "files") == Tex;
             auto take = [&](const fs::directory_entry& e) {
-                if (e.is_regular_file(ec) && name_matches(e.path().filename().string(), r.text("pattern")))
+                std::string name = e.path().filename().string(), low = name;
+                std::ranges::transform(low, low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (e.is_regular_file(ec) && name_matches(name, r.text("pattern")) && (!textures || is_tex_name(low)))
                     files.push_back(e.path());
             };
             if (r.text("subfolders") == "true")
@@ -241,22 +246,54 @@ bool for_editing(const Graph& g, int id) {
     return false;
 }
 
+std::string file_bytes(const fs::path& file);
+std::string hash_hex(const std::string& bytes);
+void prune_cache(const fs::path& dir, const fs::path& keep);
+
 NodeSpec export_image() {
     return {
         .type = "ExportImage",
         .title = "Export image",
         .summary = "Converts the texture to an image file: PNG, TGA or JPG, whichever the file name ends in. Going to "
                    "an Edit image step, a file already there (your edited version) is kept, unless the texture has "
-                   "changed since; otherwise it's a working file, exported again every run.",
+                   "changed since; otherwise it's a working file, exported again when the texture changes. Leave the "
+                   "file empty when no one edits it by hand: a working copy is kept for you.",
         .inputs = {{.name = "tex", .label = "texture", .type = Tex, .required = true}},
         .outputs = {{.name = "png", .type = Image, .label = "image", .field = "png", .field_label = "Image file",
                      .hint = "Where to write the image. Its ending picks the format: .png, .tga (e.g. for GIMP) or "
-                             ".jpg. JPG loses some quality and all transparency.",
-                     .path = PathKind::SaveFile, .filter = kEditImageFormats}},
+                             ".jpg. JPG loses some quality and all transparency. Empty (not for an Edit image step): "
+                             "a working copy the tool keeps.",
+                     .path = PathKind::SaveFile, .filter = kEditImageFormats, .field_optional = true}},
         .state = {"exported_from", "exported_time"},  // the texture its file is from, the file's write time
         .family = Family::Transform,
         .run = [](NodeRun& r) {
             const Value tex = r.input("tex");
+            if (r.text("png").empty()) {  // a working copy: in the run cache by the texture's bytes, else temporary
+                if (for_editing(r.run.graph, r.node.id))
+                    throw GraphError("Image file is required: it's the file you edit in the Edit image step");
+                const fs::path& cache = r.run.options.cache_dir;
+                const fs::path out = cache.empty() ? r.temp_file(".png")
+                                                   : cache / (hash_hex(file_bytes(tex.path) + '\0' +
+                                                                       r.run.options.converter.id(r.profile())) + ".png");
+                if (std::error_code ec; !cache.empty() && fs::is_regular_file(out, ec)) {
+                    fs::last_write_time(out, fs::file_time_type::clock::now(), ec);  // recently used: pruned last
+                    r.done("unchanged: reused the image exported before", out);
+                } else {
+                    fs::path target = out;
+                    if (!cache.empty()) {
+                        fs::create_directories(cache);
+                        (target = out) += ".part.png";
+                    }
+                    r.run.options.converter.load_tex(tex.path, target, r.profile());
+                    if (target != out) {
+                        fs::rename(target, out);
+                        prune_cache(cache, out);
+                    }
+                    r.done("exported a working copy", out);
+                }
+                r.output("png", file_value(out, tex.game_path));
+                return;
+            }
             const fs::path png = r.resolve(r.text("png"));
             r.claim(png);  // each item its own file, kept or not
             // A file for editing is kept, unless it's from another texture (user, 2026-10-02: overwrite it; the old
@@ -273,6 +310,7 @@ NodeSpec export_image() {
                 fs::remove(png);
             }
             if (!fs::exists(png)) {
+                if (png.has_parent_path()) fs::create_directories(long_path(png.parent_path()));  // e.g. edits/
                 r.run.options.converter.load_tex(tex.path, png, r.profile());
                 r.run.fresh_exports.insert({r.node.id, r.run.item});
                 r.done("exported " + png.filename().string(), png);
@@ -285,6 +323,7 @@ NodeSpec export_image() {
         },
         .preview = [](NodeRun& r) {
             r.input("tex");  // known only if its texture is
+            if (r.text("png").empty()) throw GraphError("a working copy, made in the run");
             r.change(ChangeKind::Write, r.resolve(r.text("png")));
             r.output("png", file_value(r.resolve(r.text("png"))));
         },
@@ -820,6 +859,91 @@ NodeSpec mesh_mask_node() {
     };
 }
 
+// Which texture some of a mesh's parts use, from its material file (.mdf2, found as the Browser's 3D view finds it):
+// their colour texture, or the one of theirs whose file name matches. Only that material's textures are looked for
+// on disk (no index of the game files, which takes seconds).
+NodeSpec part_texture_node() {
+    return {
+        .type = "PartTexture",
+        .title = "Part texture",
+        .summary = "The texture some of a mesh's parts use, found from its material file: their colour texture, or "
+                   "another of theirs by name (e.g. the normal map). Pick the parts by material name, as in Mesh mask. "
+                   "The mesh must be in your REtool folder, where its material and textures are.",
+        .inputs = {{.name = "mesh", .label = "Mesh", .type = Path, .widget = Widget::Path, .required = true,
+                    .hint = "The game's .mesh file, in your REtool folder.", .path = PathKind::OpenFile},
+                   {.name = "materials", .label = "Materials", .type = Text, .widget = Widget::Text,
+                    .hint = "Which parts, by material name: * stands for anything, ; between several (e.g. *Pants*). "
+                            "Empty: every part (they must share one texture). A run that finds none lists them."},
+                   advanced({.name = "texture", .label = "Texture name", .type = Text, .widget = Widget::Text,
+                             .hint = "Optional: another of the parts' textures, by file name (* for anything), e.g. "
+                                     "*_nrmr* for the normal map. Empty: their colour texture."})},
+        .outputs = {{"tex", Tex, "texture"}},
+        .family = Family::Source,
+        .pure = true,  // only reads files, like Streaming copy
+        .run = [](NodeRun& r) {
+            const Profile& profile = r.profile();
+            const fs::path mesh = clean_path(r.text("mesh"), r.run.options.base_dir);
+            if (std::error_code ec; !fs::is_regular_file(long_path(mesh), ec))
+                throw GraphError("mesh not found: " + mesh.string());
+            const auto natives = split_natives(mesh, profile.natives_root);
+            if (!natives)
+                throw GraphError(mesh.filename().string() + " isn't inside a " + profile.natives_root +
+                                 " folder: use the one in your REtool folder, where its material and textures are");
+            MeshTextures m;
+            try {  // the material's textures that are on disk, then matched as the Browser matches its index
+                std::vector<std::string> present;
+                for (const std::string& t : mesh_textures(natives->first, natives->second, {}).textures)
+                    if (std::error_code ec; fs::is_regular_file(long_path(natives->first / (t + "." + profile.tex_suffix)), ec))
+                        present.push_back(t + "." + profile.tex_suffix);
+                std::ranges::sort(present, [](const std::string& a, const std::string& b) {
+                    return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+                        return std::tolower(static_cast<unsigned char>(x)) < std::tolower(static_cast<unsigned char>(y));
+                    });
+                });
+                m = mesh_textures(natives->first, natives->second, present);
+            } catch (const std::runtime_error& e) {
+                throw GraphError(e.what());
+            }
+            const std::string patterns = r.text("materials"), want = r.text("texture");
+            const bool every = patterns.find_first_not_of(" ;,") == std::string::npos;
+            std::string names;
+            std::vector<std::string> without;
+            std::map<std::string, std::vector<std::string>> by_texture;  // texture -> the parts using it
+            for (const MeshMaterial& mat : m.materials) {
+                names += (names.empty() ? "" : ", ") + mat.name;
+                if (every ? mat.hidden : !any_pattern(mat.name, patterns)) continue;
+                int pick = want.empty() ? mat.albedo : -1;
+                for (const size_t t : mat.textures)
+                    if (pick < 0 && !want.empty() && m.found[t] && any_pattern(file_name(m.textures[t]), want)) pick = int(t);
+                if (pick < 0)
+                    without.push_back(mat.name);
+                else
+                    by_texture[m.textures[size_t(pick)]].push_back(mat.name);
+            }
+            auto list = [](const std::vector<std::string>& v) {
+                std::string s;
+                for (const std::string& x : v) s += (s.empty() ? "" : ", ") + x;
+                return s;
+            };
+            if (by_texture.empty() && without.empty())
+                throw GraphError("no material matches '" + patterns + "'; " + file_name(m.material) + " has: " + names);
+            if (by_texture.empty())
+                throw GraphError(list(without) + ": no " +
+                                 (want.empty() ? std::string("colour texture") : "texture matching '" + want + "'") +
+                                 " in your game files");
+            if (by_texture.size() > 1) {
+                std::string uses;
+                for (const auto& [tex, mats] : by_texture) uses += (uses.empty() ? "" : "; ") + list(mats) + ": " + file_name(tex);
+                throw GraphError("these parts use different textures (" + uses + "): narrow Materials to one");
+            }
+            const auto& [rel, mats] = *by_texture.begin();
+            if (!without.empty()) r.log("note: " + list(without) + " have no such texture and are left out");
+            r.output("tex", file_value(natives->first / rel, rel));
+            r.done(file_name(rel) + " (" + list(mats) + ")", natives->first / rel);
+        },
+    };
+}
+
 NodeSpec mask_blend_node() {
     return {
         .type = "MaskBlend",
@@ -1303,6 +1427,173 @@ NodeSpec split() {
     };
 }
 
+// ---- Conditions (user, 2026-10-03): a branch runs only when it should. An If passes nothing on when its condition
+// is no; the blocks that nothing reaches don't run (Not needed, run_graph). Put it before the steps to skip, so a
+// branch not taken never writes a file. Conditions are their own kind (Bool: "true" / "false"). ----
+
+Value yes_no(bool yes) { return {yes ? "true" : "false"}; }
+
+NodeSpec if_node() {
+    return {
+        .type = "If",
+        .title = "If",
+        .summary = "Passes its value on only when the condition is yes. When it's no, it passes nothing on: the steps "
+                   "it feeds don't run (they show Not needed) and write nothing. Put it before the steps that should "
+                   "only sometimes run.",
+        .inputs = {{.name = "value", .label = "value", .type = Any, .required = true},
+                   {.name = "condition", .label = "Condition", .type = Bool, .widget = Widget::Checkbox,
+                    .hint = "Link a condition (File exists, Text matches, Not). Unlinked, this box turns the branch on "
+                            "or off by hand.",
+                    .initial = "true"}},
+        .outputs = {{"value", Any, "value"}},
+        .utility = true,
+        .family = Family::Flow,
+        .pure = true,
+        .run = [](NodeRun& r) {
+            if (r.condition("condition")) {
+                r.output("value", r.input("value"));
+                r.done("yes: passed on");
+            } else {
+                r.nothing("value", block_title(r.node) + " said no");
+                r.done("no: passed nothing on");
+            }
+        },
+    };
+}
+
+NodeSpec first_of_node() {
+    return {
+        .type = "FirstOf",
+        .title = "First of",
+        .summary = "Passes on the first of its two inputs that has a value: with an If on each, one branch or the "
+                   "other (if / else). Both must be of one kind.",
+        .inputs = {{.name = "first", .label = "first", .type = Any},
+                   {.name = "second", .label = "else", .type = Any}},
+        .outputs = {{"value", Any, "value"}},
+        .utility = true,
+        .family = Family::Flow,
+        .pure = true,
+        .run = [](NodeRun& r) {
+            for (const char* in : {"first", "second"})
+                if (auto v = r.values(in); !v.empty()) {
+                    r.output("value", v.front());
+                    r.done(std::string("passed on its ") + (in == std::string("first") ? "first" : "else") + " input");
+                    return;
+                }
+            r.nothing("value", "neither input of " + block_title(r.node) + " has a value");
+            r.done("neither input has a value: passed nothing on");
+        },
+    };
+}
+
+NodeSpec file_exists_node() {
+    return {
+        .type = "FileExists",
+        .title = "File exists",
+        .summary = "Yes if a file or folder is there, else no. Checked before the run's steps change anything.",
+        .inputs = {{.name = "path", .label = "Path", .type = Path, .widget = Widget::Path, .required = true,
+                    .hint = "The file or folder to look for.", .path = PathKind::OpenFile}},
+        .outputs = {{"yes", Bool, "exists"}},
+        .utility = true,
+        .family = Family::Value,
+        .pure = true,
+        .run = [](NodeRun& r) {
+            const fs::path p = clean_path(r.text("path"), r.run.options.base_dir);
+            std::error_code ec;
+            const bool there = fs::exists(long_path(p), ec);
+            r.output("yes", yes_no(there));
+            r.done(there ? "yes: it's there" : "no: " + p.filename().string() + " isn't there");
+        },
+    };
+}
+
+NodeSpec text_matches_node() {
+    return {
+        .type = "TextMatches",
+        .title = "Text matches",
+        .summary = "Yes if a text or path matches a pattern: * stands for anything, ? for one character, ; between "
+                   "several. Ignores case; \\ and / count as the same. E.g. *_albd* for colour textures.",
+        .inputs = {{.name = "text", .label = "Text", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "The text to check, e.g. a texture's path linked in."},
+                   {.name = "pattern", .label = "Pattern", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "* stands for anything, ? for one character, ; between several (any one matching is "
+                            "enough), e.g. *_albd*;*_alba*. The whole text must match: start and end with * to find it "
+                            "anywhere."}},
+        .outputs = {{"yes", Bool, "matches"}},
+        .utility = true,
+        .family = Family::Value,
+        .pure = true,
+        .run = [](NodeRun& r) {
+            auto slashes = [](std::string s) {
+                std::ranges::replace(s, '\\', '/');
+                return s;
+            };
+            const bool match = any_pattern(slashes(r.text("text")), slashes(r.text("pattern")));
+            r.output("yes", yes_no(match));
+            r.done(match ? "yes: matches" : "no: doesn't match");
+        },
+    };
+}
+
+NodeSpec not_node() {
+    return {
+        .type = "Not",
+        .title = "Not",
+        .summary = "Yes becomes no and no becomes yes, e.g. to run a branch when a file isn't there.",
+        .inputs = {{.name = "in", .label = "condition", .type = Bool, .required = true}},
+        .outputs = {{"yes", Bool, "not"}},
+        .utility = true,
+        .family = Family::Value,
+        .pure = true,
+        .run = [](NodeRun& r) {
+            const bool yes = !r.condition("in");
+            r.output("yes", yes_no(yes));
+            r.done(yes ? "yes" : "no");
+        },
+    };
+}
+
+// The rule (user, 2026-10-03; CLAUDE.md §9): a texture with a streaming copy is replaced together with it.
+NodeSpec streaming_copy_node() {
+    return {
+        .type = "StreamingCopy",
+        .title = "Streaming copy",
+        .summary = "Finds the high-resolution copy the game keeps of a texture under natives\\STM\\streaming. A "
+                   "texture with one must be replaced together with it. Edit 'full size' (the copy, or the texture "
+                   "itself when there's none); 'streaming copy (if any)' gives nothing when there's none, so the steps "
+                   "it feeds don't run. Convert with streaming copy does both conversions.",
+        .inputs = {{.name = "tex", .label = "texture", .type = Tex, .required = true,
+                    .hint = "The texture as the mod replaces it, from your REtool folder (not its streaming copy)."}},
+        .outputs = {{"full", Tex, "full size"}, {"streaming", Tex, "streaming copy (if any)"}},
+        .family = Family::Source,
+        .pure = true,  // only looks at the disk, like Files in folder
+        .run = [](NodeRun& r) {
+            const Value tex = r.input("tex");
+            const auto natives = split_natives(tex.path, r.profile().natives_root);
+            if (!natives)
+                throw GraphError(tex.path.filename().string() + " isn't inside a " + r.profile().natives_root +
+                                 " folder, so its streaming copy can't be looked for: use the one in your REtool "
+                                 "folder");
+            std::string low = natives->second;
+            std::ranges::transform(low, low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (low.starts_with("streaming/"))
+                throw GraphError(tex.path.filename().string() + " is a streaming copy itself: use the texture at the "
+                                 "same path without streaming\\, and this block finds this one");
+            const fs::path copy = natives->first / "streaming" / natives->second;
+            if (std::error_code ec; fs::is_regular_file(long_path(copy), ec)) {
+                const Value streaming = file_value(copy, "streaming/" + natives->second);
+                r.output("full", streaming);
+                r.output("streaming", streaming);
+                r.done("found streaming/" + natives->second, copy);
+            } else {
+                r.output("full", tex);
+                r.nothing("streaming", "no streaming copy of " + tex.path.filename().string());
+                r.done("no streaming copy: the texture alone is replaced");
+            }
+        },
+    };
+}
+
 // ---- Path utilities: work on the path only, never touch a file (Require file only looks) ----
 
 NodeSpec join_path() {
@@ -1693,14 +1984,15 @@ NodeSpec run_program() {
 const std::vector<NodeSpec>& node_specs() {
     static const std::vector<NodeSpec> specs{
         // The main steps: the texture pipeline, then file steps.
-        load_tex(), files_in_folder(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
-        resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), mesh_mask_node(),
+        load_tex(), files_in_folder(), streaming_copy_node(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
+        resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), part_texture_node(),
+        mesh_mask_node(),
         mask_blend_node(), replace_photo_node(),
         preview_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
-        value(), text_node(), split(), join_path(), path_parts(), change_extension(), cut_text_node(), require_file(),
-        node_input(), node_output(),
+        value(), text_node(), split(), if_node(), first_of_node(), file_exists_node(), text_matches_node(), not_node(),
+        join_path(), path_parts(), change_extension(), cut_text_node(), require_file(), node_input(), node_output(),
     };
     return specs;
 }
@@ -1729,6 +2021,9 @@ const char* ai_note(std::string_view type) {
                         "or Merge channels when sizes differ."},
         {"OverlayImage", "One image on top of another at x, y (logos, stamps). The base's alpha is kept."},
         {"PickChannel", "One channel as a grey image, to look at or edit data (e.g. an albd texture's alpha)."},
+        {"PartTexture", "Start here to change part of a character or prop: the mesh and its parts' material names "
+                        "(e.g. *Pants*) give the texture they use, with its in-game path. A wrong name fails listing "
+                        "the materials. Follow with Streaming copy (characters have one) and Mesh mask for the area."},
         {"MeshMask", "A mask of some of a mesh's parts on their texture, by material name (e.g. *jacket*). Use it to "
                      "change one area only: feed Blend in mask. A wrong name fails the run listing the materials."},
         {"MaskBlend", "Puts an edited or AI-made image into the original only where a mask is white (a Mesh mask, a "
@@ -1753,6 +2048,17 @@ const char* ai_note(std::string_view type) {
         {"Value", "A value kept in the graph (output folder, version, author). Feed several places through a Split."},
         {"Text", "Builds text from parts: {1}, {2}... (mod names, file names, arguments for Run program)."},
         {"Split", "One output to several inputs (an output feeds one input). Use whenever a value is needed twice."},
+        {"If", "Runs a branch only when a condition (File exists, Text matches, Not) is yes: put it at the branch's "
+               "start, before any step that writes. No passes nothing on; the steps after it show Not needed."},
+        {"FirstOf", "If / else: two Ifs (one on Not of the condition) into First of, which passes on whichever ran."},
+        {"FileExists", "A condition: is a file there. Feed If."},
+        {"TextMatches", "A condition on a name or path by pattern (*_albd*). Feed If, e.g. to treat colour and data "
+                        "textures of a Files in folder list differently."},
+        {"Not", "Flips a condition."},
+        {"StreamingCopy", "Required for any texture the game also keeps under streaming/ (most character and prop "
+                          "textures): the mod must replace both. Edit 'full size'; Convert the edit with the texture "
+                          "as original, and again with 'streaming copy' as original; package both. Resize the edit to "
+                          "the base texture's size (Match size of) for the first Convert."},
         {"JoinPath", "Folder + relative path -> a path (Add must be relative)."},
         {"PathParts", "A path's folder, name or extension."},
         {"ChangeExtension", "Same path with another extension (e.g. .png for a texture's edit file)."},
@@ -1798,7 +2104,10 @@ PathKind picker_for(PortType type) {
 }
 
 bool accepts(const InputSpec& in, PortType out) {
-    if (in.type == out || in.type == Text || in.type == Path || in.type == Any || out == Any) return true;
+    if (in.type == out || in.type == Any || out == Any) return true;
+    if (out == Bool) return in.type == Text;  // as "true" / "false": a checkbox field, or text
+    if (in.type == Bool) return out == Text;  // a typed yes / no
+    if (in.type == Text || in.type == Path) return true;
     if (in.type == Folder) return out == Text;  // a typed folder; a file path isn't one
     return in.editable() && (out == Text || out == Path);  // a texture or image file field: a typed path
 }
@@ -1873,7 +2182,12 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
             return it == preview.end() ? std::nullopt : std::optional<std::string>(it->second);
         }
         const auto it = n->params.find(input);
-        return it == n->params.end() ? std::string() : it->second;
+        if (it == n->params.end()) return std::string();
+        try {
+            return fill_game(it->second);
+        } catch (const GraphError&) {
+            return std::nullopt;  // {game} with no folder set: unknown
+        }
     };
     auto number_of = [&](const char* input) -> std::optional<float> {
         const auto t = text(input);

@@ -108,6 +108,32 @@ bool has_manual_step(const Graph& g) {
 
 }  // namespace
 
+namespace {
+std::set<std::string, std::less<>> g_builtin;  // ponytail: global, set at start; like the registry
+}
+
+std::filesystem::path builtin_blocks_dir() {
+    const std::filesystem::path profiles = find_profiles_dir();
+    return profiles.empty() ? std::filesystem::path() : profiles.parent_path() / "blocks";
+}
+
+std::vector<CustomNode> load_block_library(std::vector<std::string>* errors) {
+    std::vector<CustomNode> all;
+    if (const auto dir = builtin_blocks_dir(); !dir.empty() && std::filesystem::is_directory(dir))
+        all = load_custom_library(dir, errors);
+    for (const CustomNode& c : all) g_builtin.insert(c.type);
+    for (CustomNode& mine : load_custom_library(custom_library_dir(), errors)) {
+        const auto same = std::ranges::find(all, mine.type, &CustomNode::type);
+        if (same != all.end())
+            *same = std::move(mine);
+        else
+            all.push_back(std::move(mine));
+    }
+    return all;
+}
+
+bool is_builtin_block(std::string_view type) { return g_builtin.contains(type); }
+
 void register_custom(const CustomNode& node) {
     for (const CustomNode& inner : node.graph.customs) register_custom(inner);  // its pins' kinds may depend on them
     // Worked out before taking the lock: the kinds ask find_spec, which takes it too.
@@ -130,8 +156,9 @@ void register_custom(const CustomNode& node) {
     NodeSpec spec{.type = keep(node.type), .title = keep(node.title), .summary = keep(node.summary)};
     for (const Pin& p : inputs) {
         const bool text = p.type == PortType::Text || p.type == PortType::Any;
+        const Widget widget = p.type == PortType::Bool ? Widget::Checkbox : text ? Widget::Text : Widget::Path;
         spec.inputs.push_back({.name = keep(p.name), .label = keep(p.label.empty() ? "input" : p.label),
-                               .type = p.type, .widget = text ? Widget::Text : Widget::Path,
+                               .type = p.type, .widget = widget,
                                .required = p.initial.empty(), .path = picker_for(p.type), .initial = keep(p.initial)});
     }
     for (const Pin& p : outputs)
@@ -402,7 +429,8 @@ void fold_results(const ExpandedGraph& e, std::map<int, NodeStatus>* nodes, RunV
             sum.state = count(NodeState::Waiting)      ? NodeState::Waiting
                         : count(NodeState::Failed)     ? NodeState::Failed
                         : count(NodeState::NotReached) ? NodeState::NotReached
-                                                       : NodeState::Done;
+                        : count(NodeState::Done)       ? NodeState::Done
+                                                       : NodeState::NotNeeded;
             for (const auto& [id, st] : list) {
                 const Node* n = e.graph.find(id);
                 const std::string title = n ? block_title(*n) : std::to_string(id);

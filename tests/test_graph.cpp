@@ -130,7 +130,10 @@ TEST_CASE("validate lists every problem") {
 
     Graph export_only;
     export_only.add_node("ExportImage");
-    CHECK(has(export_only.validate(), "Image file is required"));  // an output field
+    CHECK_FALSE(has(export_only.validate(), "Image file is required"));  // empty: a working copy
+    export_only.add_node("EditImage");
+    REQUIRE(export_only.connect({1, "png", 2, "png"}).empty());
+    CHECK(has(export_only.validate(), "Image file is required: it's the file you edit"));
 }
 
 TEST_CASE("validate checks file extensions where a node lists them") {

@@ -1,0 +1,172 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "PartTexture",
+      "params": {
+        "mesh": "{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797",
+        "materials": "Shirts_Mat",
+        "title": "Leon's shirt"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "StreamingCopy",
+      "params": {}
+    },
+    {
+      "id": 4,
+      "type": "ExportImage",
+      "params": {
+        "png": "edits/leon_shirt.png"
+      }
+    },
+    {
+      "id": 5,
+      "type": "EditImage",
+      "params": {
+        "title": "Your edit"
+      }
+    },
+    {
+      "id": 6,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 7,
+      "type": "custom:convert_with_streaming",
+      "params": {}
+    },
+    {
+      "id": 8,
+      "type": "PackageMod",
+      "params": {
+        "name": "My shirt",
+        "out": "mods",
+        "version": "1.0",
+        "description": "Leon's shirt, edited by hand",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        7,
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "full"
+      ],
+      "to": [
+        4,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "png"
+      ],
+      "to": [
+        5,
+        "png"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "image"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        7,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        8,
+        "preview"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "streaming"
+      ],
+      "to": [
+        7,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "out9"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "out10"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    }
+  ]
+}

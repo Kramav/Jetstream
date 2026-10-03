@@ -255,6 +255,7 @@ void adjust_colour(Bgra& image, float hue, float saturation, float brightness, f
 
 Bgra resize_image(const Bgra& image, unsigned width, unsigned height, Fit fit) {
     if (width == 0 || height == 0 || image.width == 0 || image.height == 0) throw std::runtime_error("can't resize to or from a zero size");
+    if (width == image.width && height == image.height) return image;  // e.g. no streaming copy: the edit is base-sized
     Bgra out{width, height, std::vector<std::uint8_t>(size_t(width) * height * 4, 0)};  // transparent
     const double sx = double(width) / image.width, sy = double(height) / image.height;
     const double scale = fit == Fit::Fit ? std::min(sx, sy) : std::max(sx, sy);

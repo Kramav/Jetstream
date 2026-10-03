@@ -567,6 +567,80 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
     the UV orientation is right.
   - Not done: a materials dropdown filled from the mesh (the field is text), and matching a mesh's textures
     automatically (`mesh_textures` needs the game files index).
+- **Conditions (2026-10-03; user: "we need conditional nodes", a yes/no pin kind).**
+  - **Nothing:** a `Value` can be nothing (`Value::nothing`, `why`; `NodeRun::nothing`). A block whose *required*
+    input gets only nothing doesn't run: `NodeState::NotNeeded`, message "not needed: <why>", and it passes nothing on
+    from every output (a list output: no items; the blocks repeated for it are Not needed too). `NodeRun::values`
+    leaves nothing out (Package collects the rest); an optional input fed nothing is empty (`text` gives "", not the
+    typed value). Previews do the same, so a branch not taken is known and `plan_changes` leaves its writes out. Run
+    values show it as "nothing: <why>". A repeated block sums up as done if any item is, else Not needed.
+  - **Why this shape:** the branch is cut *before* its steps, so the branch not taken never writes a file (a "choose
+    A or B" at the end would have run both).
+  - **Kind `PortType::Bool`** ("true" / "false"): into conditions and Text inputs (checkbox fields such as Replace
+    existing), never paths; text into a condition is a typed yes / no (`NodeRun::condition`: true/false, yes/no, 1/0,
+    empty = no). App: near-white triangle pins; a Value feeding one is a checkbox.
+  - **Blocks** (utilities, pure): **If** (value + Condition, a checkbox when unlinked: a hand switch), **First of**
+    (two inputs, `first` and `else`, the first with a value; inputs of one kind, `mixed_kinds` in can_connect and
+    validate; `output_type` follows the first linked one), **File exists**, **Text matches** (`any_pattern`, `\` and
+    `/` alike), **Not**. And/Or not built (no graph needs them yet).
+  - **Streaming copy** (`StreamingCopy`, Source, pure): the base texture in, **full size** (the streaming copy if
+    there is one, else the texture) and **streaming copy** (or nothing) out; game path `streaming/<path>`. Refuses a
+    texture outside a natives tree (can't look) and a streaming copy itself. The graph: edit full size; Resize (Match
+    size of: base) → Convert (original: base); Convert (original: streaming copy); both into Package. `resize_image`
+    returns the image as is at its own size, so without a copy the base branch changes nothing.
+  - App: Not needed blocks faded with a solid faint outline and "NOT NEEDED"; links into them or carrying nothing
+    sparse dots (legend "Not needed"); step list "Not needed". API state "not needed", kind "condition"; `ai_note`s.
+  - Checked: tests (If yes / no / by hand and the plan; if / else via Not and First of; Text matches; kind rules;
+    streaming with and without a copy, a mixed folder, the two refusals). **Not checked by eye** (pins, Not needed
+    look, the Value checkbox). No ready-made custom node is shipped (the library is the user's); the guide says to
+    make one from the chain.
+- **Built from blocks (2026-10-03; user: "lets start making blocks out of blocks").** Built-in custom nodes ship
+  in `blocks/` beside `profiles/` (`builtin_blocks_dir`; installed into the zip), in the library's JSON format.
+  `load_block_library` = those, then the user's library (a user's saved version of a built-in type wins); the app,
+  `remod api` and `remod mcp` register it at start. Nodes panel: a "Built from blocks" folder (`is_builtin_block`),
+  then "Custom nodes". Opening one (Edit custom node) shows its blocks; saving puts the user's version in their
+  library.
+  - **Convert with streaming copy** (`blocks/convert_with_streaming.json`): edited image, texture, streaming copy
+    in; texture and streaming texture (or nothing) out. Inside: Splits, Resize image (stretch, Match size of the
+    texture; titled "Shrink to the texture's size"), Convert × 2. Its Input pins' kinds come from the first link
+    out of each Split (`wanted_type`), so the texture Split links to Convert's original before Resize's match.
+  - **Streaming copy stays a single block** (not made of blocks): looking for the file and its refusals (outside a
+    natives tree, a streaming copy itself) need clear messages that Cut text / File exists / If can't give. Its
+    second output is labelled "streaming copy (if any)".
+  - Checked: a test loads `blocks/` and runs the block with and without a copy (a converter that refuses a
+    wrong-sized image, so the shrink is proven). **Not checked by eye** (the Nodes folder, opening it).
+- **Part texture (`PartTexture`, 2026-10-03; §10 "Retexture part", step 1).** Source, pure. Mesh (in a natives tree)
+  + Materials (patterns, as Mesh mask) [+ advanced Texture name, e.g. `*_nrmr*`] -> the texture those parts use, with
+  its game path. Reads the mesh's material file only (`mesh_textures`, twice: first for the names it lists, then
+  against just those files on disk; no 3 s index). Refuses: mesh outside a natives tree, no material matching (lists
+  them), none of the matched having that texture, matched parts using different textures (lists which). Checked on
+  Leon's `cha000_00`: `Pants_Mat` -> `cha000_00_LowerBody_ALBD`, `Shirts_Mat` -> `..._UpperBody_ALBD`.
+  - **Materials dropdown (app):** a ▼ beside any `materials` field of a block with a `mesh` input lists the mesh's
+    material names (core `mesh_material_names`; cached per mesh, "Read again" in the list). **Not checked by eye.**
+  - **Recolour part** (`blocks/recolour_part.json`, made by `scripts/make_recolour_part.py`, which copies Convert with
+    streaming copy into it; a test checks the copy matches): mesh, materials, hue / saturation / brightness /
+    contrast -> texture, streaming texture, preview. Part texture -> Streaming copy -> Export (no file) -> Adjust
+    colour -> Blend in mask (Mesh mask of the parts at the full size) -> Convert with streaming copy. Checked on Leon
+    (`Pants_Mat`, hue 120): only the trouser panels changed (the result image looked at); 2 textures packaged.
+- **Export image without a file (2026-10-03):** `PortSpec::field_optional`. Empty = a working copy in the run cache
+  (named by the texture's bytes and the converter; reused), for graphs and built blocks nobody edits by hand. Still
+  required when it goes to an Edit image (validate says so). Export image now makes its file's folder.
+- **`{game}` (2026-10-03):** in any field, the Game files folder (`set_game_files_dir`, `fill_game`; `NodeRun::text`
+  and thumbnails fill it in). The app sets it from its Game files setting (else the RE plugin's NativesPath), the CLI
+  from the app's settings. ponytail: one folder for every game. So graphs (the examples, shared mods) run on any PC.
+- **Loading fills missing fields with their initial values** (`migrate`), as add_node does: graphs a program wrote,
+  and graphs from before a block gained a field. **A graph with no block positions is tidied on load**
+  (`load_graph`'s `added_blocks`).
+- **Previews know the game (2026-10-03):** `preview_pass` loads the graph's profile (it used a blank one, so blocks
+  needing the natives root, Streaming copy and Part texture, were unknown before a run).
+- **Files in folder into texture inputs lists only textures** (a pattern like `*.tex*` matched a Noesis leftover
+  `x.texout.tga` in the real game folder).
+- **Examples (2026-10-03; user: "a lot of example graphs for users"):** `examples/` (shipped), written by
+  `scripts/make_examples.py` (no positions: tidied on open; `{game}` paths; sample `picture.png`, `logo.png`), listed
+  in `examples/README.md`. Eleven: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  edit with streaming, conditions filter, channels, if / else, backup. **All eleven run** (CLI, `--edited true`, the
+  real game files, outputs in a scratch copy); the photo frame and logo results looked at as images. Not opened in
+  the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> [--noesis <exe>]` and from the app's Run button. Programs edit graphs through
   `remod api` (core `ApiSession`, §10 M2).
@@ -752,6 +826,11 @@ Fill these in from the manual spike before implementing the affected code:
 - [ ] **Streaming textures.** 17,728 of 38,331 RE4R textures have a high-resolution copy under
       `natives/STM/streaming/<same path>`. Does replacing a texture require replacing its streaming copy too?
       LoadTex logs a note when one exists.
+      **Decided (user, 2026-10-03): if a texture has a streaming copy, the mod replaces both**, as best-practice mods
+      do. A texture without one is replaced alone, as today. With one, the edit is made at the streaming copy's
+      (full) size and both are written from it: the streaming copy, and the base at the base's size and mips.
+      **Built 2026-10-03: the Streaming copy block** (§4 Conditions). The in-game check (§9 list) only confirms it's
+      needed; it no longer blocks work.
 - [ ] Screenshot size/aspect requirements for Fluffy, if any (formats: jpg/png/tga/bmp [guide]). The tool
       combines several previews into one 512-px-per-tile grid PNG.
 - [ ] Should a tier-1 package include `manifest.json`, or only tier 2/3?
@@ -804,8 +883,8 @@ propose them as next steps before then.
   - the padded `cs_ui3200_stamp_im` (468 visible, stored 512).
 
   Look for a correct image, nothing shifted or skewed (padding), no mip shimmer.
-- [ ] **Streaming copies (§9).** Does replacing a texture also need its `streaming/` copy? This decides what
-  character / AI textures must target.
+- [ ] **Streaming copies (§9).** Does replacing a texture also need its `streaming/` copy? Work assumes yes (user,
+  2026-10-03: if a texture has a streaming copy, replace both); this only confirms it.
 - [ ] **Channel meanings (§9 table).** Are the inferred meanings right (e.g. `albd` alpha = dielectric vs metal,
   `nrrc` normal in G/A)?
 - [ ] **Noesis converter only:** does the game accept a texture with more mips than the original (§9, parked)?
@@ -950,8 +1029,9 @@ propose them as next steps before then.
     1. **Channel tools** (split / merge, §10 Future work): an AI result is plain RGB and would overwrite data packed
        in a channel. Spike done (§9): sRGB = colour, UNORM = data; `albd` alpha is data; `nrrc`'s normal is in G/A.
        **Built 2026-10-02** (§4 Channel tools: Merge channels with "Colour from" keeps the original's alpha).
-    2. **Streaming copies** (§9): character textures are the ones with `streaming/` copies; whether a mod must
-       replace both decides what every AI texture targets. Needs an in-game test (the user's call when).
+    2. **Streaming copies** (§9): character textures are the ones with `streaming/` copies. **Decided 2026-10-03: if a
+       texture has a streaming copy, replace both** (edit at the streaming size, write both). **Built 2026-10-03**
+       (§4 Conditions: Streaming copy).
     3. **Masks / regions:** "change only the jacket". **Built 2026-10-02** (§4 Masks: Mesh mask, Blend in mask).
     4. **Batch** (§10 Future work): worth it once there's real work per texture, which AI is.
     Done: an unchanged run writes nothing (the run cache, §4); AI iteration means many runs.

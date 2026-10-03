@@ -147,6 +147,7 @@ TEST_CASE("adjust_colour changes colour only, never alpha") {
 
 TEST_CASE("resize_image: stretch, fit (transparent bars) and fill (cropped)") {
     const remod::Bgra wide = solid(40, 20, {10, 20, 30, 255});
+    CHECK(remod::resize_image(wide, 40, 20, remod::Fit::Fit).pixels == wide.pixels);  // its own size: untouched
     const remod::Bgra stretched = remod::resize_image(wide, 16, 16, remod::Fit::Stretch);
     CHECK(stretched.width == 16);
     CHECK(stretched.height == 16);

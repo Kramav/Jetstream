@@ -86,6 +86,10 @@ struct MeshTextures {
 MeshTextures mesh_textures(const std::filesystem::path& natives_root, const std::string& mesh,
                            const std::vector<std::string>& textures);
 
+// A mesh file's material names, in its material file's order (the material found as mesh_textures finds it), for a
+// Materials field's dropdown. Throws if there's no material file or it can't be read.
+std::vector<std::string> mesh_material_names(const std::filesystem::path& mesh_file);
+
 // The file to preview: the high-resolution streaming/ copy if there is one, else the texture itself.
 std::filesystem::path preview_file(const std::filesystem::path& natives_root, const std::string& texture);
 

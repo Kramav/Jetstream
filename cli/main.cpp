@@ -6,6 +6,7 @@
 #include "package.hpp"
 #include "profile.hpp"
 #include "settings.hpp"
+#include "setup.hpp"
 #include "texture_converter.hpp"
 
 #define WIN32_LEAN_AND_MEAN
@@ -87,8 +88,17 @@ int run(int argc, char** argv) {
         }
     }
 
-    if (cmd->first == "api" || cmd->first == "mcp")  // the user's custom nodes are block types there too
-        for (const remod::CustomNode& c : remod::load_custom_library(remod::custom_library_dir())) remod::register_custom(c);
+    // {game} in graphs: the app's Game files folder, else the one the RE plugin remembers (first profile with one).
+    {
+        const remod::Settings settings = remod::load_settings(remod::default_settings_path());
+        std::filesystem::path game = settings.game_files_dir;
+        if (game.empty())
+            for (const remod::Profile& p : remod::load_profiles(remod::find_profiles_dir()))
+                if (game.empty()) game = remod::game_files_dir(settings.noesis_path, p);
+        remod::set_game_files_dir(game);
+    }
+    // The built-in and the user's custom nodes are block types (a graph's own copies, registered on load, win).
+    for (const remod::CustomNode& c : remod::load_block_library()) remod::register_custom(c);
     if (cmd->first == "mcp") {
         // The user's own settings decide how textures convert and which folder is the game files; the approval is a
         // dialog on the user's screen, which the AI on the other end of stdin can't answer.

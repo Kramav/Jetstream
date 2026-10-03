@@ -163,6 +163,7 @@ ImU32 kind_color(remod::PortType type) {
     case remod::PortType::Text: return pal::rgb(0x6fa8ff);    // blue
     case remod::PortType::Path: return pal::rgb(0xe3cc5e);    // yellow
     case remod::PortType::Folder: return pal::rgb(0x4fcfcf);  // teal
+    case remod::PortType::Bool: return pal::rgb(0xe6e9ef);    // near white: a condition (yes / no), a triangle pin
     case remod::PortType::Any: return pal::rgb(0x9aa1ab);     // grey: a Split with nothing linked in yet
     }
     return pal::text;
@@ -494,12 +495,15 @@ struct State {
     double dest_checked = 0;           // ImGui time of that check
     int choice_node = 0;               // the block and input a dropdown (Widget::Choice) is open for
     std::string choice_input;
+    // A Materials field's dropdown: the mesh's material names, by mesh path (read once; Refresh in the list).
+    std::map<std::string, std::vector<std::string>> mesh_materials;
     int rename_node = 0;      // the block being named (double-click its title, or Rename... in its menu)
     std::string rename_text;
-    // Custom nodes (core custom.hpp): the library (APPDATA/remod/nodes, registered at start), the blocks a
-    // "Make custom node" is for and its title, and while one is open for editing, the graph it came from.
+    // Custom nodes (core custom.hpp): the built-in blocks made of blocks and the user's library (APPDATA/remod/nodes),
+    // registered at start; the blocks a "Make custom node" is for and its title; and while one is open for editing,
+    // the graph it came from.
     std::vector<remod::CustomNode> library = [] {  // registered first: a loaded graph's own copies then win
-        auto lib = remod::load_custom_library(remod::custom_library_dir());
+        auto lib = remod::load_block_library();
         for (const remod::CustomNode& c : lib) remod::register_custom(c);
         return lib;
     }();
@@ -617,7 +621,7 @@ bool save_custom(State& s) {
         def.graph = s.graph;
         remod::update_custom(s.parent->graph, def);
         remod::save_custom_node(def, remod::custom_library_dir());
-        s.library = remod::load_custom_library(remod::custom_library_dir());
+        s.library = remod::load_block_library();
         s.saved_graph = s.graph;
         s.status = "Saved custom node " + def.title + " (to your library and the layout).";
         return true;
@@ -956,7 +960,8 @@ void draw_steps(State& s) {
         d->AddText(ImVec2(lo.x + box + ImGui::GetStyle().ItemSpacing.x, lo.y), ImGui::GetColorU32(ImGuiCol_Text),
                    title.c_str());
         const char* label = !st.state ? "" : st.state == Done ? "Done" : st.state == Waiting ? "Your step"
-                                           : st.state == Failed ? "Failed" : "Not reached";
+                                           : st.state == Failed ? "Failed" : st.state == NotNeeded ? "Not needed"
+                                                                                                   : "Not reached";
         if (st.state)
             d->AddText(ImVec2(hi.x - ImGui::CalcTextSize(label).x, lo.y), ImGui::GetColorU32(state_color(*st.state)), label);
         ImGui::PopID();
@@ -1126,7 +1131,8 @@ ImVec4 state_color(remod::NodeState state) {
     case remod::NodeState::Done: return ImGui::ColorConvertU32ToFloat4(pal::done);
     case remod::NodeState::Waiting: return ImGui::ColorConvertU32ToFloat4(pal::waiting);
     case remod::NodeState::Failed: return ImGui::ColorConvertU32ToFloat4(pal::failed);
-    case remod::NodeState::NotReached: return ImGui::ColorConvertU32ToFloat4(pal::muted);
+    case remod::NodeState::NotReached:
+    case remod::NodeState::NotNeeded: return ImGui::ColorConvertU32ToFloat4(pal::muted);
     }
     return ImVec4(1, 1, 1, 1);
 }
@@ -1137,6 +1143,8 @@ std::string status_text(const remod::NodeStatus& st) {
     case remod::NodeState::Waiting: return "Waiting for you: " + st.message;
     case remod::NodeState::Failed: return "Failed: " + st.message;
     case remod::NodeState::NotReached: return "Not reached yet";
+    case remod::NodeState::NotNeeded:  // core says "not needed: <why>"
+        return "Not needed: " + st.message.substr(st.message.starts_with("not needed: ") ? 12 : 0);
     }
     return "";
 }
@@ -1148,6 +1156,7 @@ const char* type_name(remod::PortType type) {
     case remod::PortType::Text: return "text";
     case remod::PortType::Path: return "path";
     case remod::PortType::Folder: return "folder";
+    case remod::PortType::Bool: return "condition";
     case remod::PortType::Any: return "any";
     }
     return "";
@@ -1176,13 +1185,17 @@ void spec_tooltip(const remod::NodeSpec& spec) {
 float unit() { return ImGui::GetFontSize() / 11; }
 
 // A family's outline (handoff §1) around `a` + `s`, as a polygon: source notched on the left, flow a hexagon, file a
-// folded corner, value a parallelogram, the rest rectangles.
-std::vector<ImVec2> outline(remod::Family f, ImVec2 a, ImVec2 s, float u) {
+// folded corner, value a parallelogram, the rest rectangles. The source's notch spans the top `notch` of its left edge
+// (Near: the header band, so it never cuts through the pin rows), or all of it when 0 (Far's symbol, as designed).
+std::vector<ImVec2> outline(remod::Family f, ImVec2 a, ImVec2 s, float u, float notch = 0) {
     using enum remod::Family;
     const float w = s.x, h = s.y;
     std::vector<ImVec2> p;
     switch (f) {
-    case Source: p = {{0, 0}, {w, 0}, {w, h}, {0, h}, {8 * u, h / 2}}; break;
+    case Source:
+        if (notch > 0 && notch < h) p = {{0, 0}, {w, 0}, {w, h}, {0, h}, {0, notch}, {8 * u, notch / 2}};
+        else p = {{0, 0}, {w, 0}, {w, h}, {0, h}, {8 * u, h / 2}};
+        break;
     case Flow: p = {{10 * u, 0}, {w - 10 * u, 0}, {w, h / 2}, {w - 10 * u, h}, {10 * u, h}, {0, h / 2}}; break;
     case File: p = {{0, 0}, {w - 10 * u, 0}, {w, 10 * u}, {w, h}, {0, h}}; break;
     case Value: p = {{8 * u, 0}, {w, 0}, {w - 8 * u, h}, {0, h}}; break;
@@ -1255,7 +1268,7 @@ struct BlockPaint {
 void paint_block(ImDrawList* d, remod::Family f, ImVec2 a, ImVec2 s, float u, const BlockPaint& p) {
     using enum remod::Family;
     auto c = [&](ImU32 col) { return with_alpha(col, p.alpha); };
-    const auto shape = outline(f, a, s, u);
+    const auto shape = outline(f, a, s, u, p.band);
     const float lip = f == Output ? 5 * u : 0;  // Output: a second sheet stacked behind, up and right
     if (lip > 0) {
         d->AddRectFilled(a + ImVec2(lip, -lip), a + ImVec2(s.x + lip, s.y - lip), c(pal::bg));
@@ -1322,6 +1335,13 @@ void draw_pin_shape(ImDrawList* d, ImVec2 c, remod::PortType type, PinLook look,
         d->AddCircleFilled(c, 4 * u, fill);
         d->AddCircle(c, 4 * u, ink, 0, 1.25f * u);
         break;
+    case remod::PortType::Bool: {
+        const float k = 4.5f * u;
+        const ImVec2 a = c + ImVec2(-k * 0.8f, -k), b = c + ImVec2(k, 0), e = c + ImVec2(-k * 0.8f, k);
+        d->AddTriangleFilled(a, b, e, fill);
+        d->AddTriangle(a, b, e, ink, 1.25f * u);
+        break;
+    }
     default: {
         const float k = 4.5f * u;
         d->AddQuadFilled(c - ImVec2(0, k), c + ImVec2(k, 0), c + ImVec2(0, k), c - ImVec2(k, 0), fill);
@@ -1334,7 +1354,7 @@ void draw_pin_shape(ImDrawList* d, ImVec2 c, remod::PortType type, PinLook look,
 // block's links. Use layout, from where the link's source got to: done solid; done into a step waiting for the user,
 // dashes running forward; failed, red dots; not reached, faint dashes. Widths and dashes in units; `order` = drawing
 // order (higher on top).
-enum class LinkState { Build, Hot, Done, Active, Failed, Pending };
+enum class LinkState { Build, Hot, Done, Active, Failed, Pending, Skipped };
 struct Stroke {
     ImU32 color;
     float width, on = 0, off = 0, speed = 0;  // speed: dash movement in units per second
@@ -1349,6 +1369,7 @@ Stroke stroke_for(LinkState state, ImU32 kind) {
     case LinkState::Active: return {mix(kind, pal::text, 0.25f), 2.25f, 7, 5, 24 / 0.9f, 3};
     case LinkState::Failed: return {pal::failed, 1.75f, 2, 3, 0, 1};
     case LinkState::Pending: return {with_alpha(kind, 0.4f), 1.25f, 3, 3, 0, 0};
+    case LinkState::Skipped: return {with_alpha(kind, 0.3f), 1, 1, 5, 0, 0};  // carried nothing: sparse dots
     }
     return {kind, 1.5f};
 }
@@ -1530,9 +1551,11 @@ void draw_nodes_panel(State& s) {
         for (const auto& spec : remod::node_specs())
             if (spec.family == folder.family && matches(spec)) group.push_back(&spec);
     }
+    // Blocks made of blocks: the tool's own (open one to see inside), then the user's.
+    auto& built = groups.emplace_back("Built from blocks", std::vector<const remod::NodeSpec*>()).second;
     auto& custom = groups.emplace_back("Custom nodes", std::vector<const remod::NodeSpec*>()).second;
     for (const remod::NodeSpec* spec : remod::custom_specs())
-        if (matches(*spec)) custom.push_back(spec);
+        if (matches(*spec)) (remod::is_builtin_block(spec->type) ? built : custom).push_back(spec);
     for (const auto& [name, specs] : groups) {
         if (specs.empty()) continue;
         if (!want.empty()) ImGui::SetNextItemOpen(true);
@@ -1818,7 +1841,8 @@ void draw_mode_switch(State& s) {
     const float u = unit(), sample = u * 22;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     for (const auto& [state, name] : {std::pair{LinkState::Done, "Done"}, {LinkState::Active, "Waiting for you"},
-                                      {LinkState::Failed, "Failed"}, {LinkState::Pending, "Not reached"}}) {
+                                      {LinkState::Failed, "Failed"}, {LinkState::Pending, "Not reached"},
+                                      {LinkState::Skipped, "Not needed"}}) {
         const ImVec2 at = ImGui::GetCursorScreenPos() + ImVec2(0, ImGui::GetTextLineHeight() * 0.5f);
         draw_route(draw, {{at.x, at.y}, {at.x + sample, at.y}}, 0, 0, stroke_for(state, pal::text), u);
         ImGui::Dummy(ImVec2(sample, ImGui::GetTextLineHeight()));
@@ -1829,6 +1853,43 @@ void draw_mode_switch(State& s) {
     ImGui::NewLine();
 }
 
+// A Materials field's list: the material names of the block's mesh (typed, or a Value's), read once per mesh. A pick
+// replaces the field; a pattern (*Pants*) or several (a;b) are typed.
+void draw_material_list(State& s, remod::Node& n, const std::string& input) {
+    std::string mesh;
+    try {
+        mesh = remod::fill_game(remod::known_value(s.graph, n.id, "mesh"));
+    } catch (const remod::GraphError& e) {
+        ImGui::TextDisabled("%s", e.what());
+        return;
+    }
+    if (mesh.empty()) {
+        ImGui::TextDisabled("Pick the mesh first.");
+        return;
+    }
+    const std::filesystem::path file = std::filesystem::absolute(s.graph_path).parent_path() / mesh;
+    auto it = s.mesh_materials.find(file.string());
+    if (it == s.mesh_materials.end()) {
+        std::vector<std::string> names;
+        try {
+            names = remod::mesh_material_names(file);
+        } catch (const std::exception& e) {
+            names = {std::string("!") + e.what()};  // shown as the reason
+        }
+        it = s.mesh_materials.emplace(file.string(), std::move(names)).first;
+    }
+    std::string& value = n.params[input];
+    for (const std::string& name : it->second) {
+        if (name.starts_with('!')) {
+            ImGui::TextDisabled("Can't read its materials: %s", name.c_str() + 1);
+        } else if (ImGui::MenuItem(name.c_str(), nullptr, value == name)) {
+            value = name;
+        }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Read the mesh's materials again")) s.mesh_materials.erase(it);
+}
+
 // Where a block got to in the last run, in Use layout once there's been a run (blocks the run didn't report weren't
 // reached); nothing otherwise (Build look).
 std::optional<remod::NodeState> run_state(const State& s, int id) {
@@ -1837,13 +1898,20 @@ std::optional<remod::NodeState> run_state(const State& s, int id) {
     return it == s.statuses.end() ? remod::NodeState::NotReached : it->second.state;
 }
 
+// Did this link carry nothing in the last run (a branch not taken: an If that said no)? Core shows such a value as
+// "nothing: <why>".
+bool carried_nothing(const State& s, const remod::Link& l) {
+    const auto it = s.values.find({l.from_node, l.from_port});
+    return it != s.values.end() && it->second.starts_with("nothing: ");
+}
+
 // A block's paint (handoff §5): a dark tint of its run state's colour (Far the whole block, Near the header band),
 // outlined in that colour.
 BlockPaint block_paint(std::optional<remod::NodeState> state, bool far_view, bool selected, bool hovered) {
     using enum remod::NodeState;
     BlockPaint p;
     p.marks = hovered ? pal::accent : pal::faint;
-    if (state && *state != NotReached) {
+    if (state && *state != NotReached && *state != NotNeeded) {
         const ImU32 color = *state == Done ? pal::done : *state == Waiting ? pal::waiting : pal::failed;
         const ImU32 tint = mix(pal::block, color, 0.22f);
         if (far_view) p.fill = tint;
@@ -1852,6 +1920,7 @@ BlockPaint block_paint(std::optional<remod::NodeState> state, bool far_view, boo
         p.width = *state == Done ? 1.5f : 2;
     }
     if (state == NotReached) p.stroke = pal::faint, p.dashed = true, p.alpha = far_view ? 0.55f : 1;
+    if (state == NotNeeded) p.stroke = pal::faint, p.alpha = 0.45f;  // a branch not taken: faded, solid
     if (selected) p.stroke = pal::accent, p.width = 2, p.dashed = false, p.selected = true;
     return p;
 }
@@ -1954,7 +2023,7 @@ ImVec2 draw_far_block(State& s, const remod::Node& n, const remod::NodeSpec& spe
         size = s.graph.downward ? ImVec2((std::max)(116 * u, along), (std::max)(40 * u, title_h + 10 * u))
                                 : ImVec2(116 * u, (std::max)({40 * u, along, title_h + 10 * u}));
     }
-    const float alpha = state == remod::NodeState::NotReached ? 0.55f : 1;
+    const float alpha = state == remod::NodeState::NotReached ? 0.55f : state == remod::NodeState::NotNeeded ? 0.45f : 1;
     ImDrawList* d = ImGui::GetWindowDrawList();
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
     for (int side = 0; side < 2; ++side) {
@@ -1977,7 +2046,9 @@ ImVec2 draw_far_block(State& s, const remod::Node& n, const remod::NodeSpec& spe
             s.pin_pos[p.id.Get()] = c;
             s.pin_anchor[p.id.Get()] = s.graph.downward ? c : ImVec2(at.x + (side ? size.x : 0), c.y);
             s.pin_top[p.id.Get()] = false;
-            if (!dot) draw_pin_shape(d, c, p.type, p.look, p.wired, state == remod::NodeState::NotReached, u);
+            if (!dot)
+                draw_pin_shape(d, c, p.type, p.look, p.wired,
+                               state == remod::NodeState::NotReached || state == remod::NodeState::NotNeeded, u);
         }
     }
     ImGui::PopStyleVar();
@@ -2390,7 +2461,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         if (spec && spec->view_size) node_width = ImMax(node_width, picture_size(n, *spec));  // as wide as its picture
         const float x0 = ImGui::GetCursorPosX();
         const float left_edge = ImGui::GetCursorScreenPos().x - padding.x;  // node border, where pins sit
-        const Outline o{family, ImVec2(left_edge, top), last_size, u, state == remod::NodeState::NotReached, n.id,
+        const Outline o{family, ImVec2(left_edge, top), last_size, u,
+                        state == remod::NodeState::NotReached || state == remod::NodeState::NotNeeded, n.id,
                         s.graph.downward};
         s.ports_now = {};
         if (!spec) {
@@ -2407,6 +2479,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             const char* state_label = state == remod::NodeState::Done      ? "DONE"
                                       : state == remod::NodeState::Waiting ? "YOUR STEP"
                                       : state == remod::NodeState::Failed  ? "FAILED"
+                                      : state == remod::NodeState::NotNeeded ? "NOT NEEDED"
                                                                            : nullptr;
             const char* type = state_label ? nullptr
                                : named     ? spec->title
@@ -2591,6 +2664,16 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                         accept_path(s, value, in.path,
                                     in.path == remod::PathKind::OpenTexture ? s.texture_filter.c_str() : in.filter,
                                     hovered_hint);
+                        // A mesh's Materials (Mesh mask, Part texture): a list of the mesh's material names.
+                        if (std::string_view(in.name) == "materials" && remod::find_input(*spec, "mesh")) {
+                            ImGui::SameLine();
+                            if (ImGui::ArrowButton("##materials", ImGuiDir_Down)) {
+                                s.choice_node = n.id;
+                                s.choice_input = in.name;
+                                open_choice_menu = true;
+                            }
+                            if (ImGui::IsItemHovered()) hovered_hint = "Pick from the mesh's materials";
+                        }
                         if (in.widget == remod::Widget::Path) {
                             ImGui::SameLine();
                             const bool texture = in.path == remod::PathKind::OpenTexture;
@@ -2733,7 +2816,15 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                                          : kind == remod::PortType::Image   ? remod::kEditImageFormats
                                                                             : nullptr;
                     ImGui::SetNextItemWidth(field_width - (dest && s.build_mode ? flip_width : 0));
-                    ImGui::InputTextWithHint("##v", dest ? dest->label : out.field_label, &value);
+                    if (!dest && kind == remod::PortType::Bool) {  // a Value feeding a condition: yes / no
+                        if (value != "true") value = "false";
+                        bool on = value == "true";
+                        if (ImGui::Checkbox("##v", &on)) value = on ? "true" : "false";
+                        ImGui::SameLine();
+                        ImGui::Dummy(ImVec2(field_width - ImGui::GetFrameHeight() - style.ItemSpacing.x, 0));
+                    } else {
+                        ImGui::InputTextWithHint("##v", dest ? dest->label : out.field_label, &value);
+                    }
                     if (ImGui::IsItemHovered())  // the whole value (a long path doesn't fit the field), else the hint
                         hovered_hint = !value.empty() ? value : dest ? dest->hint : out.hint;
                     accept_path(s, value, picker, filter, hovered_hint);
@@ -2787,7 +2878,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         }
         if (!far_view) paint.band = band;
         // A manual step's header (all of it, Far) is hatched while it isn't filled by a run state.
-        const bool plain = !state || state == remod::NodeState::NotReached;
+        const bool plain = !state || state == remod::NodeState::NotReached || state == remod::NodeState::NotNeeded;
         if (family == remod::Family::Manual && plain) paint.hatch = far_view ? far_size.y : band;
         paint_block(bg, family, pos, far_view ? far_size : size, block_u, paint);
     }
@@ -2924,6 +3015,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                                                ? LinkState::Hot
                                                : LinkState::Build)
                                 : source == Failed  ? LinkState::Failed
+                                : source == NotNeeded || target == NotNeeded || carried_nothing(s, l)
+                                    ? LinkState::Skipped
                                 : source != Done    ? LinkState::Pending
                                 : target == Waiting ? LinkState::Active
                                                     : LinkState::Done;
@@ -3114,6 +3207,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         if (in)
             for (const auto& [value, label] : in->options)
                 if (ImGui::MenuItem(label, nullptr, n->params[in->name] == value)) n->params[in->name] = value;
+        if (in && in->options.empty())  // a Materials field: the mesh's material names
+            draw_material_list(s, *n, in->name);
         ImGui::EndPopup();
     }
     ed::NodeId clicked_node;
@@ -3263,7 +3358,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 s.place_new = id;
                 try {
                     remod::save_custom_node(made, remod::custom_library_dir());
-                    s.library = remod::load_custom_library(remod::custom_library_dir());
+                    s.library = remod::load_block_library();
                     s.status = "Made custom node " + made.title + ". It's in your library (Nodes panel, Custom nodes).";
                 } catch (const std::exception& e) {
                     s.status = std::string("Made custom node ") + made.title + ", but couldn't save it to your library: " +
@@ -3513,6 +3608,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         }
         draw_unsaved_prompt(state);
         draw_warnings(state);
+        // {game} in fields: the Game files folder, worked out again only when what it comes from changes.
+        static std::string game_key = "\x01";
+        if (std::string key = state.game_files + '|' + state.noesis_path + '|' + state.graph.profile; key != game_key) {
+            game_key = std::move(key);
+            remod::set_game_files_dir(game_files_dir(state));
+        }
         // The window's title: the graph's file name, with * while it has unsaved changes.
         static std::wstring title;
         if (std::wstring now = L"remod " REMOD_VERSION " - " + std::filesystem::path(state.graph_path).filename().wstring() +

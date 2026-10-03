@@ -501,3 +501,54 @@ TEST_CASE("decode_tex: a texture's pixels as BGRA, before anything is exported")
     CHECK(w == 4);
     CHECK(h == 4);
 }
+
+// ---- Part texture: a mesh's parts' texture, from its material file ----
+
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+TEST_CASE("Part texture: the parts' colour texture by material name, {game} paths, and clear refusals") {
+    using Catch::Matchers::ContainsSubstring;
+    TempDir dir;
+    const fs::path stm = dir.path / "natives/STM";
+    test::write_file(stm / "ch/body.mesh.221108797", "x");
+    test::write_file(stm / "ch/body.mdf2.32",
+                     mdf2({{"Pants_Mat", base_maps({"ch/legs_ALBD.tex", "ch/legs_NRMR.tex"})},
+                           {"Shirt_Mat", base_maps({"ch/top_albd.tex"})},
+                           {"Belt_Mat", base_maps({"ch/legs_albd.tex"})}}));
+    for (const char* t : {"ch/legs_albd", "ch/legs_nrmr", "ch/top_albd"})
+        test::write_fake_tex(stm / (std::string(t) + ".tex.143221013"), 143221013, 64, 32, 1, 2, 99);
+    const remod::Profile profile = remod::load_profile(REMOD_PROFILES_DIR "/re4r.toml");
+    struct NoConverter : remod::ITextureConverter {
+        remod::TexMeta load_tex(const fs::path&, const fs::path&, const remod::Profile&) override { throw 1; }
+        remod::TexMeta save_tex(const fs::path&, const fs::path&, const fs::path&, const remod::Profile&) override { throw 1; }
+    } conv;
+    const remod::RunOptions opt{.profile = profile, .converter = conv, .base_dir = dir.path};
+
+    remod::Graph g;
+    auto& part = g.add_node("PartTexture");
+    part.params["mesh"] = "{game}/ch/body.mesh.221108797";
+    part.params["materials"] = "*pants*;*BELT*";  // two parts sharing one texture
+    REQUIRE(g.validate().empty());
+    remod::set_game_files_dir({});
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("Game files folder"));
+
+    CHECK(remod::mesh_material_names(stm / "ch/body.mesh.221108797") ==
+          std::vector<std::string>{"Pants_Mat", "Shirt_Mat", "Belt_Mat"});  // the Materials field's list
+    remod::set_game_files_dir(stm);
+    const auto result = remod::run_graph(g, opt);
+    CHECK_THAT(result.nodes.at(1).message, ContainsSubstring("legs_ALBD.tex.143221013 (Pants_Mat, Belt_Mat)"));
+    CHECK(fs::equivalent(remod::preview_values(g, dir.path).at({1, "tex"}), stm / "ch/legs_albd.tex.143221013"));
+
+    g.find(1)->params["texture"] = "*_nrmr*";  // another of its textures
+    CHECK_THAT(remod::run_graph(g, opt).nodes.at(1).message, ContainsSubstring("legs_NRMR"));
+    g.find(1)->params["texture"] = "";
+
+    g.find(1)->params["materials"] = "";  // every part: two textures
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("different textures") && ContainsSubstring("top_albd"));
+    g.find(1)->params["materials"] = "*sleeve*";
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("has: Pants_Mat, Shirt_Mat, Belt_Mat"));
+    fs::remove(stm / "ch/top_albd.tex.143221013");  // not extracted
+    g.find(1)->params["materials"] = "Shirt_Mat";
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("Shirt_Mat: no colour texture in your game files"));
+    remod::set_game_files_dir({});
+}

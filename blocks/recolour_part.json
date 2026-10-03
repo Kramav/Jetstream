@@ -1,0 +1,744 @@
+{
+  "type": "custom:recolour_part",
+  "title": "Recolour part",
+  "summary": "Changes the colour of some parts of a mesh (e.g. *Pants* on Leon) on the texture they use and on its streaming copy, leaving the rest of the texture and its alpha data as they are. Give the mesh, the parts' material names and the colour change; link both textures into Package. Open it (Edit custom node) to see the blocks it's made of.",
+  "graph": {
+    "schema_version": 0,
+    "profile": "re4r",
+    "nodes": [
+      {
+        "id": 1,
+        "type": "NodeInput",
+        "params": {
+          "name": "mesh",
+          "default": ""
+        },
+        "pos": [
+          0,
+          0
+        ]
+      },
+      {
+        "id": 2,
+        "type": "NodeInput",
+        "params": {
+          "name": "materials",
+          "default": ""
+        },
+        "pos": [
+          0,
+          100
+        ]
+      },
+      {
+        "id": 3,
+        "type": "NodeInput",
+        "params": {
+          "name": "hue",
+          "default": "0"
+        },
+        "pos": [
+          0,
+          200
+        ]
+      },
+      {
+        "id": 4,
+        "type": "NodeInput",
+        "params": {
+          "name": "saturation",
+          "default": "0"
+        },
+        "pos": [
+          0,
+          300
+        ]
+      },
+      {
+        "id": 5,
+        "type": "NodeInput",
+        "params": {
+          "name": "brightness",
+          "default": "0"
+        },
+        "pos": [
+          0,
+          400
+        ]
+      },
+      {
+        "id": 6,
+        "type": "NodeInput",
+        "params": {
+          "name": "contrast",
+          "default": "0"
+        },
+        "pos": [
+          0,
+          500
+        ]
+      },
+      {
+        "id": 7,
+        "type": "Split",
+        "params": {},
+        "pos": [
+          250,
+          0
+        ]
+      },
+      {
+        "id": 8,
+        "type": "Split",
+        "params": {},
+        "pos": [
+          250,
+          100
+        ]
+      },
+      {
+        "id": 9,
+        "type": "PartTexture",
+        "params": {
+          "mesh": "",
+          "materials": "",
+          "texture": ""
+        },
+        "pos": [
+          400,
+          0
+        ]
+      },
+      {
+        "id": 10,
+        "type": "Split",
+        "params": {},
+        "pos": [
+          700,
+          0
+        ]
+      },
+      {
+        "id": 11,
+        "type": "StreamingCopy",
+        "params": {},
+        "pos": [
+          850,
+          0
+        ]
+      },
+      {
+        "id": 12,
+        "type": "MeshMask",
+        "params": {
+          "mesh": "",
+          "size_of": "",
+          "materials": "",
+          "grow": "2",
+          "save_to": "",
+          "title": "Where the parts are"
+        },
+        "pos": [
+          1450,
+          400
+        ]
+      },
+      {
+        "id": 13,
+        "type": "ExportImage",
+        "params": {
+          "png": ""
+        },
+        "pos": [
+          1150,
+          0
+        ]
+      },
+      {
+        "id": 14,
+        "type": "Split",
+        "params": {},
+        "pos": [
+          1400,
+          0
+        ]
+      },
+      {
+        "id": 15,
+        "type": "AdjustColour",
+        "params": {
+          "image": "",
+          "hue": "0",
+          "saturation": "0",
+          "brightness": "0",
+          "contrast": "0",
+          "save_to": ""
+        },
+        "pos": [
+          1550,
+          150
+        ]
+      },
+      {
+        "id": 16,
+        "type": "custom:convert_with_streaming",
+        "params": {},
+        "pos": [
+          2300,
+          0
+        ]
+      },
+      {
+        "id": 17,
+        "type": "MaskBlend",
+        "params": {
+          "base": "",
+          "edited": "",
+          "mask": "",
+          "feather": "0",
+          "invert": "false",
+          "save_to": "",
+          "title": "Only on the parts"
+        },
+        "pos": [
+          1900,
+          0
+        ]
+      },
+      {
+        "id": 18,
+        "type": "Split",
+        "params": {},
+        "pos": [
+          2150,
+          0
+        ]
+      },
+      {
+        "id": 19,
+        "type": "NodeOutput",
+        "params": {
+          "name": "texture"
+        },
+        "pos": [
+          2700,
+          0
+        ]
+      },
+      {
+        "id": 20,
+        "type": "NodeOutput",
+        "params": {
+          "name": "streaming texture"
+        },
+        "pos": [
+          2700,
+          100
+        ]
+      },
+      {
+        "id": 21,
+        "type": "NodeOutput",
+        "params": {
+          "name": "preview"
+        },
+        "pos": [
+          2700,
+          200
+        ]
+      }
+    ],
+    "links": [
+      {
+        "from": [
+          1,
+          "value"
+        ],
+        "to": [
+          7,
+          "in"
+        ]
+      },
+      {
+        "from": [
+          7,
+          "out"
+        ],
+        "to": [
+          9,
+          "mesh"
+        ]
+      },
+      {
+        "from": [
+          7,
+          "out"
+        ],
+        "to": [
+          12,
+          "mesh"
+        ]
+      },
+      {
+        "from": [
+          2,
+          "value"
+        ],
+        "to": [
+          8,
+          "in"
+        ]
+      },
+      {
+        "from": [
+          8,
+          "out"
+        ],
+        "to": [
+          9,
+          "materials"
+        ]
+      },
+      {
+        "from": [
+          8,
+          "out"
+        ],
+        "to": [
+          12,
+          "materials"
+        ]
+      },
+      {
+        "from": [
+          9,
+          "tex"
+        ],
+        "to": [
+          10,
+          "in"
+        ]
+      },
+      {
+        "from": [
+          10,
+          "out"
+        ],
+        "to": [
+          11,
+          "tex"
+        ]
+      },
+      {
+        "from": [
+          10,
+          "out"
+        ],
+        "to": [
+          16,
+          "in2"
+        ]
+      },
+      {
+        "from": [
+          11,
+          "full"
+        ],
+        "to": [
+          13,
+          "tex"
+        ]
+      },
+      {
+        "from": [
+          13,
+          "png"
+        ],
+        "to": [
+          14,
+          "in"
+        ]
+      },
+      {
+        "from": [
+          14,
+          "out"
+        ],
+        "to": [
+          17,
+          "base"
+        ]
+      },
+      {
+        "from": [
+          14,
+          "out"
+        ],
+        "to": [
+          15,
+          "image"
+        ]
+      },
+      {
+        "from": [
+          14,
+          "out"
+        ],
+        "to": [
+          12,
+          "size_of"
+        ]
+      },
+      {
+        "from": [
+          3,
+          "value"
+        ],
+        "to": [
+          15,
+          "hue"
+        ]
+      },
+      {
+        "from": [
+          4,
+          "value"
+        ],
+        "to": [
+          15,
+          "saturation"
+        ]
+      },
+      {
+        "from": [
+          5,
+          "value"
+        ],
+        "to": [
+          15,
+          "brightness"
+        ]
+      },
+      {
+        "from": [
+          6,
+          "value"
+        ],
+        "to": [
+          15,
+          "contrast"
+        ]
+      },
+      {
+        "from": [
+          15,
+          "image"
+        ],
+        "to": [
+          17,
+          "edited"
+        ]
+      },
+      {
+        "from": [
+          12,
+          "image"
+        ],
+        "to": [
+          17,
+          "mask"
+        ]
+      },
+      {
+        "from": [
+          17,
+          "image"
+        ],
+        "to": [
+          18,
+          "in"
+        ]
+      },
+      {
+        "from": [
+          18,
+          "out"
+        ],
+        "to": [
+          16,
+          "in1"
+        ]
+      },
+      {
+        "from": [
+          18,
+          "out"
+        ],
+        "to": [
+          21,
+          "value"
+        ]
+      },
+      {
+        "from": [
+          11,
+          "streaming"
+        ],
+        "to": [
+          16,
+          "in3"
+        ]
+      },
+      {
+        "from": [
+          16,
+          "out9"
+        ],
+        "to": [
+          19,
+          "value"
+        ]
+      },
+      {
+        "from": [
+          16,
+          "out10"
+        ],
+        "to": [
+          20,
+          "value"
+        ]
+      }
+    ],
+    "custom_nodes": [
+      {
+        "type": "custom:convert_with_streaming",
+        "title": "Convert with streaming copy",
+        "summary": "Turns the edited image into the new texture and, when the texture has a streaming copy, into a new streaming copy too (the mod must replace both). Edit at full size (Streaming copy's 'full size'): the image is shrunk to the texture's size for it. Without a streaming copy, 'streaming texture' gives nothing and Package leaves it out. Open it (Edit custom node) to see the blocks it's made of.",
+        "graph": {
+          "schema_version": 0,
+          "profile": "re4r",
+          "nodes": [
+            {
+              "id": 1,
+              "type": "NodeInput",
+              "params": {
+                "name": "edited image",
+                "default": ""
+              },
+              "pos": [
+                0,
+                0
+              ]
+            },
+            {
+              "id": 2,
+              "type": "NodeInput",
+              "params": {
+                "name": "texture",
+                "default": ""
+              },
+              "pos": [
+                0,
+                200
+              ]
+            },
+            {
+              "id": 3,
+              "type": "NodeInput",
+              "params": {
+                "name": "streaming copy",
+                "default": ""
+              },
+              "pos": [
+                0,
+                400
+              ]
+            },
+            {
+              "id": 4,
+              "type": "Split",
+              "params": {},
+              "pos": [
+                300,
+                20
+              ]
+            },
+            {
+              "id": 5,
+              "type": "Split",
+              "params": {},
+              "pos": [
+                300,
+                220
+              ]
+            },
+            {
+              "id": 6,
+              "type": "ResizeImage",
+              "params": {
+                "image": "",
+                "width": "0",
+                "height": "0",
+                "match": "",
+                "fit": "stretch",
+                "save_to": "",
+                "title": "Shrink to the texture's size"
+              },
+              "pos": [
+                500,
+                0
+              ]
+            },
+            {
+              "id": 7,
+              "type": "SaveTex",
+              "params": {
+                "title": "Convert the texture"
+              },
+              "pos": [
+                900,
+                0
+              ]
+            },
+            {
+              "id": 8,
+              "type": "SaveTex",
+              "params": {
+                "title": "Convert the streaming copy"
+              },
+              "pos": [
+                900,
+                400
+              ]
+            },
+            {
+              "id": 9,
+              "type": "NodeOutput",
+              "params": {
+                "name": "texture"
+              },
+              "pos": [
+                1250,
+                0
+              ]
+            },
+            {
+              "id": 10,
+              "type": "NodeOutput",
+              "params": {
+                "name": "streaming texture"
+              },
+              "pos": [
+                1250,
+                400
+              ]
+            }
+          ],
+          "links": [
+            {
+              "from": [
+                1,
+                "value"
+              ],
+              "to": [
+                4,
+                "in"
+              ]
+            },
+            {
+              "from": [
+                4,
+                "out"
+              ],
+              "to": [
+                6,
+                "image"
+              ]
+            },
+            {
+              "from": [
+                4,
+                "out"
+              ],
+              "to": [
+                8,
+                "image"
+              ]
+            },
+            {
+              "from": [
+                2,
+                "value"
+              ],
+              "to": [
+                5,
+                "in"
+              ]
+            },
+            {
+              "from": [
+                5,
+                "out"
+              ],
+              "to": [
+                7,
+                "original"
+              ]
+            },
+            {
+              "from": [
+                5,
+                "out"
+              ],
+              "to": [
+                6,
+                "match"
+              ]
+            },
+            {
+              "from": [
+                6,
+                "image"
+              ],
+              "to": [
+                7,
+                "image"
+              ]
+            },
+            {
+              "from": [
+                3,
+                "value"
+              ],
+              "to": [
+                8,
+                "original"
+              ]
+            },
+            {
+              "from": [
+                7,
+                "tex"
+              ],
+              "to": [
+                9,
+                "value"
+              ]
+            },
+            {
+              "from": [
+                8,
+                "tex"
+              ],
+              "to": [
+                10,
+                "value"
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -24,8 +24,9 @@ Keep the `profiles` folder next to `remod-app.exe`.
 2. In the **Pipeline** panel on the right, set **Game files** to your REtool folder, e.g.
    `...\REtool\RE4\re_chunk_000\natives\stm`. The **Browser** on the left then lists the game's textures and
    meshes. Reading the folder takes a few seconds each time the app starts.
-3. Open `examples\texture_mod.json` (the `...` button next to *Graph file*) to see a complete mod. Save a copy
-   (**Save As...**) before you change it.
+3. Open one of the **examples** (the `...` button next to *Graph file*, in the `examples` folder): eleven ready-made
+   mods, from a hand-edited document to recolouring part of a character. `examples\README.md` says what each shows.
+   Their game paths start with `{game}`, your Game files folder. Save a copy (**Save As...**) before you change one.
 
 The app remembers its settings in `%APPDATA%\remod`. It keeps converted textures in `%LOCALAPPDATA%\remod\run_cache`
 (at most 512 MB) so a run that changed nothing writes nothing.
@@ -92,6 +93,7 @@ Undo / redo: **Ctrl+Z** / **Ctrl+Y**. Save: **Ctrl+S**. A `*` in the title means
 |---|---|
 | Original texture | A game texture. |
 | Files in folder | Every matching file in a folder; the blocks it feeds run once per file (below). |
+| Streaming copy | Finds a texture's high-resolution copy, so the mod replaces both (below). |
 | Export image | Writes the texture as an image to edit. |
 | Edit image | Your step: the run waits until you click Done editing. |
 | Use existing image | An image you already have. |
@@ -99,7 +101,9 @@ Undo / redo: **Ctrl+Z** / **Ctrl+Y**. Save: **Ctrl+S**. A `*` in the title means
 | Adjust colour, Resize image, Overlay image | Change an image. *Save to* keeps the result as a file. |
 | Replace photo | Puts your picture into a photo frame texture, keeping the frame and the photo's ageing. |
 | Pick channel, Merge channels | Work on one channel (e.g. the colour) without touching data in another. |
+| Part texture | The texture some parts of a mesh use, by material name (e.g. Leon's `Pants_Mat`): no hunting in the Browser. The ▼ beside Materials lists the mesh's materials. |
 | Mesh mask, Blend in mask | Change only one part of a texture, e.g. a character's trousers. |
+| Recolour part | Built from blocks: a mesh, its parts' material names and a colour change give both new textures (the texture and its streaming copy), changed on those parts only. |
 | Preview | Shows a picture on the graph. |
 | Package for Fluffy | Builds the mod and its zip. |
 | Copy / Move / Rename / Delete file, Make folder | File housekeeping. Delete uses the Recycle Bin. |
@@ -107,13 +111,14 @@ Undo / redo: **Ctrl+Z** / **Ctrl+Y**. Save: **Ctrl+S**. A `*` in the title means
 
 **Utilities** (small grey blocks that only compute): Value (a setting kept in the graph, e.g. your output folder),
 Text (fills `{1}`, `{2}`… from what's linked in), Split, Join path, Path parts, Change extension, Cut text, Require
-file.
+file, and the conditions: If, First of, File exists, Text matches, Not (below).
 
 - **One output feeds one input.** To use a value in several places, put a **Split** on its link; it gets a new
   output for each link.
 - **Linked fields show their values.** A linked field shows what it will hold, or *known after a run*. Hover a field
   for its whole value.
-- **Paths in a graph** are relative to the graph file's folder.
+- **Paths in a graph** are relative to the graph file's folder. A path starting with `{game}` is inside your Game
+  files folder (`{game}\_chainsaw\...`), so a graph works on another PC whose game files are elsewhere.
 - **Settings at their defaults** fold into one "+ N settings" row; click it to open them.
 
 Image blocks show a live thumbnail. Click it for a larger view, or pop it out into its own window. The wheel zooms,
@@ -130,6 +135,46 @@ Start with **Files in folder** instead of Original texture:
   editing all**. Package waits until all are done.
 - **If a file fails:** stop the run (default) or skip that file.
 - **Previews:** the ◀ ▶ arrows on the block pick which file the thumbnails show.
+
+## Conditions: steps that only sometimes run
+
+- **If** passes its value on only when its condition is yes. When it's no, it passes on *nothing*: the steps after
+  it don't run, write nothing, and show **Not needed** (faded, with the reason). Put it at the start of the branch,
+  before any step that writes.
+- **Conditions** are their own kind of pin (white triangles): **File exists** (is a file there), **Text matches** (a
+  name or path against a pattern such as `*_albd*`; `;` between several) and **Not** (flips one). A condition can
+  also tick a checkbox field, such as Package's Replace existing.
+- **By hand:** with nothing linked into its condition, an If has a checkbox: a switch for that branch.
+- **If / else:** an If on the condition and another on Not of it, both into **First of**, which passes on whichever
+  ran.
+- **With a list:** an If on a Files in folder chain is a filter. Only the matching files go on, and Package collects
+  just those.
+
+Before a run, conditions that can be worked out already (File exists, Text matches) decide which branch the previews
+show and which files the run will write.
+
+## Streaming copies
+
+Many RE4 textures (most characters and props) exist twice: the base copy at its own path, and a sharper
+**streaming copy** at `natives\STM\streaming\<same path>` that the game swaps in up close. **If a texture has a
+streaming copy, the mod must replace both**, or the edit comes and goes with distance. A texture without one (most
+UI) is replaced alone.
+
+Two blocks do this:
+1. **Streaming copy:** feed it the base texture (from the REtool folder, through a Split). Export and edit its
+   **full size** output: the streaming copy if there is one, else the texture itself.
+2. **Convert with streaming copy** (in place of Convert image to texture): link in the edited image, the base
+   texture, and Streaming copy's **streaming copy (if any)**. Link both of its outputs into Package.
+
+Without a streaming copy, the second output gives nothing: Package gets the one texture, and the block's streaming
+conversion shows Not needed. With Files in folder, each texture gets two or one.
+
+## Built from blocks
+
+Some blocks are made of other blocks, such as **Convert with streaming copy**. They're listed in the Nodes panel under
+**Built from blocks**. Right-click one and pick **Edit custom node** to see the blocks inside and how they're linked.
+Change it and **Save** to keep your own version in your library; yours is used from then on. They work exactly like
+your own custom nodes (below).
 
 ## Masks and channels
 

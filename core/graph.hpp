@@ -111,6 +111,14 @@ inline bool Graph::operator==(const Graph& o) const {
 // "Open with".
 std::string known_value(const Graph& graph, int node, const std::string& input);
 
+// "{game}" in a field stands for the game files folder (the extracted natives\STM, e.g. REtool's), so a graph made on
+// one PC (the examples, a shared mod) runs on another: e.g. {game}\_chainsaw\ui\ui3200\tex\x.tex.143221013. Front
+// ends set it from their settings (the Game files folder). ponytail: one folder for every game; per profile once a
+// second game is supported.
+void set_game_files_dir(const std::filesystem::path& dir);
+// `text` with {game} filled in; throws GraphError if it uses {game} while no folder is set.
+std::string fill_game(const std::string& text);
+
 // Is this destination row flipped (circle on the left, set by a link)? Stored as the node param "flip:<input>".
 bool is_flipped(const Node& node, std::string_view input);
 
@@ -122,7 +130,8 @@ void set_block_title(Graph& graph, int node, const std::string& title);  // trim
 // JSON graph file, schema_version 0. Example: schemas/graph.v0.example.json
 // Older files are migrated on load (PackageMod's former `screenshot` field becomes an ImportImage -> preview; an
 // output feeding several inputs gets a Split block).
-// `added_blocks`: set to whether migrating added blocks (they have no considered place yet: front ends tidy up).
+// `added_blocks`: set to whether migrating added blocks, or no block has a position (a graph a program wrote): they have
+// no considered place yet, so front ends tidy up.
 Graph load_graph(const std::filesystem::path& file, bool* added_blocks = nullptr);
 void save_graph(const Graph& graph, const std::filesystem::path& file);
 
@@ -170,8 +179,9 @@ struct Guard {
     std::string check(const FileChange& change) const;  // for RunOptions::check_change: "" or why not
 };
 
-// Where each node got to in a run, for front ends to show.
-enum class NodeState { NotReached, Done, Waiting, Failed };
+// Where each node got to in a run, for front ends to show. NotNeeded: a required input got nothing (a branch not
+// taken, e.g. an If whose condition was no), so it didn't run and passed nothing on.
+enum class NodeState { NotReached, Done, Waiting, Failed, NotNeeded };
 // A block repeated for a list (fan-out, list_source): each item's own outcome.
 struct ItemStatus {
     std::string name;  // the item's {name}

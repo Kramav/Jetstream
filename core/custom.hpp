@@ -25,6 +25,14 @@ std::vector<CustomNode> load_custom_library(const std::filesystem::path& dir, st
 // Writes <dir>/<name>.json (the type without "custom:"), folders made. Throws GraphError.
 void save_custom_node(const CustomNode& node, const std::filesystem::path& dir);
 
+// Blocks made of blocks that ship with the tool (user, 2026-10-03): custom nodes in <tool>/blocks, beside profiles\,
+// in the library's format. Opening one shows the blocks it's made of.
+std::filesystem::path builtin_blocks_dir();
+// The built-in ones, then the user's library (custom_library_dir): a user's own version of a built-in type (saved
+// after editing it) wins. What front ends register at start and offer updates from.
+std::vector<CustomNode> load_block_library(std::vector<std::string>* errors = nullptr);
+bool is_builtin_block(std::string_view type);  // loaded from builtin_blocks_dir by load_block_library
+
 // ---- Registry: custom types as block types ----
 
 // Makes `node` a block type: find_spec finds it, custom_specs lists it. Its pins come from its Input and Output blocks

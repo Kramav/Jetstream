@@ -8,6 +8,8 @@
 #include <cctype>
 #include <cwctype>
 #include <fstream>
+#include <mutex>
+#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -66,6 +68,7 @@ const char* type_name(PortType t) {
     case PortType::Text: return "text";
     case PortType::Path: return "a file path";
     case PortType::Folder: return "a folder";
+    case PortType::Bool: return "a condition (yes / no)";
     case PortType::Any: return "anything";
     }
     return "?";
@@ -137,6 +140,26 @@ std::string check_link(const Graph& g, const Link& l) {
     return "";
 }
 
+// A pass-through with several inputs (First of): what comes in must be of one kind, as it passes either on. "" if so.
+std::string mixed_kinds(const Graph& g, int node) {
+    const Node* n = g.find(node);
+    const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+    if (!spec) return "";
+    PortType kind = PortType::Any;
+    for (const InputSpec& in : spec->inputs) {
+        if (in.type != PortType::Any) continue;
+        for (const size_t i : g.links_into(node, in.name)) {
+            const PortType t = g.output_type(g.links[i].from_node, g.links[i].from_port);
+            if (t == PortType::Any) continue;
+            if (kind != PortType::Any && t != kind)
+                return node_label(*n) + " gets " + type_name(kind) + " and " + type_name(t) +
+                       ": what comes into it must be of one kind";
+            kind = t;
+        }
+    }
+    return "";
+}
+
 // Scratch folder for intermediate files of one run, removed afterwards.
 struct TempDir {
     fs::path path = fs::temp_directory_path() / ("remod_run_" + std::to_string(std::random_device{}()));
@@ -181,6 +204,7 @@ std::string Graph::can_connect(const Link& link) const {
     Graph trial = *this;  // ponytail: copies the graph per check; fine for hand-built graphs of a few nodes
     trial.links.push_back(link);
     if (topo_order(trial).size() != trial.nodes.size()) return "that link would create a loop";
+    if (std::string mixed = mixed_kinds(trial, link.to_node); !mixed.empty()) return mixed;
     // Into a Split: what it passes on changes, and every step after it must still take that.
     for (const Link& l : trial.links) {
         const Node* to = trial.find(l.to_node);
@@ -274,10 +298,13 @@ PortType Graph::output_type(int node, const std::string& output) const {
     for (size_t hop = 0; hop <= nodes.size(); ++hop) {  // bounded: a loop (refused anyway) can't hang it
         const PortSpec* out = output_of(*this, node, port);
         if (!out || out->type != PortType::Any) return out ? out->type : PortType::Any;
+        // What it passes on: its first linked pass-through input (First of has two; mixed_kinds keeps them alike).
         const auto& inputs = find_spec(find(node)->type)->inputs;
-        const auto in = std::ranges::find(inputs, PortType::Any, &InputSpec::type);  // what it passes on
-        if (in == inputs.end()) return wanted_type(node, port);  // nothing passed on (a Value): what it feeds
-        const auto linked = links_into(node, in->name);
+        if (std::ranges::find(inputs, PortType::Any, &InputSpec::type) == inputs.end())
+            return wanted_type(node, port);  // nothing passed on (a Value): what it feeds
+        std::vector<size_t> linked;
+        for (const InputSpec& in : inputs)
+            if (in.type == PortType::Any && linked.empty()) linked = links_into(node, in.name);
         if (linked.empty()) return PortType::Any;
         node = links[linked[0]].from_node;
         port = links[linked[0]].from_port;
@@ -413,6 +440,32 @@ std::string known_value(const Graph& g, int node, const std::string& input) {
     }
 }
 
+namespace {
+std::mutex g_game_mutex;  // the app's preview jobs read it on other threads
+std::filesystem::path g_game_files;
+}  // namespace
+
+void set_game_files_dir(const fs::path& dir) {
+    std::lock_guard lock(g_game_mutex);
+    g_game_files = dir;
+}
+
+std::string fill_game(const std::string& text) {
+    if (text.find("{game}") == std::string::npos) return text;
+    fs::path dir;
+    {
+        std::lock_guard lock(g_game_mutex);
+        dir = g_game_files;
+    }
+    if (dir.empty())
+        throw GraphError("{game} stands for your Game files folder (the extracted natives\\STM): set it in the "
+                         "Pipeline panel");
+    std::string out = text, folder = dir.string();
+    while (!folder.empty() && (folder.back() == '\\' || folder.back() == '/')) folder.pop_back();
+    for (size_t at; (at = out.find("{game}")) != std::string::npos;) out.replace(at, 6, folder);
+    return out;
+}
+
 bool is_flipped(const Node& node, std::string_view input) {
     const auto it = node.params.find("flip:" + std::string(input));
     return it != node.params.end() && it->second == "true";
@@ -472,10 +525,23 @@ std::vector<std::string> Graph::validate() const {
         for (const auto& out : spec->outputs) {
             if (!out.multiple && links_from(n.id, out.name).size() > 1)
                 errors.push_back(node_label(n) + ": '" + out.label + "' goes to more than one step; use a Split block");
-            if (!out.field) continue;  // where the node writes an output: always required
+            if (!out.field) continue;  // where the node writes an output: required unless optional
             const auto it = n.params.find(out.field);
-            if (it == n.params.end() || it->second.empty())
-                errors.push_back(node_label(n) + ": " + out.field_label + " is required");
+            if (it == n.params.end() || it->second.empty()) {
+                // Optional (Export image's working copy), except for a file someone edits: an Edit image step's.
+                std::function<bool(int, const std::string&)> to_edit = [&](int id, const std::string& port) {
+                    for (const size_t i : links_from(id, port)) {
+                        const Node* to = find(links[i].to_node);
+                        if (to && (to->type == "EditImage" || (to->type == "Split" && to_edit(to->id, "out"))))
+                            return true;
+                    }
+                    return false;
+                };
+                if (!out.field_optional)
+                    errors.push_back(node_label(n) + ": " + out.field_label + " is required");
+                else if (to_edit(n.id, out.name))
+                    errors.push_back(node_label(n) + ": " + out.field_label + " is required: it's the file you edit");
+            }
             else if (out.filter && !has_extension(it->second, out.filter))
                 errors.push_back(node_label(n) + ": " + out.field_label + " must end in " + extension_list(out.filter));
         }
@@ -512,6 +578,8 @@ std::vector<std::string> Graph::validate() const {
     }
     for (const auto& l : links)
         if (auto err = check_link(*this, l); !err.empty()) errors.push_back(err);
+    for (const auto& n : nodes)
+        if (auto err = mixed_kinds(*this, n.id); !err.empty()) errors.push_back(err);
     if (errors.empty() && topo_order(*this).size() != nodes.size()) errors.push_back("graph contains a loop");
     return errors;
 }
@@ -521,6 +589,15 @@ namespace {
 // Graph files from before inputs were unified: PackageMod had a typed `screenshot` path. An empty one is
 // dropped; a set one becomes an ImportImage node feeding the new `preview` input.
 void migrate(Graph& g) {
+    // Fields a file doesn't have (a block that gained one since, or a graph a program wrote): their initial values, as
+    // a new block gets them (add_node).
+    for (Node& n : g.nodes)
+        if (const NodeSpec* spec = find_spec(n.type)) {
+            for (const InputSpec& in : spec->inputs)
+                if (in.editable()) n.params.try_emplace(in.name, in.initial);
+            for (const PortSpec& out : spec->outputs)
+                if (out.field) n.params.try_emplace(out.field, "");
+        }
     std::vector<std::pair<int, std::string>> screenshots;
     for (auto& n : g.nodes) {
         if (n.type != "PackageMod") continue;
@@ -624,11 +701,14 @@ Graph load_graph(const fs::path& file, bool* added_blocks) {
     std::ifstream in(file);
     if (!in) throw GraphError("cannot open graph file " + file.string());
     try {
-        Graph g = graph_from_json(json::parse(in));
+        const json j = json::parse(in);
+        Graph g = graph_from_json(j);
         for (const CustomNode& c : g.customs) register_custom(c);  // its copies are what it runs and shows
         const size_t before = g.nodes.size();
         migrate(g);
-        if (added_blocks) *added_blocks = g.nodes.size() != before;
+        // Blocks without positions (a graph written by a program, e.g. the examples) are laid out like new ones.
+        const bool unplaced = std::ranges::none_of(j.at("nodes"), [](const json& n) { return n.contains("pos"); });
+        if (added_blocks) *added_blocks = g.nodes.size() != before || (unplaced && !g.nodes.empty());
         return g;
     } catch (const json::exception& e) {
         throw GraphError(file.string() + ": invalid graph file: " + e.what());
@@ -721,6 +801,50 @@ bool blocked(const RunState& run, int node) {
     return false;
 }
 
+// Every value linked into `input` for the current item (see NodeRun::values), nothing included.
+std::vector<Value> raw_values(const RunState& run, int node, const std::string& input) {
+    std::vector<Value> v;
+    for (size_t i : run.graph.links_into(node, input)) {
+        const Link& l = run.graph.links[i];
+        const int list = list_of(run, l.from_node, l.from_port);
+        if (!list) {
+            v.push_back(run.outputs.at({l.from_node, l.from_port, -1}));
+        } else if (run.item >= 0) {
+            v.push_back(run.outputs.at({l.from_node, l.from_port, run.item}));
+        } else {  // a block that isn't repeated takes every item
+            for (const int item : list_items(run, list)) v.push_back(run.outputs.at({l.from_node, l.from_port, item}));
+        }
+    }
+    return v;
+}
+
+// Why a block (for the current item) isn't needed: a required input got only nothing (a branch not taken). nullopt:
+// it runs.
+std::optional<std::string> not_needed(const RunState& run, const Node& n) {
+    for (const InputSpec& in : find_spec(n.type)->inputs) {
+        if (!in.required) continue;
+        std::vector<Value> v;
+        try {
+            v = raw_values(run, n.id, in.name);
+        } catch (const std::out_of_range&) {  // a preview: not known yet, which isn't nothing
+            continue;
+        }
+        if (!v.empty() && std::ranges::all_of(v, &Value::nothing))
+            return v.front().why.empty() ? std::string("nothing came in") : v.front().why;
+    }
+    return std::nullopt;
+}
+
+// A block that isn't needed passes nothing on: every output (a list output: no items).
+void pass_nothing(NodeRun& r, const std::string& why) {
+    for (const PortSpec& out : find_spec(r.node.type)->outputs) {
+        if (out.list)
+            r.run.items[r.node.id] = {};
+        else
+            r.nothing(out.name, why);
+    }
+}
+
 // A block's (or, repeated, its current item's) outcome.
 void record(NodeRun& r, NodeState state, const std::string& message, const fs::path& file) {
     NodeStatus& status = r.run.result.nodes[r.node.id];
@@ -743,7 +867,8 @@ void sum_up(NodeStatus& status) {
     status.state = count[NodeState::Waiting]      ? NodeState::Waiting
                    : count[NodeState::Failed]     ? NodeState::Failed
                    : count[NodeState::NotReached] ? NodeState::NotReached
-                                                  : NodeState::Done;
+                   : count[NodeState::Done]       ? NodeState::Done
+                                                  : NodeState::NotNeeded;
     const auto first = std::ranges::find(status.items, status.state, &ItemStatus::state);
     status.file = first->file;
     if (status.items.size() == 1) {
@@ -753,7 +878,8 @@ void sum_up(NodeStatus& status) {
     std::string message;
     for (const auto& [state, words] : {std::pair{NodeState::Done, " done"}, std::pair{NodeState::Waiting, " waiting for you"},
                                        std::pair{NodeState::Failed, " failed"},
-                                       std::pair{NodeState::NotReached, " waiting for an earlier step"}})
+                                       std::pair{NodeState::NotReached, " waiting for an earlier step"},
+                                       std::pair{NodeState::NotNeeded, " not needed"}})
         if (count[state]) message += (message.empty() ? "" : ", ") + std::to_string(count[state]) + words;
     status.message = std::to_string(status.items.size()) + " items: " + message;
 }
@@ -769,6 +895,9 @@ int shown_item(const RunState& run, int list) {
     return 0;
 }
 
+// An output's value as front ends show it: its text, or "nothing: <why>".
+std::string shown(const Value& v) { return v.nothing ? "nothing: " + v.why : v.text; }
+
 // What each output gave, for front ends: a repeated block's shown item stands for the list (its first, where the
 // shown one didn't get that far).
 RunValues first_values(const RunState& run) {
@@ -776,9 +905,9 @@ RunValues first_values(const RunState& run) {
     for (const auto& [key, value] : run.outputs) {
         const auto& [node, port, item] = key;
         const int list = item < 0 ? 0 : list_of(run, node, port);
-        if (!list || item == shown_item(run, list)) values[{node, port}] = value.text;
+        if (!list || item == shown_item(run, list)) values[{node, port}] = shown(value);
     }
-    for (const auto& [key, value] : run.outputs) values.try_emplace({std::get<0>(key), std::get<1>(key)}, value.text);
+    for (const auto& [key, value] : run.outputs) values.try_emplace({std::get<0>(key), std::get<1>(key)}, shown(value));
     return values;
 }
 
@@ -822,12 +951,24 @@ RunResult run_expanded(const Graph& g, const RunOptions& opt) {
         const int list = run.source[n.id];
         const Node* list_node = list ? g.find(list) : nullptr;
         const bool skip_failed = list_node && list_node->params.contains("on_fail") && list_node->params.at("on_fail") == "skip";
-        for (const int item : items_for(run, n.id)) {
+        const std::vector<int> items = items_for(run, n.id);
+        if (const auto from = result.nodes.find(list);
+            list && items.empty() && from != result.nodes.end() && from->second.state == NodeState::NotNeeded) {
+            result.nodes[n.id] = {NodeState::NotNeeded, from->second.message, {}, {}};  // its list didn't run
+            continue;
+        }
+        for (const int item : items) {
             run.item = item;
             NodeRun node_run(run, n);
             if (blocked(run, n.id)) {
                 run.waiting.insert({n.id, item});
                 record(node_run, NodeState::NotReached, "waits for an earlier step", {});
+                continue;
+            }
+            if (const auto why = not_needed(run, n)) {
+                pass_nothing(node_run, *why);
+                record(node_run, NodeState::NotNeeded, "not needed: " + *why, {});
+                node_run.log("not needed: " + *why);
                 continue;
             }
             try {
@@ -870,18 +1011,8 @@ RunResult run_expanded(const Graph& g, const RunOptions& opt) {
 }
 
 std::vector<Value> NodeRun::values(const char* input) const {
-    std::vector<Value> v;
-    for (size_t i : run.graph.links_into(node.id, input)) {
-        const Link& l = run.graph.links[i];
-        const int list = list_of(run, l.from_node, l.from_port);
-        if (!list) {
-            v.push_back(run.outputs.at({l.from_node, l.from_port, -1}));
-        } else if (run.item >= 0) {
-            v.push_back(run.outputs.at({l.from_node, l.from_port, run.item}));
-        } else {  // a block that isn't repeated takes every item
-            for (const int item : list_items(run, list)) v.push_back(run.outputs.at({l.from_node, l.from_port, item}));
-        }
-    }
+    std::vector<Value> v = raw_values(run, node.id, input);
+    std::erase_if(v, [](const Value& x) { return x.nothing; });
     return v;
 }
 
@@ -889,12 +1020,22 @@ std::string NodeRun::text(const char* input) const {
     std::string t;
     if (auto v = values(input); !v.empty()) {
         t = v.front().text;
-    } else if (const auto it = node.params.find(input); it != node.params.end()) {
+    } else if (const auto it = node.params.find(input);
+               it != node.params.end() && run.graph.links_into(node.id, input).empty()) {  // linked: empty
         t = it->second;
     }
+    t = fill_game(t);
     if (const ListItem* it = item())
         for (size_t at; (at = t.find("{name}")) != std::string::npos;) t.replace(at, 6, it->name);
     return t;
+}
+
+bool NodeRun::condition(const char* input) const {
+    std::string t = text(input);
+    std::ranges::transform(t, t.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (t == "true" || t == "yes" || t == "1") return true;
+    if (t == "false" || t == "no" || t == "0" || t.empty()) return false;
+    throw GraphError("'" + t + "' isn't a condition: it must be yes or no (true / false)");
 }
 
 void NodeRun::output_list(const char* port, std::vector<Value> values, std::vector<ListItem> items) {
@@ -986,7 +1127,14 @@ PreviewPass preview_pass(const Graph& g, const fs::path& base_dir, std::vector<F
             throw GraphError("not in a preview");
         }
     } converter;
-    const Profile profile;
+    // The graph's game, for blocks that need it before a run (Streaming copy, Part texture: the natives root).
+    const Profile profile = [&] {
+        try {
+            return load_profile_by_id(find_profiles_dir(), g.profile);
+        } catch (const std::exception&) {
+            return Profile();  // none found: those blocks stay unknown until a run
+        }
+    }();
     const RunOptions options{.profile = profile, .converter = converter, .base_dir = base_dir};
     RunState run{.graph = g, .options = options, .work_dir = {}, .planned = planned};
     prepare(run);
@@ -1003,6 +1151,10 @@ PreviewPass preview_pass(const Graph& g, const fs::path& base_dir, std::vector<F
             run.item = item;
             try {
                 NodeRun node_run(run, *n);
+                if (const auto why = not_needed(run, *n)) {  // a branch not taken: known, and it changes nothing
+                    pass_nothing(node_run, *why);
+                    continue;
+                }
                 fn(node_run);
             } catch (const std::exception&) {
                 // Not known yet: an input isn't (its source can't be previewed), or a value isn't usable.

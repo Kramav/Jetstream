@@ -1,0 +1,301 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadTex",
+      "params": {
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
+        "title": "The texture to change"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "FileExists",
+      "params": {
+        "path": "my_picture.png",
+        "title": "Is my picture there?"
+      }
+    },
+    {
+      "id": 4,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 5,
+      "type": "If",
+      "params": {
+        "title": "Then: my picture"
+      }
+    },
+    {
+      "id": 6,
+      "type": "Not",
+      "params": {}
+    },
+    {
+      "id": 7,
+      "type": "If",
+      "params": {
+        "title": "Else: recolour"
+      }
+    },
+    {
+      "id": 8,
+      "type": "Value",
+      "params": {
+        "value": "my_picture.png",
+        "title": "My picture"
+      }
+    },
+    {
+      "id": 9,
+      "type": "ImportImage",
+      "params": {}
+    },
+    {
+      "id": 10,
+      "type": "ResizeImage",
+      "params": {
+        "fit": "fill"
+      }
+    },
+    {
+      "id": 11,
+      "type": "ExportImage",
+      "params": {}
+    },
+    {
+      "id": 12,
+      "type": "AdjustColour",
+      "params": {
+        "hue": "90"
+      }
+    },
+    {
+      "id": 13,
+      "type": "FirstOf",
+      "params": {}
+    },
+    {
+      "id": 14,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 15,
+      "type": "SaveTex",
+      "params": {}
+    },
+    {
+      "id": 16,
+      "type": "PackageMod",
+      "params": {
+        "name": "Picture or colour",
+        "out": "mods",
+        "version": "1.0",
+        "description": "my_picture.png if it is there, else a recoloured document",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "yes"
+      ],
+      "to": [
+        4,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "out"
+      ],
+      "to": [
+        5,
+        "condition"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "out"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "yes"
+      ],
+      "to": [
+        7,
+        "condition"
+      ]
+    },
+    {
+      "from": [
+        8,
+        "value"
+      ],
+      "to": [
+        5,
+        "value"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "value"
+      ],
+      "to": [
+        9,
+        "png"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "image"
+      ],
+      "to": [
+        10,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        10,
+        "match"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        7,
+        "value"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "value"
+      ],
+      "to": [
+        11,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        11,
+        "png"
+      ],
+      "to": [
+        12,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "image"
+      ],
+      "to": [
+        13,
+        "first"
+      ]
+    },
+    {
+      "from": [
+        12,
+        "image"
+      ],
+      "to": [
+        13,
+        "second"
+      ]
+    },
+    {
+      "from": [
+        13,
+        "value"
+      ],
+      "to": [
+        14,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        14,
+        "out"
+      ],
+      "to": [
+        15,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        15,
+        "original"
+      ]
+    },
+    {
+      "from": [
+        15,
+        "tex"
+      ],
+      "to": [
+        16,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        14,
+        "out"
+      ],
+      "to": [
+        16,
+        "preview"
+      ]
+    }
+  ]
+}

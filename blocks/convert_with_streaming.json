@@ -1,0 +1,33 @@
+{
+  "type": "custom:convert_with_streaming",
+  "title": "Convert with streaming copy",
+  "summary": "Turns the edited image into the new texture and, when the texture has a streaming copy, into a new streaming copy too (the mod must replace both). Edit at full size (Streaming copy's 'full size'): the image is shrunk to the texture's size for it. Without a streaming copy, 'streaming texture' gives nothing and Package leaves it out. Open it (Edit custom node) to see the blocks it's made of.",
+  "graph": {
+    "schema_version": 0,
+    "profile": "re4r",
+    "nodes": [
+      {"id": 1, "type": "NodeInput", "params": {"name": "edited image", "default": ""}, "pos": [0, 0]},
+      {"id": 2, "type": "NodeInput", "params": {"name": "texture", "default": ""}, "pos": [0, 200]},
+      {"id": 3, "type": "NodeInput", "params": {"name": "streaming copy", "default": ""}, "pos": [0, 400]},
+      {"id": 4, "type": "Split", "params": {}, "pos": [300, 20]},
+      {"id": 5, "type": "Split", "params": {}, "pos": [300, 220]},
+      {"id": 6, "type": "ResizeImage", "params": {"image": "", "width": "0", "height": "0", "match": "", "fit": "stretch", "save_to": "", "title": "Shrink to the texture's size"}, "pos": [500, 0]},
+      {"id": 7, "type": "SaveTex", "params": {"title": "Convert the texture"}, "pos": [900, 0]},
+      {"id": 8, "type": "SaveTex", "params": {"title": "Convert the streaming copy"}, "pos": [900, 400]},
+      {"id": 9, "type": "NodeOutput", "params": {"name": "texture"}, "pos": [1250, 0]},
+      {"id": 10, "type": "NodeOutput", "params": {"name": "streaming texture"}, "pos": [1250, 400]}
+    ],
+    "links": [
+      {"from": [1, "value"], "to": [4, "in"]},
+      {"from": [4, "out"], "to": [6, "image"]},
+      {"from": [4, "out"], "to": [8, "image"]},
+      {"from": [2, "value"], "to": [5, "in"]},
+      {"from": [5, "out"], "to": [7, "original"]},
+      {"from": [5, "out"], "to": [6, "match"]},
+      {"from": [6, "image"], "to": [7, "image"]},
+      {"from": [3, "value"], "to": [8, "original"]},
+      {"from": [7, "tex"], "to": [9, "value"]},
+      {"from": [8, "tex"], "to": [10, "value"]}
+    ]
+  }
+}

@@ -16,10 +16,10 @@ struct Graph;
 class NodeRun;  // node_run.hpp: one node's view of a run (core only)
 
 // What flows along a link, by kind (front ends colour links and pins by it): a texture file, an image file, plain
-// text, a path to any file, a folder. Any: a pass-through (Split) carries whatever is linked into it
-// (Graph::output_type works out what). Kinds planned for later milestones, with their colours reserved: script, AI
-// call (CLAUDE.md §4).
-enum class PortType { Tex, Image, Text, Path, Folder, Any };
+// text, a path to any file, a folder, a condition (yes / no: "true" / "false", for If). Any: a pass-through (Split)
+// carries whatever is linked into it (Graph::output_type works out what). Kinds planned for later milestones, with
+// their colours reserved: script, AI call (CLAUDE.md §4).
+enum class PortType { Tex, Image, Text, Path, Folder, Bool, Any };
 
 // Which picker a front end should offer for a path field. OpenTexture: an RE Engine texture of any known game
 // (front ends build the filter from the profiles' tex suffixes).
@@ -31,7 +31,8 @@ enum class Widget { None, Text, Path, Checkbox, Choice, Number };
 
 // `name`s are the stable ids stored in graph files; `title`, `label` and `hint` are what users read.
 // An output may carry a typed field for where the node writes it (e.g. Export's "Image file"): front ends show it
-// on the output side, and it's stored in Node::params under `field`. Such a field is always required.
+// on the output side, and it's stored in Node::params under `field`. Such a field is required unless
+// `field_optional` (Export image: empty is a working file in the run cache).
 struct PortSpec {  // an output
     const char* name;
     PortType type;
@@ -43,6 +44,7 @@ struct PortSpec {  // an output
     const char* filter = nullptr;
     bool multiple = false;  // any number of links, one row each (a Split); every other output feeds one input
     bool list = false;      // gives one value per item (Files in folder): the blocks it feeds repeat per item
+    bool field_optional = false;
 };
 
 // An input. Every input has a pin. Editable inputs (widget != None) can instead be typed; a link wins over the

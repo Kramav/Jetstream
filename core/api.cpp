@@ -29,6 +29,7 @@ const char* kind(PortType t) {
     case PortType::Text: return "text";
     case PortType::Path: return "path";
     case PortType::Folder: return "folder";
+    case PortType::Bool: return "condition";
     case PortType::Any: return "any";
     }
     return "?";
@@ -93,6 +94,7 @@ const char* state_name(NodeState s) {
     case NodeState::Waiting: return "waiting for the user";
     case NodeState::Failed: return "failed";
     case NodeState::NotReached: return "not reached";
+    case NodeState::NotNeeded: return "not needed";
     }
     return "?";
 }

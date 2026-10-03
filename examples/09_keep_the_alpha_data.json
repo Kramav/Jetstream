@@ -1,0 +1,238 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "PartTexture",
+      "params": {
+        "mesh": "{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797",
+        "materials": "Shirts_Mat",
+        "title": "Leon's shirt"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "StreamingCopy",
+      "params": {}
+    },
+    {
+      "id": 4,
+      "type": "ExportImage",
+      "params": {}
+    },
+    {
+      "id": 5,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 6,
+      "type": "PickChannel",
+      "params": {
+        "channel": "alpha",
+        "title": "Its alpha: data, not transparency"
+      }
+    },
+    {
+      "id": 7,
+      "type": "Preview",
+      "params": {}
+    },
+    {
+      "id": 8,
+      "type": "ImportImage",
+      "params": {
+        "png": "picture.png",
+        "title": "Your picture (change me)"
+      }
+    },
+    {
+      "id": 9,
+      "type": "ResizeImage",
+      "params": {
+        "fit": "fill"
+      }
+    },
+    {
+      "id": 10,
+      "type": "MergeChannels",
+      "params": {
+        "title": "Picture as colour, alpha kept"
+      }
+    },
+    {
+      "id": 11,
+      "type": "custom:convert_with_streaming",
+      "params": {}
+    },
+    {
+      "id": 12,
+      "type": "PackageMod",
+      "params": {
+        "name": "Picture shirt",
+        "out": "mods",
+        "version": "1.0",
+        "description": "A picture as Leon's shirt texture, keeping its alpha data",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        11,
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "full"
+      ],
+      "to": [
+        4,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "png"
+      ],
+      "to": [
+        5,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        10,
+        "base"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        6,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        9,
+        "match"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "image"
+      ],
+      "to": [
+        7,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        8,
+        "image"
+      ],
+      "to": [
+        9,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "image"
+      ],
+      "to": [
+        10,
+        "colour"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "image"
+      ],
+      "to": [
+        11,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "streaming"
+      ],
+      "to": [
+        11,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        11,
+        "out9"
+      ],
+      "to": [
+        12,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        11,
+        "out10"
+      ],
+      "to": [
+        12,
+        "tex"
+      ]
+    }
+  ]
+}

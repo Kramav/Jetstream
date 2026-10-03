@@ -1,0 +1,152 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadTex",
+      "params": {
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_039_00_iam.tex.143221013",
+        "title": "The framed photo"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "ExportImage",
+      "params": {}
+    },
+    {
+      "id": 4,
+      "type": "ImportImage",
+      "params": {
+        "png": "picture.png",
+        "title": "Your picture (change me)"
+      }
+    },
+    {
+      "id": 5,
+      "type": "ReplacePhoto",
+      "params": {
+        "picture_y": "-30"
+      }
+    },
+    {
+      "id": 6,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 7,
+      "type": "SaveTex",
+      "params": {}
+    },
+    {
+      "id": 8,
+      "type": "PackageMod",
+      "params": {
+        "name": "My photo",
+        "out": "mods",
+        "version": "1.0",
+        "description": "My picture in place of an old photo",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "png"
+      ],
+      "to": [
+        5,
+        "frame"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "image"
+      ],
+      "to": [
+        5,
+        "picture"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "image"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        7,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        7,
+        "original"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "tex"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        8,
+        "preview"
+      ]
+    }
+  ]
+}

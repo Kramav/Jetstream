@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadTex",
+      "params": {
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
+        "title": "The texture to change"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "ExportImage",
+      "params": {}
+    },
+    {
+      "id": 4,
+      "type": "AdjustColour",
+      "params": {
+        "hue": "150",
+        "saturation": "20"
+      }
+    },
+    {
+      "id": 5,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 6,
+      "type": "SaveTex",
+      "params": {}
+    },
+    {
+      "id": 7,
+      "type": "PackageMod",
+      "params": {
+        "name": "Recoloured document",
+        "out": "mods",
+        "version": "1.0",
+        "description": "A document in another colour",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "png"
+      ],
+      "to": [
+        4,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "image"
+      ],
+      "to": [
+        5,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        6,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        6,
+        "original"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "tex"
+      ],
+      "to": [
+        7,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        7,
+        "preview"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "FilesInFolder",
+      "params": {
+        "folder": "{game}/_chainsaw/ui/ui3200/tex",
+        "pattern": "cs_ui3210_file_00*_iam.tex.*",
+        "title": "The documents"
+      }
+    },
+    {
+      "id": 2,
+      "type": "LoadTex",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 4,
+      "type": "ExportImage",
+      "params": {}
+    },
+    {
+      "id": 5,
+      "type": "AdjustColour",
+      "params": {
+        "hue": "-40",
+        "saturation": "-30"
+      }
+    },
+    {
+      "id": 6,
+      "type": "SaveTex",
+      "params": {}
+    },
+    {
+      "id": 7,
+      "type": "PackageMod",
+      "params": {
+        "name": "Faded documents",
+        "out": "mods",
+        "version": "1.0",
+        "description": "The first documents of the files, faded",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "files"
+      ],
+      "to": [
+        2,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "tex"
+      ],
+      "to": [
+        3,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "out"
+      ],
+      "to": [
+        4,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "out"
+      ],
+      "to": [
+        6,
+        "original"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "png"
+      ],
+      "to": [
+        5,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "image"
+      ],
+      "to": [
+        6,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "tex"
+      ],
+      "to": [
+        7,
+        "tex"
+      ]
+    }
+  ]
+}
