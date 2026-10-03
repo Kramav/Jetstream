@@ -138,7 +138,7 @@ void set_block_title(Graph& graph, int node, const std::string& title);  // trim
 Graph load_graph(const std::filesystem::path& file, bool* added_blocks = nullptr);
 void save_graph(const Graph& graph, const std::filesystem::path& file);
 
-// A change a step makes to files: not counting the run's temporary folder and run cache (CLAUDE.md §10 M2,
+// A change a step makes to files: not counting the run's temporary folder and run cache (CLAUDE.md §10 M4,
 // guardrails). Remove: deleted, or moved away from there. Run: starts a program (`path`), which may change any file
 // the user can; what it changes isn't known in advance.
 enum class ChangeKind { Write, Remove, MakeFolder, Run };

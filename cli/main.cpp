@@ -3,6 +3,7 @@
 #include "custom.hpp"
 #include "graph.hpp"
 #include "mcp.hpp"
+#include "movie.hpp"
 #include "package.hpp"
 #include "profile.hpp"
 #include "settings.hpp"
@@ -34,6 +35,8 @@ constexpr const char* kUsage =
     "  remod package --profile <toml> --tex <file> --game-path <natives-relative path> --name <ModName>\n"
     "                --out <dir> [--version v] [--author a] [--description d] [--screenshot file]\n"
     "                [--replace true]\n"
+    "  remod movie-info --file <file.mp4|.mov.1.x64>: an MP4's size, length, frame rate, codecs (the game's movies\n"
+    "                are MP4s named .mov.1.x64; --tex in package takes one, with --game-path streaming/...)\n"
     "  remod api     graph editing for programs: one JSON request per line on stdin, one JSON reply per line\n"
     "                (requests: core/api.hpp)\n"
     "  remod mcp     an MCP server on stdin/stdout for an AI (Claude Code, Claude Desktop): the same graph editing,\n"
@@ -51,6 +54,7 @@ const std::map<std::string, Command> kCommands{
     {"tex2png", {{"profile", "tex", "out"}, {"noesis"}}},
     {"png2tex", {{"profile", "png", "original", "out"}, {"noesis"}}},
     {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot", "replace"}}},
+    {"movie-info", {{"file"}, {}}},
 };
 
 void print_meta(const remod::TexMeta& m) {
@@ -128,6 +132,12 @@ int run(int argc, char** argv) {
         return 0;
     }
 
+    if (cmd->first == "movie-info") {
+        const remod::MovieInfo m = remod::read_mp4_info(args["file"]);
+        std::cout << m.width << "x" << m.height << ", " << m.seconds << " s, " << m.fps << " fps, video "
+                  << (m.video.empty() ? "none" : m.video) << ", audio " << (m.audio.empty() ? "none" : m.audio) << "\n";
+        return 0;
+    }
     if (cmd->first == "run") {
         const std::filesystem::path graph_file = args["graph"];
         const remod::Graph graph = remod::load_graph(graph_file);

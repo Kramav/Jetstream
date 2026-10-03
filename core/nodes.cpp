@@ -2004,7 +2004,7 @@ const std::vector<NodeSpec>& node_specs() {
 }
 
 const char* ai_note(std::string_view type) {
-    // For an AI building graphs (CLAUDE.md §10 M2, item 5): when to use a block, when not, an example. The tooltip
+    // For an AI building graphs (CLAUDE.md §10 M4, item 5): when to use a block, when not, an example. The tooltip
     // text (summary) says what it does; this says how it fits in.
     static const std::map<std::string_view, const char*> notes{
         {"LoadTex", "Start of most graphs: the game's original texture. Pick a file inside an extracted natives/STM "

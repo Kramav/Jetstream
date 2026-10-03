@@ -1,5 +1,5 @@
 #pragma once
-// Graph editing for programs (scripts; later an AI orchestrator / MCP server, CLAUDE.md §10 M2): one JSON request in,
+// Graph editing for programs (scripts; later an AI orchestrator / MCP server, CLAUDE.md §10 M4): one JSON request in,
 // one JSON reply out. The rules are core's, the same calls the app makes; this only translates. The CLI's `remod api`
 // reads one request per line from stdin and writes one reply per line.
 //

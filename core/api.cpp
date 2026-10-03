@@ -227,7 +227,7 @@ std::string ApiSession::call(const std::string& request) {
                 choices.push_back({{"type", c.spec->type}, {"port", c.port}});
             reply["choices"] = choices;
         } else if (op == "image") {
-            // What a block's picture looks like now, worked out as the app's thumbnails are (CLAUDE.md §10 M2: results
+            // What a block's picture looks like now, worked out as the app's thumbnails are (CLAUDE.md §10 M4: results
             // an AI can see): an image block's result, a texture, a Preview block's input.
             const Node& n = node_of(graph_, r);
             const unsigned size = std::clamp(r.value("size", 512u), 16u, 1024u);
@@ -247,7 +247,7 @@ std::string ApiSession::call(const std::string& request) {
             reply["width"] = made->image.width;
             reply["height"] = made->image.height;
         } else if (op == "plan" || op == "run") {
-            // Guardrails (CLAUDE.md §10 M2): a run only after a plan, and only against that plan.
+            // Guardrails (CLAUDE.md §10 M4): a run only after a plan, and only against that plan.
             if (file_.empty()) throw GraphError("save the graph first: a run's folder and relative paths come from its file");
             // Optional: Noesis converts the textures when given; game_files names the extracted game files when
             // Noesis's RE plugin doesn't (its NativesPath.txt).

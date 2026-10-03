@@ -2,7 +2,8 @@
 
 Node-based modding tool for Capcom RE Engine games. First target: **Resident Evil 4 (2023), "RE4R"**.
 Long-term: AI-assisted asset generation plus optional REFramework runtime features.
-**Current scope: Milestone 1 (M1) only. No AI, no REFramework work.**
+**Current scope: M1 is done (polish goes on). Next: M3 routes 1 and 2 (movies), then M2 (REFramework
+scripting); see §10. AI texture generation (M4) isn't started.**
 
 Source labels used below: **[official]** = official/authoritative docs, **[guide]** = community guide,
 **[inferred]** = design decision or assumption from planning, **[TBD-spike]** = must be confirmed by a manual in-game test.
@@ -16,7 +17,7 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
   replaced by a more polished native UI later; `core/` must not depend on ImGui or any UI library.
 - Never commit game files. Gitignore at minimum: `natives/`, `*.tex.*`, `*.pak`, `*.mesh.*`, extraction caches.
 - Never vendor third-party tools whose license does not allow redistribution (see §6).
-- Do not add AI features during M1.
+- No AI texture generation before M4 (the orchestrator, M4's first part, was built early: §10 M4).
 - Do not guess RE Engine format details. Unknowns go in §9 and are marked `[TBD-spike]`.
 - Keep disk writes low: extract game PAKs **once** into a reusable cache; never re-extract per run.
   Keep log verbosity low by default.
@@ -652,7 +653,7 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> [--noesis <exe>]` and from the app's Run button. Programs edit graphs through
-  `remod api` (core `ApiSession`, §10 M2).
+  `remod api` (core `ApiSession`, §10 M4).
 
 **Status: M1 complete (2026-09-30).** All three criteria below are met; the user confirmed the tool-built mod
 works end to end.
@@ -899,9 +900,80 @@ propose them as next steps before then.
   `nrrc` normal in G/A)?
 - [ ] **Noesis converter only:** does the game accept a texture with more mips than the original (§9, parked)?
 
-## 10. Later milestones (do not start)
+## 10. Milestones after M1
 
-- **Priority order (user, 2026-10-02). See also the M2 "Order" below.**
+**Order (user, 2026-10-03):** M2 REFramework scripting, M3 movies and cutscenes, M4 AI (was M2), M5 the REFramework
+runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
+
+- **NEXT (user, 2026-10-03): M3 routes 1 and 2**, below: replace a game movie, then play a movie when we choose.
+  Prepared, see M3 "Prepared".
+- **M2: REFramework scripting (user, 2026-10-03).** Help users make script mods for REFramework (Lua in
+  `reframework/autorun`). Survey: REFramework (MIT) is the runtime and has no packaging conventions; EMV Engine (MIT,
+  RE4R through the SILVER fork) is a shared Lua library; REE Content Editor (MIT, very active) edits and patches RE
+  Engine files, no runtime scripting. Nothing helps *write* RE4R scripts. Steps, cheapest first:
+  1. Packaging: Package for Fluffy takes Lua scripts (`reframework/autorun/<Mod>/`, at the game's root, not under
+     natives) and marks the mod as needing REFramework (§3: the lowest tier the graph needs).
+  2. Game knowledge: REFramework's SDK dump (types, methods, fields) searchable in the Browser, so blocks and the AI
+     check a hook's names before the game runs. [TBD-spike] the dump's format and how it's made.
+  3. Trigger -> action blocks: a mod is data, run by the one generic runtime (M5). Each trigger needs an in-game spike
+     for its hook point.
+  4. AI-written Lua for the rest (`claude -p` / MCP), checked against step 2, packaged by step 1.
+  **Undecided:** mostly blocks (step 3) or mostly helping write Lua (steps 1, 2, 4). Steps 1 and 2 first either way.
+- **M3: Movies and cutscenes (user, 2026-10-03: "scripting our own cutscene").**
+  - **Prepared (2026-10-03):**
+    - Core `read_mp4_info` (core/movie.*): an MP4's video size, length, frame rate, codecs, audio, from its boxes.
+      CLI `remod movie-info --file <f>`. On the game's files: mva000 3840x2160, 60.9 s, 30 fps, avc1, no audio;
+      mva300 1440x1080, 80.1 s, avc1 + mp4a; mv7001 4K 29.97 fps with audio; mva402 328x408 silent; the 38-byte
+      stub "isn't an MP4". Tests: synthetic boxes (index after the data, silent, the stub, cut short), and the real
+      movies with `REMOD_GAME`.
+    - Packaging already takes a movie: `build_package` copies a file that isn't a texture as it is, at its game path
+      (test: both copies of mva000 at `streaming/_chainsaw/movie/mv/mva000/`). The CLI's `package` takes one file;
+      the graph's Package takes textures only (a movie kind or block comes with route 1's build).
+    - Route 2's probe: `spikes/movie_probe.lua` (REFramework, read-only): logs the methods and fields of the movie
+      types the game's exe names (`via.movie.Movie`, `MovieManager`, `MovieResource`, `MovieResourceHolder`,
+      `MovieEntry`, `MovieContext`, `chainsaw.FullScreenMovieGui` and its `OpenParam` / `CloseParam`) to
+      `reframework/data/remod_movie_probe.txt`; with WATCH_CALLS on, also which of their methods the game calls while
+      a movie plays.
+  - **Route 1 spike (the user's, in game):** a short H.264 MP4 of one movie's size put in its place (both copies of an
+    `mv` movie), installed through Fluffy. Check it with `remod movie-info`. The test mod by hand:
+    `MovieTest\modinfo.ini` (`name=MovieTest`) and
+    `MovieTest\natives\STM\streaming\_chainsaw\movie\mv\mva000\mva000.mov.1.x64` + `mva000_fhd.mov.1.x64` (the MP4,
+    renamed), zipped with the folder at the root. Which movie plays where: optionally replace every `mv` movie with one
+    showing its own id (needs the encoder, route 1's build). Find out: does it play; a different length; a silent movie's
+    sound (its Wwise container); which movie plays where (mva000 is likely the intro: 4K, 61 s). Then build: a
+    "Replace movie" block (the user's video, checked or encoded to match via Media Foundation, written as both
+    copies).
+  - **Route 2 spike:** REFramework installed, `spikes/movie_probe.lua` in `reframework/autorun`, play a movie, send
+    the log. It decides whether Lua can start the game's movie player on a new `.mov`, or a C++ plugin is needed.
+  - **Research (2026-10-03, read-only look at the extracted game files).**
+    - **Pre-rendered movies are plain MP4s [game data].** `natives/STM/streaming/_chainsaw/movie/<group>/<id>/<id>.mov.1.x64`
+      is an MP4 (`ftyp mp42`, H.264 `avc1`); the non-streaming `.mov.1.x64` beside it is 38 bytes (`REMV`, names
+      `dummy.mp4`). A movie is a prefab (`<id>.pfb`: the `.mov`, a render texture `cs_MovieRTT_4K.rtex`, and a sound
+      container `_Chainsaw/Sound/Resource/Container/mv/snd_cont_<id>.user`), listed in
+      `movie/resource/movieloadtable.user`. Groups: `logo` (mv7000/7001, 1080p / 4K, with AAC audio), `mv` (mva000-202:
+      4K plus a `_fhd` 1080p copy, **no audio track**: sound from the container; mva300/301: 1440x1080 / 1080p with
+      AAC; mva402-417: 328x408, silent), `richtutorial` (1388x780, silent). Which in-game moment each plays: unknown.
+    - **Real-time cutscenes are data [game data]:** `_chainsaw/event/cs/<id>/` holds `.scn` (1,771), `.motlist`
+      (1,543), `.user` (534), `.mcamlist` camera motion (126), `.tmlfsm2` (124), `.tml` timelines. Formats not read by
+      this tool; REE-Lib / REE Content Editor (MIT) read many of them.
+    - **Existing tools:** EMV Engine (MIT; RE4R via the SILVER fork): animation play / seek, free camera that detaches
+      from a cutscene, a cutscene viewer, prefab spawning. REFramework's Lua can't play video itself; the old M4 planned a C++
+      plugin for that (now route 2's fallback).
+    - **Routes, cheapest first:**
+      1. *Replace a game movie* (tier 1, asset only): the user's video encoded H.264 at that movie's size, written as
+         `<id>.mov.1.x64` (and the `_fhd` copy, like a streaming copy), packaged. Windows' Media Foundation has an H.264
+         encoder (no ffmpeg dependency, like WIC for images). [TBD-spike] a different length; the silent ones' sound
+         (Wwise container: silence, or replace the bank); which movie plays where.
+      2. *Play a movie at a moment of our choosing* (tier 2/3): spawn the game's own movie prefab (or fullscreen movie
+         GUI) on a new `.mov` from REFramework Lua; else a C++ REFramework plugin (the old M4). [TBD-spike]
+      3. *Real-time scripted cutscene* (tier 2, the M5 runtime): a sequence as data (shots: camera keys, character
+         motions from the game's motlists, subtitles, letterbox, timing) played by the one generic Lua runtime; camera
+         keys recorded in game with a hotkey into a file the tool reads. Sound is the hard part (Wwise).
+      4. *New native cutscene files* (`.tml` / `.scn` / `.mcamlist`): not realistic now; editing existing ones is
+         Content Editor's ground.
+
+
+- **Priority order (user, 2026-10-02). See also the M4 "Order" below.**
   1. **Fan-out over many textures:** Batch, below. **First version done 2026-10-02** (§4 Fan-out).
   2. **Native TEX handling** to remove the Noesis requirement for textures. **Done 2026-10-02** (§4).
   3. **A generic external-process node:** `claude -p`, scripts, a possible ComfyUI bridge. **Done 2026-10-02**
@@ -970,7 +1042,7 @@ propose them as next steps before then.
   - geometry only in a `streaming/` copy (none seen yet);
   - shadow- or occluder-only files (nothing to show).
 
-- M2: AI backend as a separate local process (not in the app). GPU/VRAM detection at install.
+- **M4 (was M2, renumbered 2026-10-03): AI.** AI backend as a separate local process (not in the app). GPU/VRAM detection at install.
   img2img/ControlNet for textures, never plain text-to-image for UV-mapped textures.
   - **Two ways in (user, 2026-10-02):** a single AI call as a block in the graph, and an **AI orchestrator** (an
     MCP-server-style interface) that builds and edits graphs itself. The orchestrator must know which blocks can come
@@ -1033,7 +1105,7 @@ propose them as next steps before then.
          client yet**, nor the dialog itself (it needs the user).
   - **Order (2026-10-02; see also the priority order at the top of §10):** the orchestrator first, over the existing blocks (no generation needed: "replace this
     frame's photo with my picture and package it" works with today's blocks), then the generation block. The texture
-    tools below move from "before M2" to "before the generation block".
+    tools below move from "before M4" to "before the generation block".
   - **Tools the AI's results must pass through, to have before the generation block (user, 2026-10-02: "give the AI as
     many polished tools as we can"):**
     1. **Channel tools** (split / merge, §10 Future work): an AI result is plain RGB and would overwrite data packed
@@ -1045,8 +1117,9 @@ propose them as next steps before then.
     3. **Masks / regions:** "change only the jacket". **Built 2026-10-02** (§4 Masks: Mesh mask, Blend in mask).
     4. **Batch** (§10 Future work): worth it once there's real work per texture, which AI is.
     Done: an unchanged run writes nothing (the run cache, §4); AI iteration means many runs.
-- M3: REFramework Lua runtime reading manifests (triggers → actions).
-- M4: C++ REFramework plugin for video playback (in-game "cutscene" videos).
+- **M5 (was M3, renumbered 2026-10-03):** REFramework Lua runtime reading manifests (triggers → actions): the one
+  generic runtime M2's trigger -> action blocks and M3's scripted cutscenes run on. (The old M4, a C++ plugin for
+  video playback, is now M3 route 2's fallback.)
 - Replace ImGui front end with a polished native UI.
 - **Texture and mesh browser: first version built (2026-10-01).** Layout: Browser left (both layouts; Build layout
   shows only it), Graph middle, Pipeline right; in Use layout along the bottom the viewer (left corner: the selected

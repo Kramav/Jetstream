@@ -1,5 +1,5 @@
 #pragma once
-// MCP server (CLAUDE.md §10 M2: the AI orchestrator): Model Context Protocol, JSON-RPC 2.0, one message per line, over
+// MCP server (CLAUDE.md §10 M4: the AI orchestrator): Model Context Protocol, JSON-RPC 2.0, one message per line, over
 // ApiSession. An AI (Claude Code, Claude Desktop) builds, checks, looks at and runs graphs with core's own rules; this
 // only translates. `remod mcp` runs it on stdin / stdout.
 //
