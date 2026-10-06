@@ -1,62 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re4r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "PartTexture",
-      "params": {
-        "mesh": "{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797",
-        "materials": "Shirts_Mat",
-        "title": "Leon's shirt"
-      }
-    },
-    {
-      "id": 2,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "StreamingCopy",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "ExportImage",
-      "params": {
-        "png": "edits/leon_shirt.png"
-      }
-    },
-    {
-      "id": 5,
-      "type": "EditImage",
-      "params": {
-        "title": "Your edit"
-      }
-    },
-    {
-      "id": 6,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 7,
-      "type": "custom:convert_with_streaming",
-      "params": {}
-    },
-    {
-      "id": 8,
-      "type": "PackageMod",
-      "params": {
-        "name": "My shirt",
-        "out": "mods",
-        "version": "1.0",
-        "description": "Leon's shirt, edited by hand",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -168,5 +110,103 @@
         "tex"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "material": "",
+        "materials": "Shirts_Mat",
+        "mesh": "{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797",
+        "texture": "",
+        "title": "Leon's shirt"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "PartTexture"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        437.0,
+        110.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        510.0,
+        0.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": "edits/leon_shirt.png"
+      },
+      "pos": [
+        0.0,
+        314.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "editor": "",
+        "title": "Your edit"
+      },
+      "pos": [
+        504.0,
+        314.0
+      ],
+      "type": "EditImage"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        -73.0,
+        743.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        613.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 8,
+      "params": {
+        "author": "",
+        "description": "Leon's shirt, edited by hand",
+        "name": "My shirt",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        504.0,
+        613.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
 }

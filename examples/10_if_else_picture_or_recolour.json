@@ -1,111 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re4r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "LoadTex",
-      "params": {
-        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
-        "title": "The texture to change"
-      }
-    },
-    {
-      "id": 2,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "FileExists",
-      "params": {
-        "path": "my_picture.png",
-        "title": "Is my picture there?"
-      }
-    },
-    {
-      "id": 4,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 5,
-      "type": "If",
-      "params": {
-        "title": "Then: my picture"
-      }
-    },
-    {
-      "id": 6,
-      "type": "Not",
-      "params": {}
-    },
-    {
-      "id": 7,
-      "type": "If",
-      "params": {
-        "title": "Else: recolour"
-      }
-    },
-    {
-      "id": 8,
-      "type": "Value",
-      "params": {
-        "value": "my_picture.png",
-        "title": "My picture"
-      }
-    },
-    {
-      "id": 9,
-      "type": "ImportImage",
-      "params": {}
-    },
-    {
-      "id": 10,
-      "type": "ResizeImage",
-      "params": {
-        "fit": "fill"
-      }
-    },
-    {
-      "id": 11,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 12,
-      "type": "AdjustColour",
-      "params": {
-        "hue": "90"
-      }
-    },
-    {
-      "id": 13,
-      "type": "FirstOf",
-      "params": {}
-    },
-    {
-      "id": 14,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 15,
-      "type": "SaveTex",
-      "params": {}
-    },
-    {
-      "id": 16,
-      "type": "PackageMod",
-      "params": {
-        "name": "Picture or colour",
-        "out": "mods",
-        "version": "1.0",
-        "description": "my_picture.png if it is there, else a recoloured document",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -297,5 +190,194 @@
         "preview"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
+        "title": "The texture to change"
+      },
+      "pos": [
+        0.0,
+        403.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        431.0,
+        474.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {
+        "path": "my_picture.png",
+        "title": "Is my picture there?"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "FileExists"
+    },
+    {
+      "id": 4,
+      "params": {},
+      "pos": [
+        -73.0,
+        0.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 5,
+      "params": {
+        "condition": "true",
+        "title": "Then: my picture"
+      },
+      "pos": [
+        431.0,
+        0.0
+      ],
+      "type": "If"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        0.0,
+        166.0
+      ],
+      "type": "Not"
+    },
+    {
+      "id": 7,
+      "params": {
+        "condition": "true",
+        "title": "Else: recolour"
+      },
+      "pos": [
+        431.0,
+        203.0
+      ],
+      "type": "If"
+    },
+    {
+      "id": 8,
+      "params": {
+        "title": "My picture",
+        "value": "my_picture.png"
+      },
+      "pos": [
+        0.0,
+        601.0
+      ],
+      "type": "Value"
+    },
+    {
+      "id": 9,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        504.0,
+        403.0
+      ],
+      "type": "ImportImage"
+    },
+    {
+      "id": 10,
+      "params": {
+        "fit": "fill",
+        "height": "0",
+        "image": "",
+        "match": "",
+        "save_to": "",
+        "width": "0"
+      },
+      "pos": [
+        0.0,
+        1054.0
+      ],
+      "type": "ResizeImage"
+    },
+    {
+      "id": 11,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        504.0,
+        166.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 12,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "90",
+        "image": "",
+        "saturation": "0",
+        "save_to": ""
+      },
+      "pos": [
+        0.0,
+        742.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 13,
+      "params": {},
+      "pos": [
+        431.0,
+        1183.0
+      ],
+      "type": "FirstOf"
+    },
+    {
+      "id": 14,
+      "params": {},
+      "pos": [
+        431.0,
+        1238.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 15,
+      "params": {},
+      "pos": [
+        504.0,
+        742.0
+      ],
+      "type": "SaveTex"
+    },
+    {
+      "id": 16,
+      "params": {
+        "author": "",
+        "description": "my_picture.png if it is there, else a recoloured document",
+        "name": "Picture or colour",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        0.0,
+        1405.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
 }

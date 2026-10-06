@@ -34,6 +34,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <future>
 #include <map>
 #include <mutex>
@@ -471,6 +472,13 @@ struct State {
     std::vector<remod::LinkRoute> route_requests;
     remod::Routes routes;
     bool routes_settled = true;  // routed with every pass (a quick single pass while blocks move)
+    // Fully routed layouts seen (Near and Far each have their own block boxes): zooming back is a lookup, not a route.
+    struct CachedRoutes {
+        std::vector<remod::Box> blocks;
+        std::vector<remod::LinkRoute> requests;
+        remod::Routes routes;
+    };
+    std::deque<CachedRoutes> route_cache;
     std::vector<size_t> routed;
     std::mutex log_mutex;
     std::vector<std::string> log;  // written by the run thread
@@ -2358,9 +2366,11 @@ float picture_size(const remod::Node& n, const remod::NodeSpec& spec) {
 
 // `height`: the most it may take; `large`: the larger preview (State::big) when it's there (a Preview block).
 void draw_thumb(State& s, int node, float width, float height, bool large, std::string& hint) {
-    auto it = s.thumbs.images.find(node);
-    if (const auto big = s.big.images.find(node); large && big != s.big.images.end()) it = big;
-    if (it == s.thumbs.images.end()) {
+    // (A pointer: the two sets are different maps, whose iterators can't be compared.)
+    const State::Thumb* shown = nullptr;
+    if (const auto it = s.thumbs.images.find(node); it != s.thumbs.images.end()) shown = &it->second;
+    if (const auto big = s.big.images.find(node); large && big != s.big.images.end()) shown = &big->second;
+    if (!shown) {
         const auto none = s.thumbs.none.find(node);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);  // within the block
         if (none == s.thumbs.none.end()) ImGui::TextDisabled("Working out the preview...");
@@ -2369,7 +2379,7 @@ void draw_thumb(State& s, int node, float width, float height, bool large, std::
         ImGui::PopTextWrapPos();
         return;
     }
-    const State::Thumb& t = it->second;
+    const State::Thumb& t = *shown;
     const float k = ImMin(width / t.width, height / t.height);
     const ImVec2 size(t.width * k, t.height * k), at = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##thumb", size);
@@ -2406,7 +2416,12 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     // font cache doesn't get a new size every frame of a zoom animation.
     const float zoom = reinterpret_cast<ed::Detail::EditorContext*>(editor)->GetView().Scale;
     const float old_density = ImGui::GetFontRasterizerDensity();
-    ImGui::SetFontRasterizerDensity(old_density * ImClamp(std::round(zoom * 8.0f) / 8.0f, 0.25f, 4.0f));
+    // Few steps, rounded up (text is only ever scaled down): each new density bakes every glyph again, and that was
+    // the lag when zooming.
+    float density = 4;
+    for (const float step : {0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f})
+        if (zoom <= step) { density = step; break; }
+    ImGui::SetFontRasterizerDensity(old_density * density);
 
     if (s.push_positions) {
         for (const auto& n : s.graph.nodes) ed::SetNodePosition(n.id, ImVec2(n.x, n.y));
@@ -3046,7 +3061,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     // While blocks are being dragged: plain elbows between the pins, no routing (it ran every frame and made dragging
     // lag in a Debug build). Once they're let go: one quick pass, then all three (19 ms in Debug for the 5-block
     // example), which untangle crossings.
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !s.dragged.empty()) {
+    // The same while a block folds between Near and Far: its size changes every frame, and routing each one lagged.
+    if ((ImGui::IsMouseDown(ImGuiMouseButton_Left) && !s.dragged.empty()) || (detail > 0 && detail < 1)) {
         const float gap = font * 0.8f;
         s.routes = {};
         const bool down = s.graph.downward;  // worked out left to right; top to bottom swaps x and y
@@ -3070,13 +3086,23 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.route_blocks.clear();  // routes properly once the blocks are let go
         s.route_requests.clear();
     } else if (blocks != s.route_blocks || requests != s.route_requests) {
-        s.routes = remod::route_links(blocks, requests, font * 0.8f, 1, s.graph.downward);
-        s.routes_settled = false;
+        const auto hit = std::ranges::find_if(s.route_cache, [&](const State::CachedRoutes& c) {
+            return c.blocks == blocks && c.requests == requests;
+        });
+        if (hit != s.route_cache.end()) {
+            s.routes = hit->routes;
+            s.routes_settled = true;
+        } else {
+            s.routes = remod::route_links(blocks, requests, font * 0.8f, 1, s.graph.downward);
+            s.routes_settled = false;
+        }
         s.route_blocks = std::move(blocks);
         s.route_requests = std::move(requests);
     } else if (!s.routes_settled) {
         s.routes = remod::route_links(s.route_blocks, s.route_requests, font * 0.8f, 3, s.graph.downward);
         s.routes_settled = true;
+        s.route_cache.push_back({s.route_blocks, s.route_requests, s.routes});
+        if (s.route_cache.size() > 6) s.route_cache.pop_front();  // ponytail: edits leave stale entries; they just age out
     }
     s.routed = std::move(routed);
     const ImVec2 mouse = ImGui::GetMousePos();  // canvas coordinates here, inside the editor
@@ -3531,6 +3557,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         load_graph_file(state);  // reopen the last graph, fitted to the view
     if (!nfd_ok) state.status = std::string("File picker unavailable: ") + NFD_GetError();
 
+    // `remod-app --bake <graph.json>...`: opens each graph, lets Tidy up place it with the real block sizes and writes
+    // the positions back (the way to place the read-only examples; `scripts/make_examples.py` writes none).
+    std::vector<std::filesystem::path> bake;
+    int bake_frames = 0;
+    {
+        int argc = 0;
+        wchar_t** argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
+        for (int i = 2; argv && i < argc; ++i)
+            if (std::wstring_view(argv[i - 1]) == L"--bake" || !bake.empty()) bake.push_back(argv[i]);
+        if (argv) ::LocalFree(argv);
+        std::ranges::reverse(bake);  // taken from the back
+    }
+
     for (bool done = false; !done;) {
         MSG msg;
         while (::PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -3626,6 +3665,26 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             state.baseline_pending = false;
         } else if (!ImGui::IsAnyItemActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !state.place_new) {
             state.history.track(state.graph);
+        }
+        if (!bake.empty()) {
+            if (bake_frames == 0) {
+                state.graph_path = bake.back().string();
+                load_graph_file(state);
+                state.tidy_after_load = true;
+            }
+            if (++bake_frames >= 90) {  // placed, fitted and settled
+                bake_frames = 0;
+                try {
+                    const auto tmp = std::filesystem::temp_directory_path() / "remod_bake.json";
+                    remod::save_graph(state.graph, tmp);  // save_graph refuses the examples folder: copy over
+                    std::filesystem::copy_file(tmp, bake.back(), std::filesystem::copy_options::overwrite_existing);
+                    std::filesystem::remove(tmp);
+                } catch (const std::exception& e) {
+                    state.status = std::string("Bake failed: ") + e.what();
+                }
+                bake.pop_back();
+                if (bake.empty()) state.quit = true;
+            }
         }
         draw_unsaved_prompt(state);
         draw_warnings(state);

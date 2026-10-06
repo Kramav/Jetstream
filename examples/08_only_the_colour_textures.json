@@ -1,81 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re4r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "FilesInFolder",
-      "params": {
-        "folder": "{game}/_chainsaw/character/ch/cha0/cha000/00",
-        "pattern": "cha000_00_*.tex*",
-        "title": "Leon's textures"
-      }
-    },
-    {
-      "id": 2,
-      "type": "LoadTex",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "TextMatches",
-      "params": {
-        "pattern": "*_albd*",
-        "title": "Is it a colour texture?"
-      }
-    },
-    {
-      "id": 5,
-      "type": "If",
-      "params": {
-        "title": "Only colour textures"
-      }
-    },
-    {
-      "id": 6,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 7,
-      "type": "StreamingCopy",
-      "params": {}
-    },
-    {
-      "id": 8,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 9,
-      "type": "AdjustColour",
-      "params": {
-        "saturation": "-100",
-        "title": "Grey"
-      }
-    },
-    {
-      "id": 10,
-      "type": "custom:convert_with_streaming",
-      "params": {}
-    },
-    {
-      "id": 11,
-      "type": "PackageMod",
-      "params": {
-        "name": "Grey Leon",
-        "out": "mods",
-        "version": "1.0",
-        "description": "Leon's colour textures without colour",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -217,5 +140,145 @@
         "tex"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "folder": "{game}/_chainsaw/character/ch/cha0/cha000/00",
+        "on_fail": "stop",
+        "pattern": "cha000_00_*.tex*",
+        "subfolders": "",
+        "title": "Leon's textures"
+      },
+      "pos": [
+        -252.0,
+        0.0
+      ],
+      "type": "FilesInFolder"
+    },
+    {
+      "id": 2,
+      "params": {
+        "game_path": "",
+        "tex": ""
+      },
+      "pos": [
+        252.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        -325.0,
+        0.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 4,
+      "params": {
+        "pattern": "*_albd*",
+        "text": "",
+        "title": "Is it a colour texture?"
+      },
+      "pos": [
+        -252.0,
+        346.0
+      ],
+      "type": "TextMatches"
+    },
+    {
+      "id": 5,
+      "params": {
+        "condition": "true",
+        "title": "Only colour textures"
+      },
+      "pos": [
+        35.0,
+        0.0
+      ],
+      "type": "If"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        35.0,
+        55.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        108.0,
+        346.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 8,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        -252.0,
+        647.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 9,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "0",
+        "image": "",
+        "saturation": "-100",
+        "save_to": "",
+        "title": "Grey"
+      },
+      "pos": [
+        252.0,
+        647.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 10,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        -252.0,
+        1014.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 11,
+      "params": {
+        "author": "",
+        "description": "Leon's colour textures without colour",
+        "name": "Grey Leon",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        252.0,
+        1014.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
 }

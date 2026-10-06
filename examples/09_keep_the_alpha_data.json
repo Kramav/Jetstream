@@ -1,88 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re4r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "PartTexture",
-      "params": {
-        "mesh": "{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797",
-        "materials": "Shirts_Mat",
-        "title": "Leon's shirt"
-      }
-    },
-    {
-      "id": 2,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "StreamingCopy",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 5,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 6,
-      "type": "PickChannel",
-      "params": {
-        "channel": "alpha",
-        "title": "Its alpha: data, not transparency"
-      }
-    },
-    {
-      "id": 7,
-      "type": "Preview",
-      "params": {}
-    },
-    {
-      "id": 8,
-      "type": "ImportImage",
-      "params": {
-        "png": "picture.png",
-        "title": "Your picture (change me)"
-      }
-    },
-    {
-      "id": 9,
-      "type": "ResizeImage",
-      "params": {
-        "fit": "fill"
-      }
-    },
-    {
-      "id": 10,
-      "type": "MergeChannels",
-      "params": {
-        "title": "Picture as colour, alpha kept"
-      }
-    },
-    {
-      "id": 11,
-      "type": "custom:convert_with_streaming",
-      "params": {}
-    },
-    {
-      "id": 12,
-      "type": "PackageMod",
-      "params": {
-        "name": "Picture shirt",
-        "out": "mods",
-        "version": "1.0",
-        "description": "A picture as Leon's shirt texture, keeping its alpha data",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -234,5 +150,162 @@
         "tex"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "material": "",
+        "materials": "Shirts_Mat",
+        "mesh": "{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797",
+        "texture": "",
+        "title": "Leon's shirt"
+      },
+      "pos": [
+        -73.0,
+        0.0
+      ],
+      "type": "PartTexture"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        179.0,
+        6.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        431.0,
+        0.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        -73.0,
+        194.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
+      "params": {},
+      "pos": [
+        -146.0,
+        587.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 6,
+      "params": {
+        "channel": "alpha",
+        "image": "",
+        "save_to": "",
+        "title": "Its alpha: data, not transparency"
+      },
+      "pos": [
+        -73.0,
+        724.0
+      ],
+      "type": "PickChannel"
+    },
+    {
+      "id": 7,
+      "params": {
+        "size": "320"
+      },
+      "pos": [
+        431.0,
+        724.0
+      ],
+      "type": "Preview"
+    },
+    {
+      "id": 8,
+      "params": {
+        "png": "picture.png",
+        "title": "Your picture (change me)"
+      },
+      "pos": [
+        -73.0,
+        327.0
+      ],
+      "type": "ImportImage"
+    },
+    {
+      "id": 9,
+      "params": {
+        "fit": "fill",
+        "height": "0",
+        "image": "",
+        "match": "",
+        "save_to": "",
+        "width": "0"
+      },
+      "pos": [
+        -73.0,
+        505.0
+      ],
+      "type": "ResizeImage"
+    },
+    {
+      "id": 10,
+      "params": {
+        "alpha": "",
+        "base": "",
+        "blue": "",
+        "colour": "",
+        "green": "",
+        "red": "",
+        "save_to": "",
+        "title": "Picture as colour, alpha kept"
+      },
+      "pos": [
+        431.0,
+        505.0
+      ],
+      "type": "MergeChannels"
+    },
+    {
+      "id": 11,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        -73.0,
+        929.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 12,
+      "params": {
+        "author": "",
+        "description": "A picture as Leon's shirt texture, keeping its alpha data",
+        "name": "Picture shirt",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        431.0,
+        929.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
 }

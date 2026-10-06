@@ -1,64 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re4r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "LoadTex",
-      "params": {
-        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
-        "title": "The texture to change"
-      }
-    },
-    {
-      "id": 2,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "ImportImage",
-      "params": {
-        "png": "logo.png",
-        "title": "Your logo (change me)"
-      }
-    },
-    {
-      "id": 5,
-      "type": "OverlayImage",
-      "params": {
-        "x": "330",
-        "y": "740",
-        "opacity": "85"
-      }
-    },
-    {
-      "id": 6,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 7,
-      "type": "SaveTex",
-      "params": {}
-    },
-    {
-      "id": 8,
-      "type": "PackageMod",
-      "params": {
-        "name": "Stamped document",
-        "out": "mods",
-        "version": "1.0",
-        "description": "A logo stamped on a document",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -150,5 +90,104 @@
         "preview"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
+        "title": "The texture to change"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        431.0,
+        33.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        504.0,
+        0.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": "logo.png",
+        "title": "Your logo (change me)"
+      },
+      "pos": [
+        504.0,
+        140.0
+      ],
+      "type": "ImportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "base": "",
+        "opacity": "85",
+        "save_to": "",
+        "top": "",
+        "x": "330",
+        "y": "740"
+      },
+      "pos": [
+        0.0,
+        339.0
+      ],
+      "type": "OverlayImage"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        -107.0,
+        283.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        145.0,
+        339.0
+      ],
+      "type": "SaveTex"
+    },
+    {
+      "id": 8,
+      "params": {
+        "author": "",
+        "description": "A logo stamped on a document",
+        "name": "Stamped document",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        0.0,
+        564.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
 }

@@ -1,64 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re4r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "LoadTex",
-      "params": {
-        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
-        "title": "The texture to change"
-      }
-    },
-    {
-      "id": 2,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "AdjustColour",
-      "params": {
-        "brightness": "-25"
-      }
-    },
-    {
-      "id": 5,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 6,
-      "type": "SaveTex",
-      "params": {}
-    },
-    {
-      "id": 7,
-      "type": "PackageMod",
-      "params": {
-        "name": "Darker document",
-        "out": "mods",
-        "version": "1.0",
-        "description": "A darker document, with a backup of each build",
-        "replace": "true"
-      }
-    },
-    {
-      "id": 8,
-      "type": "CopyFile",
-      "params": {
-        "dest": "backups/",
-        "if_exists": "overwrite",
-        "create_dirs": "true",
-        "title": "Back up the build"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -150,5 +90,107 @@
         "source"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
+        "title": "The texture to change"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        431.0,
+        33.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        504.0,
+        0.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 4,
+      "params": {
+        "brightness": "-25",
+        "contrast": "0",
+        "hue": "0",
+        "image": "",
+        "saturation": "0",
+        "save_to": ""
+      },
+      "pos": [
+        864.0,
+        0.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 5,
+      "params": {},
+      "pos": [
+        -73.0,
+        197.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        0.0,
+        160.0
+      ],
+      "type": "SaveTex"
+    },
+    {
+      "id": 7,
+      "params": {
+        "author": "",
+        "description": "A darker document, with a backup of each build",
+        "name": "Darker document",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        256.0,
+        160.0
+      ],
+      "type": "PackageMod"
+    },
+    {
+      "id": 8,
+      "params": {
+        "create_dirs": "true",
+        "dest": "backups/",
+        "if_exists": "overwrite",
+        "source": "",
+        "title": "Back up the build"
+      },
+      "pos": [
+        401.0,
+        160.0
+      ],
+      "type": "CopyFile"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
 }

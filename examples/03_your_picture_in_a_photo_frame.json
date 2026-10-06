@@ -1,62 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re4r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "LoadTex",
-      "params": {
-        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_039_00_iam.tex.143221013",
-        "title": "The framed photo"
-      }
-    },
-    {
-      "id": 2,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "ImportImage",
-      "params": {
-        "png": "picture.png",
-        "title": "Your picture (change me)"
-      }
-    },
-    {
-      "id": 5,
-      "type": "ReplacePhoto",
-      "params": {
-        "picture_y": "-30"
-      }
-    },
-    {
-      "id": 6,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 7,
-      "type": "SaveTex",
-      "params": {}
-    },
-    {
-      "id": 8,
-      "type": "PackageMod",
-      "params": {
-        "name": "My photo",
-        "out": "mods",
-        "version": "1.0",
-        "description": "My picture in place of an old photo",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -148,5 +90,112 @@
         "preview"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_039_00_iam.tex.143221013",
+        "title": "The framed photo"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        431.0,
+        71.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        504.0,
+        0.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": "picture.png",
+        "title": "Your picture (change me)"
+      },
+      "pos": [
+        504.0,
+        236.0
+      ],
+      "type": "ImportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "detail": "0",
+        "feather": "1",
+        "frame": "",
+        "frame_width": "0",
+        "grow": "0",
+        "picture": "",
+        "picture_x": "0",
+        "picture_y": "-30",
+        "save_to": "",
+        "shading": "100",
+        "show_outline": "",
+        "stains": "100",
+        "tone": "100",
+        "zoom": "100"
+      },
+      "pos": [
+        0.0,
+        447.0
+      ],
+      "type": "ReplacePhoto"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        431.0,
+        567.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        504.0,
+        447.0
+      ],
+      "type": "SaveTex"
+    },
+    {
+      "id": 8,
+      "params": {
+        "author": "",
+        "description": "My picture in place of an old photo",
+        "name": "My photo",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        0.0,
+        782.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
 }
