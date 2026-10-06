@@ -52,7 +52,10 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
 - **Release zip (2026-10-03):** preset `release` (`build-release`, triplet `x64-windows-static`, static CRT), then
   `cpack` in it → `remod-<version>-win64.zip`: both exes, `vcomp140.dll` (DirectXTex's OpenMP has no static form;
   shipped app-local), `profiles\`, `examples\texture_mod.json` (= `schemas/graph.v0.example.json`; the other example
-  graphs hold personal paths, not shipped), `docs/USER_GUIDE.md` as `README.md`. Version: `project(VERSION)`, shown
+  graphs hold personal paths, not shipped), `docs/USER_GUIDE.md` as `README.md`, **licences (2026-10-06):**
+  `THIRD_PARTY_NOTICES.md` (every shipped component, its licence and source) and `licenses\<port>.txt` (each vcpkg
+  port's `copyright` file, plus `third_party/ww2ogg/COPYING`); a new shipped dependency gets a row there and a port
+  in the CMake `foreach`. `data\packed_codebooks_aoTuV_603.bin` (§6). Version: `project(VERSION)`, shown
   in the window title and CLI usage. Checked: Release tests pass (fixtures too), no warnings, the unzipped CLI runs
   tex2png → png2tex → package with only System32 on PATH, the unzipped app starts. Not checked: a PC without
   Visual Studio.
@@ -738,6 +741,8 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 | Noesis | **Optional** (2026-10-02): texture conversion if chosen; the 3D view's fallback for meshes the tool can't read | Freeware, no redistribution terms found | Don't bundle. Offer `winget install -e --id RichWhitehouse.Noesis`, or detect existing install |
 | fmt_RE_MESH Noesis plugin | **Optional**, with Noesis | Fork checked had **no license file** (all rights reserved by default); original repo not checked | Don't bundle, don't copy from it; the user installs it. Format knowledge is cited from REE-Lib (MIT) instead |
 | REE-Lib (kagenocookie/RE-Engine-Lib) | Reference only: `.tex` and `.mdf2` layouts (`TexFile.cs`, `MdfFile.cs`); later `.mesh` (`MeshFile.cs`) | MIT [official] | Not linked (C#). No code copied; if any ever is, add its MIT notice |
+| ww2ogg's codebooks (`packed_codebooks_aoTuV_603.bin`, hcs64/ww2ogg commit 14ed9b0) | Wwise's Vorbis codebook library: checks libvorbis's setup against the replaced WEM's before writing (§10 story movies' sound) | BSD 3-clause (Xiph.org, Adam Gashlin) [official, its COPYING] | **Shipped (user, 2026-10-06):** `third_party/ww2ogg/`, installed to `data\`, licence in `licenses\ww2ogg.txt`. No ww2ogg code is used |
+| libvorbis / libogg, libopus | Planned: writing Wwise Vorbis / Opus WEMs | BSD [official] | vcpkg, when the writer is built; add to the notices then |
 | REtool | PAK extraction / optional PAK creation | No license found | Don't bundle. Detect path; guide manual install |
 | Fluffy Mod Manager | Install/test mods | No license found | Don't bundle. User selects path |
 | texconv (DirectXTex) | Not needed: the DirectXTex library does the encoding (§2, §4) | MIT [official] | — |
@@ -1095,9 +1100,8 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       bank's codec id have to match (Vorbis -> PCM shortcut); why 3 channels in the dialogue WEM.
     - **Decided (user, 2026-10-06): no Wwise dependency.** The tool would write WEMs itself: Wwise Opus with libopus
       (vcpkg, BSD) plus Wwise's header and packet-size table (vgmstream's reader documents the fields), Wwise Vorbis
-      with libvorbis (BSD) rewritten to Wwise's packet form and codebook ids (only if every codebook used is in
-      Wwise's aoTuV 6.03 library; uncertain), PCM as is. Fallbacks for music if Vorbis fails: PCM or Opus in its
-      place, if the game doesn't hold the bank's codec to it (in-game test).
+      with libvorbis (BSD) rewritten to Wwise's packet form and codebook ids (**proven 2026-10-06**, below), PCM as
+      is.
     - **Spike prepared (2026-10-06): `spikes/wwise/`.** 7 known WAVs (`make_samples.sh`), `samples.wsources` (each
       as Vorbis, Opus and PCM: ShareSets `remod_vorbis` / `remod_opus` / `remod_pcm`), `run.cmd` (WwiseConsole
       `convert-external-source`), README with the steps. The user runs Wwise 2021.1.14 once to make the reference
@@ -1175,11 +1179,37 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
         into Wwise's built-in codebook library (aoTuV 6.03): stereo 38-49, 62-76, 416-430; mono 38-49, 62-76,
         213-224; game music 50-76, 463-479. So a writer can ship one reference setup (with its hash and the two
         u32s) per layout and quality; the remaining question is encoding audio that uses exactly those codebooks.
-      - **Next for Vorbis:** encode with aoTuV / libvorbis (BSD) at a quality and see whether its own setup, written
-        in Wwise's form (codebooks replaced by ids found in the library), is byte-identical to one of these. Wwise's
-        encoder is aoTuV 6.03, so a match is likely; the library's codebooks come from ww2ogg's
-        `packed_codebooks_aoTuV_603.bin` (BSD; check its licence before shipping). If they match, the hash and the
-        two u32s come with it; if not, Opus or PCM takes the music slot (the fallback above).
+      - **Writing Wwise Vorbis with libvorbis works [spike 2026-10-06, Python in the session's scratchpad; to be
+        redone in C++].**
+        - **The codebook library:** ww2ogg's `packed_codebooks_aoTuV_603.bin` (BSD: Xiph and Adam Gashlin; ships
+          with its notice). 598 codebooks, all readable; 26 codebooks sit under several ids. Every codebook libvorbis
+          uses, at every quality from -1 to 10, mono and stereo, is in it.
+        - **The game's setups are libvorbis's.** RE4R's sound packages and banks hold ~134,400 Opus WEMs (dialogue,
+          effects; 1-12 channels) and 894 Vorbis ones, all 48 kHz but one. The Vorbis ones use 6 setups. Expanded to standard Vorbis, 5 are bit-identical to ffmpeg's libvorbis at 48 kHz:
+          - music (`ch_bgm_*`, `ch_mva000_bgm`): stereo, and the uncoupled form for 1 / 4 / 12 channels: q 7.0-7.9;
+          - cutscene sound effects (`ch_csa*_se`, 1 to 8 channels, one stereo): q 8.0-8.9;
+          - 4 weapon sounds in banks: q -1 (or 3).
+
+          The sixth is one 6 kHz file, not tried. Within a band the setup is the same, so the exact quality is
+          unknown (any 7.x makes the music's). More than 2 channels use the mono-style setup: no coupling.
+        - Because the expanded setups match, the writer takes the replaced file's own setup block, hash (@42) and the
+          two u32s (@34, @38) and checks libvorbis's setup expands to the same (the library is needed only for that
+          check).
+        - **Audio packets:** libvorbis's packets with the packet-type bit and, on long blocks, the two window bits
+          removed.
+        - **Channel order:** Wwise keeps the WAV's order (3 ch: L R C), not Vorbis's L C R. ffmpeg reorders on
+          decode; a writer feeds libvorbis the channels as they come.
+        - **Checked:**
+          - the 7 Wwise samples, turned into Ogg, decode with ffmpeg at their exact lengths (tones 32-36 dB per
+            channel; a lossy codec);
+          - the game's mva000 music, rebuilt from its own packets with the computed header and seek table, is
+            **byte-identical** (1,425,446 bytes);
+          - new WEMs from libvorbis q7 (sweep and noise in the music's stereo form, a tone in its mono form) are read
+            by vgmstream r2117 as Wwise Vorbis with the right sample count, and decode to libvorbis's own output
+            within 1.
+        - **Not exact:** from an Ogg packet the real bit count is lost, so a repacked packet can be one zero byte
+          longer than Wwise's (decoders ignore it). In C++ the writer could take the bit count from libvorbis.
+          Not tried: more than 2 channels through the writer, and in game.
   - Frames: done as **Replace photo** (§4; RE4R's UI frames are opaque, no transparent opening). Open: a picture
     printed at an angle or in perspective (four-corner warp) if one turns up; in-world paintings usually have their
     own picture texture (Resize "Match size of" covers them).
