@@ -12,3 +12,7 @@ build/
 out/
 vcpkg_installed/
 build-*/
+
+# Outputs of running the examples
+examples/edits/
+examples/mods/
