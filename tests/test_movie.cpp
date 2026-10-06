@@ -8,9 +8,11 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+#include <thread>
 
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
@@ -98,6 +100,9 @@ TEST_CASE("read_mp4_info on the game's own movies (set REMOD_GAME to the extract
     CHECK(intro.audio.empty());  // its sound comes from the game's sound bank
     CHECK_THAT(intro.seconds, WithinAbs(60.9, 0.1));
     CHECK(remod::read_mp4_info(mv / "mva000/mva000_fhd.mov.1.x64").width == 1920);
+    const remod::MovieInfo logo =
+        remod::read_mp4_info(fs::path(game) / "streaming/_chainsaw/movie/logo/mv7001/mv7001.mov.1.x64");
+    CHECK((logo.audio == "mp4a" && logo.audio_rate == 48000 && logo.audio_channels == 2));
 }
 
 TEST_CASE("encode_movie: a test card, then a video, at the size and frame rate of the movie they replace") {
@@ -245,4 +250,101 @@ TEST_CASE("Export movie -> Edit video -> Replace movie: waits for your edit, the
     const auto other = remod::run_graph(g, opt);
     CHECK(other.nodes.at(3).message.starts_with("exported"));
     CHECK(other.nodes.at(4).state == remod::NodeState::Waiting);
+}
+
+TEST_CASE("MoviePlayer: opens paused on the first frame, seeks, plays; a game movie by its .mov.1.x64 name; the stub") {
+    TempDir dir;
+    // Named as the game names its movies: Windows goes by the extension, so the player says what it is.
+    const fs::path movie = dir.path / "mva000.mov.1.x64";
+    remod::encode_movie({}, {.width = 640, .height = 360, .seconds = 3, .fps = 30, .bitrate = 1'000'000}, "mva000",
+                        movie);
+    auto wait_for = [](remod::MoviePlayer& p, remod::MoviePlayer::Frame& f, auto done) {
+        for (int i = 0; i < 500; ++i) {  // up to 5 s
+            if (p.take(f) && done(f)) return true;
+            REQUIRE(p.error() == "");
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    };
+    remod::MoviePlayer player(movie, 320);
+    remod::MoviePlayer::Frame f;
+    REQUIRE(wait_for(player, f, [](const auto&) { return true; }));
+    CHECK(f.width == 320);  // fitted into 320, the shape kept
+    CHECK(f.height == 180);
+    CHECK(f.bgra.size() == 320u * 180 * 4);
+    CHECK(f.time < 0.05);
+    CHECK(f.bgra[3] == 255);
+    CHECK_FALSE(player.playing());
+    CHECK(player.info().width == 640);
+    CHECK_THAT(player.info().seconds, WithinAbs(3, 0.05));
+    CHECK_THAT(player.info().fps, WithinAbs(30, 0.1));
+
+    player.seek(2);
+    REQUIRE(wait_for(player, f, [](const auto& frame) { return frame.time > 1.9; }));
+    CHECK_THAT(f.time, WithinAbs(2, 0.05));
+
+    player.play();  // on to the end, then paused there
+    REQUIRE(wait_for(player, f, [](const auto& frame) { return frame.time > 2.9; }));
+    for (int i = 0; i < 100 && player.playing(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK_FALSE(player.playing());
+
+    test::write_file(dir.path / "stub.mov.1.x64", "REMV" + std::string(34, '\0'));
+    remod::MoviePlayer stub(dir.path / "stub.mov.1.x64");
+    for (int i = 0; i < 500 && stub.error().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK_THAT(stub.error(), ContainsSubstring("isn't an MP4") && ContainsSubstring("streaming"));
+}
+
+TEST_CASE("MoviePlayer plays the game's 4K intro (set REMOD_GAME to the extracted natives/STM)") {
+    char* v = nullptr;
+    size_t n = 0;
+    _dupenv_s(&v, &n, "REMOD_GAME");
+    const std::string game = v ? v : "";
+    std::free(v);
+    if (game.empty()) SKIP("set REMOD_GAME to run");
+    const fs::path intro = fs::path(game) / "streaming/_chainsaw/movie/mv/mva000/mva000.mov.1.x64";
+    if (!fs::exists(intro)) SKIP("needs streaming/_chainsaw/movie/mv/mva000");
+    remod::MoviePlayer player(intro);
+    remod::MoviePlayer::Frame f;
+    for (int i = 0; i < 500 && !player.take(f); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    REQUIRE(player.error() == "");
+    CHECK(player.info().width == 3840);
+    CHECK(f.width == 1280);
+    player.play();
+    int frames = 0;
+    const auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < std::chrono::seconds(2)) {
+        frames += player.take(f);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    WARN("4K intro: " << frames << " frames shown in 2 s, at " << player.position() << " s");
+    CHECK(player.position() > 0.5);
+}
+
+TEST_CASE("encode_movie: sound only where the original has it in the file, at its rate and channels") {
+    TempDir dir;
+    const fs::path beeps = dir.path / "beeps.mp4", mono = dir.path / "mono.mp4", silent = dir.path / "silent.mp4",
+                   quiet = dir.path / "quiet.mp4";
+    const remod::MovieInfo logo{.width = 320, .height = 180, .seconds = 2, .fps = 30, .audio = "mp4a",
+                                .bitrate = 1'000'000, .audio_rate = 48000, .audio_channels = 2};
+    // A test card for a movie with sound: a beep each second, AAC at 48 kHz stereo, as long as the picture.
+    CHECK(remod::encode_movie({}, logo, "mv7001", beeps) == "a beep each second");
+    remod::MovieInfo got = remod::read_mp4_info(beeps);
+    CHECK(got.audio == "mp4a");
+    CHECK((got.audio_rate == 48000 && got.audio_channels == 2));
+
+    // Someone's video with sound into a 44.1 kHz mono original: converted.
+    remod::MovieInfo mono_like = logo;
+    mono_like.audio_rate = 44100;
+    mono_like.audio_channels = 1;
+    CHECK(remod::encode_movie(beeps, mono_like, "", mono, true) == "your video's sound");
+    got = remod::read_mp4_info(mono);
+    CHECK((got.audio_rate == 44100 && got.audio_channels == 1));
+
+    // A video without sound: silence, so the track is still there.
+    remod::MovieInfo story = logo;
+    story.audio.clear();
+    CHECK(remod::encode_movie({}, story, "mva000", silent) == "");  // like the story movies: no sound track
+    CHECK(remod::read_mp4_info(silent).audio.empty());
+    CHECK(remod::encode_movie(silent, logo, "", quiet, true) == "silence (your video has no sound)");
+    CHECK(remod::read_mp4_info(quiet).audio == "mp4a");
 }

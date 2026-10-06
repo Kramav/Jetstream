@@ -44,7 +44,7 @@ std::string file_name(const std::string& path);
 
 // What a file is, by its name: an RE Engine texture (.tex, .tex.<version>), mesh (.mesh.<version>), an image the
 // edit step reads (png, tga, jpg), anything else.
-enum class FileKind { Folder, Texture, Mesh, Image, Other };
+enum class FileKind { Folder, Texture, Mesh, Image, Movie, Other };
 FileKind file_kind(const std::string& name);
 
 struct DirEntry {

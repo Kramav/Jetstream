@@ -135,7 +135,11 @@ int run(int argc, char** argv) {
     if (cmd->first == "movie-info") {
         const remod::MovieInfo m = remod::read_mp4_info(args["file"]);
         std::cout << m.width << "x" << m.height << ", " << m.seconds << " s, " << m.fps << " fps, video "
-                  << (m.video.empty() ? "none" : m.video) << ", audio " << (m.audio.empty() ? "none" : m.audio) << "\n";
+                  << (m.video.empty() ? "none" : m.video) << ", audio " << (m.audio.empty() ? "none" : m.audio)
+                  << (m.audio_rate
+                          ? " " + std::to_string(m.audio_rate) + " Hz " + std::to_string(m.audio_channels) + " ch"
+                          : "")
+                  << "\n";
         return 0;
     }
     if (cmd->first == "run") {

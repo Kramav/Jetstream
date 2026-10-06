@@ -458,6 +458,7 @@ struct State {
     int viewer_block = 0;
     ZoomPan viewer_view;
     bool want_viewer = false, viewer_on_block = false;
+    std::string show_movie;  // a block's movie to play in the viewer (its Preview movie button), handed on next frame
     std::string preview_path = "\x01";
     std::future<remod::RunResult> run;
     std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
@@ -2781,6 +2782,13 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     hovered_hint = "Which file the previews, thumbnails and link values after it show. A run does "
                                    "them all.";
             }
+            // A block whose last run gave a movie (Replace movie, Export movie, Edit video, a copy of one): play it.
+            if (!s.build_mode && status && !status->file.empty() &&
+                remod::file_kind(status->file.filename().string()) == remod::FileKind::Movie) {
+                if (ImGui::Button("Preview movie")) s.show_movie = status->file.string();
+                if (ImGui::IsItemHovered())
+                    hovered_hint = "Play " + status->file.filename().string() + " in the viewer, bottom left.";
+            }
             if (manual) {  // Edit image: the user's own step
                 const std::filesystem::path file = status ? status->file : std::filesystem::path();
                 if (file.empty()) {
@@ -3646,6 +3654,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         if (state.want_viewer) {
             browser->show_in_viewer([&state] { draw_block_view(state); });
             state.want_viewer = false;
+        }
+        if (!state.show_movie.empty()) {
+            browser->show_movie(state.show_movie);
+            state.show_movie.clear();
         }
         if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles,
                                                      state.graph.profile, state.pinned, state.build_mode);

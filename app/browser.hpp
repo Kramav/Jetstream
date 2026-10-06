@@ -3,6 +3,7 @@
 // materials) and read_tex_pixels / read_image_bgra (previews, decoded by the GPU or WIC).
 #include "browse.hpp"
 #include "mesh_view.hpp"
+#include "movie_view.hpp"
 #include "profile.hpp"
 #include "zoom_view.hpp"
 
@@ -39,7 +40,16 @@ public:
 
     // Something of the caller's in the viewer (e.g. a block's preview, user 2026-10-02): `draw_view` fills the viewer
     // window ("Preview") until a texture or mesh is picked in the Browser again.
-    void show_in_viewer(std::function<void()> draw_view) { external_ = std::move(draw_view); }
+    void show_in_viewer(std::function<void()> draw_view) {
+        external_ = std::move(draw_view);
+        close_movie();
+    }
+    // A movie (a game movie or any video) playing in the viewer, until something else is picked or it's closed.
+    void show_movie(const std::string& abs) {
+        external_ = nullptr;
+        movie_ = abs;
+        movie_open_ = true;
+    }
     bool viewer_shows_external() const { return bool(external_); }
 
 private:
@@ -86,6 +96,10 @@ private:
     void draw_popouts();
     void select_texture(const std::string& abs, const std::vector<remod::Profile>& profiles);
     void select_mesh(const std::string& abs);
+    void close_movie() {
+        movie_open_ = false;
+        movie_view_.close();
+    }
 
     ID3D11Device* device_;
     ID3D11BlendState* opaque_ = nullptr;
@@ -120,6 +134,9 @@ private:
     std::optional<remod::MeshTextures> mesh_textures_;  // its textures as absolute paths
     std::string mesh_error_;
     MeshView view_;
+    MovieView movie_view_;
+    std::string movie_;        // the movie in the viewer while movie_open_
+    bool movie_open_ = false;
     std::future<remod::MeshModel> mesh_loading_;
     std::string loading_mesh_, shown_mesh_;  // being converted; in the view (or failed)
     std::string model_error_;

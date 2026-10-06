@@ -124,6 +124,21 @@ TEST_CASE("read_tex_pixels picks the mip that fits and reports the stored layout
     CHECK(remod::read_tex_pixels(tex, 1).width == 4);  // nothing fits: the smallest
 }
 
+TEST_CASE("read_tex_mips: the mip that fits, then every smaller one, for a smooth preview") {
+    TempDir dir;
+    // RGBA8 16x16 with 4 mips: 16, 8, 4, 2.
+    const fs::path tex =
+        tex_with_mips(dir.path / "a.tex.143221013", 16, 16, 28, {{64, 1024}, {32, 256}, {16, 64}, {8, 16}});
+    auto chain = remod::read_tex_mips(tex, 8);
+    REQUIRE(chain.size() == 3);
+    CHECK((chain[0].width == 8 && chain[1].width == 4 && chain[2].width == 2));
+    CHECK((chain[0].data[0] == '1' && chain[2].data[0] == '3'));
+    CHECK(remod::read_tex_mips(tex, 4096).size() == 4);
+    // A mip stored smaller than half the one above (not a valid GPU chain) ends it.
+    const fs::path odd = tex_with_mips(dir.path / "b.tex.143221013", 16, 16, 28, {{64, 1024}, {16, 64}});
+    CHECK(remod::read_tex_mips(odd, 4096).size() == 1);
+}
+
 TEST_CASE("read_tex_pixels keeps the padded row width separate from the visible width") {
     TempDir dir;
     // 6x2 RGBA8 stored with 8-pixel rows (like cs_ui3200_stamp_im: 468 wide, stored 512).
@@ -155,6 +170,28 @@ TEST_CASE("read_tex_pixels matches read_tex_meta on real textures") {
         ++n;
     }
     CHECK(n > 0);
+}
+
+TEST_CASE("read_tex_mips gives whole chains on Leon's real textures and their streaming copies (REMOD_GAME)") {
+    const std::string game = env("REMOD_GAME");
+    if (game.empty()) SKIP("set REMOD_GAME to the extracted natives/STM");
+    int textures = 0, chained = 0;
+    const std::string leon = "_chainsaw/character/ch/cha0/cha000";
+    for (const char* top : {"", "streaming/"})
+        for (const auto& e : fs::recursive_directory_iterator(fs::path(game) / top / leon)) {
+            if (!remod::is_tex_name(e.path().filename().string())) continue;
+            const auto chain = remod::read_tex_mips(e.path(), 2048);
+            for (size_t k = 1; k < chain.size(); ++k)
+                CHECK(chain[k].width == std::max(1u, chain[0].width >> k));
+            ++textures;
+            chained += chain.size() > 1;
+        }
+    CHECK(textures > 100);
+    CHECK(chained > textures / 2);
+    const auto pants =
+        remod::read_tex_mips(fs::path(game) / "streaming" / leon / "00/cha000_00b_lowerbody_albd.tex.143221013", 2048);
+    REQUIRE(pants.size() == 3);  // 4096 stored: shown from 2048, then 1024 and 512
+    CHECK((pants[0].width == 2048 && pants[2].width == 512));
 }
 
 TEST_CASE("index_assets lists textures and meshes, sorted, without streaming copies") {
@@ -411,6 +448,10 @@ TEST_CASE("file_kind and list_folder: any folder, folders first, sorted ignoring
     CHECK(remod::file_kind("a.tex.png") == FileKind::Image);
     CHECK(remod::file_kind("a.tex.re3remake") == FileKind::Texture);
     CHECK(remod::file_kind("a.rtex") == FileKind::Other);
+    CHECK(remod::file_kind("mva000.mov.1.x64") == FileKind::Movie);  // the game's movies, as named
+    CHECK(remod::file_kind("mva000_fhd.MOV.1.X64") == FileKind::Movie);
+    CHECK(remod::file_kind("clip.mp4") == FileKind::Movie);
+    CHECK(remod::file_kind("mva000.pfb.17.x64") == FileKind::Other);
 
     TempDir tmp;
     fs::create_directories(tmp.path / "zeta");

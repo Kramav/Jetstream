@@ -1290,15 +1290,16 @@ NodeSpec replace_movie_node() {
                    "movie with a 1080p copy beside it (<id>_fhd) gets both made; connect both to Package for Fluffy.",
         .inputs = {game_movie_input(),
                    {.name = "video", .label = "Your video", .type = Path, .widget = Widget::Path,
-                    .hint = "Any video Windows plays (mp4, mov, wmv...), or an Edit video step's edit. Scaled to the "
-                            "movie's size (black bars if its shape differs); its sound isn't used. Empty: a test card, "
-                            "to see where and how the game plays the movie.",
+                    .hint = "Any video Windows plays (mp4, mov, wmv...), or an Edit video step's edit. Scaled to "
+                            "the movie's size (black bars if its shape differs). Its sound is used where the movie has "
+                            "sound in its file (the logos, mva300 / 301); the story movies' sound is in the game's "
+                            "sound bank. Empty: a test card, to see where and how the game plays the movie.",
                     .path = PathKind::OpenFile, .filter = kVideoFormats},
                    {.name = "same_length", .label = "Same length as the original", .type = Text,
                     .widget = Widget::Checkbox,
-                    .hint = "Cut a longer video, and hold the last frame of a shorter one, to the original's length. "
-                            "The movie's sound plays from the game's sound bank, timed to the original. Off: your "
-                            "video's own length (untested in game).",
+                    .hint = "Cut a longer video, and hold the last frame of a shorter one, to the original's length "
+                            "(its sound too: cut, or silence after it). A story movie's sound plays from the game's "
+                            "sound bank, timed to the original. Off: your video's own length (untested in game).",
                     .initial = "true"}},
         .outputs = {{"movie", Path, "new movie"}, {"fhd", Path, "1080p copy (if any)"}},
         .family = Family::Transform,
@@ -1326,9 +1327,6 @@ NodeSpec replace_movie_node() {
                     continue;
                 }
                 const MovieInfo like = movie_info(original);
-                if (!like.audio.empty())
-                    r.warn(file + " has its sound in the file; the new one has none (only the picture is replaced). "
-                                  "Untested in game.");
                 const fs::path out =
                     cache.empty() ? r.temp_file("_" + file + ".mp4")
                                   : cache / (hash_hex(stamp(original) + '\0' + (video.empty() ? "card" : stamp(video)) +
@@ -1347,8 +1345,9 @@ NodeSpec replace_movie_node() {
                         fs::remove(target, ec);
                     }
                     const auto start = std::chrono::steady_clock::now();
+                    std::string sound;
                     try {
-                        encode_movie(video, like, m.id, target, same_length);
+                        sound = encode_movie(video, like, m.id, target, same_length);
                     } catch (const std::runtime_error& e) {
                         fs::remove(target, ec);
                         throw GraphError(e.what());
@@ -1357,7 +1356,8 @@ NodeSpec replace_movie_node() {
                     char took[64];
                     std::snprintf(took, sizeof took, " in %.0f s",
                                   std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
-                    message += (message.empty() ? "encoded " : ", ") + size + took;
+                    message += (message.empty() ? "encoded " : ", ") + size + took +
+                               (sound.empty() ? "" : ", sound: " + sound);
                     const MovieInfo got = read_mp4_info(out);
                     if (std::abs(got.seconds - like.seconds) > 0.5)
                         r.log(file + ": the new movie is " + std::to_string(std::lround(got.seconds)) +

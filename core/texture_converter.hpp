@@ -51,6 +51,9 @@ struct TexPixels {
 // The largest mip no bigger than max_side on either side, else the smallest. Throws ConvertError for formats
 // the browser can't show or a damaged file.
 TexPixels read_tex_pixels(const std::filesystem::path& tex, std::uint32_t max_side);
+// read_tex_pixels' mip, then each smaller one stored, for a preview the GPU shrinks smoothly (one large mip drawn small
+// skips pixels: fine detail turns grainy). Stops early where a mip's stored size isn't half the one above's.
+std::vector<TexPixels> read_tex_mips(const std::filesystem::path& tex, std::uint32_t max_side);
 
 // The same mip (read_tex_pixels) decoded to 32-bit BGRA at its visible size (padding cut off): BC1-7 decompressed and
 // other formats converted by DirectXTex. sRGB formats keep their bytes, as the browser shows them. `full_width` and

@@ -180,16 +180,21 @@ The game's pre-rendered movies are video files under `natives\STM\streaming\_cha
 1. **Game movie:** pick either copy in your REtool folder (the one under `streaming`; the file of the same name
    outside it is only a stub).
 2. **Your video:** any video Windows plays (mp4, mov, wmv...). It's scaled to the movie's size, with black bars if
-   its shape differs, and retimed to the movie's frame rate. Its sound isn't used. **Leave it empty for a test
-   card:** the movie's name and the seconds counting, as long as the original. Use that to find out where the game
-   plays a movie.
+   its shape differs, and retimed to the movie's frame rate. **Leave it empty for a test card:** the movie's name
+   and the seconds counting, as long as the original. Use that to find out where the game plays a movie.
 3. **Same length as the original** (on by default): a longer video is cut, a shorter one holds its last frame, so
-   the movie lasts as long as the original. The movie's sound isn't in the file: the game plays it from its sound
+   the movie lasts as long as the original. Most movies' sound isn't in the file: the game plays it from its sound
    bank, timed to the original, so a different length would put picture and sound out of step.
-4. Link both outputs into Package's **other file** inputs.
+4. **Sound:** a movie with sound in its file (the logos `mv7000` / `mv7001`, and `mva300` / `mva301`) gets your
+   video's sound, re-encoded to match (AAC, 48 kHz stereo), cut or padded with silence to the picture's length.
+   Your video has none: silence. A test card for one of them beeps each second, so you can hear whether the game
+   plays the file's sound. The other movies have no sound track, like their originals.
+5. Link both outputs into Package's **other file** inputs.
 
 Encoding takes a while for a 4K movie (about 20 s for the 61 s intro on a PC with a hardware encoder). A run with
-nothing changed reuses it. Example `12_replace_a_movie` is the test card for `mva000`, ready to run.
+nothing changed reuses it. After a run, a movie block's **Preview movie** button (Use layout) plays its movie in the
+viewer: Replace movie's new movie, Export movie's copy, Edit video's edit. Example `12_replace_a_movie` is the test
+card for `mva000`, ready to run.
 
 ### Editing a movie by hand
 
@@ -203,7 +208,7 @@ runs; picking another movie exports again and the edit step waits again. Example
 whole chain, for `mva402`.
 
 Not known yet (needs a test in game): whether a movie of another length plays fully (turn off **Same length** to
-try); how the sound of `mv` movies behaves; which movie plays where.
+try); whether the game plays a replaced file's sound (the logos); which movie plays where.
 
 ## Built from blocks
 
@@ -239,7 +244,10 @@ it. **Input** and **Output** blocks inside are its pins. **Save** updates it; **
   (`cha000` → Leon). Nicknames are searchable and only label things.
 - **Viewer** (bottom left, Use layout): the selected texture large. Picking a mesh shows it in 3D with its textures:
   drag to turn, right-drag to move, wheel to zoom, double-click to reset. Click one of its textures to highlight
-  the parts that use it.
+  the parts that use it. Clicking a movie (a game movie, or any mp4, mov, wmv...) plays it there: Play / Pause, and
+  drag the time bar to jump. The game's movies are under **Game files → streaming → _chainsaw → movie**.
+- **Game files → streaming** holds the game's high-resolution texture copies and its movies. It's browsed as it is on
+  disk: search doesn't reach into it (search inside it filters the folder you're in).
 - **Transparency** is off by default, because alpha often holds data.
 
 ## Run program

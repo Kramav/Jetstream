@@ -58,7 +58,7 @@ FileKind kind_of(const std::string& abs) { return remod::file_kind(display_name(
 
 }  // namespace
 
-Browser::Browser(ID3D11Device* device) : device_(device), view_(device) {
+Browser::Browser(ID3D11Device* device) : device_(device), view_(device), movie_view_(device) {
     D3D11_BLEND_DESC desc{};
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     device_->CreateBlendState(&desc, &opaque_);
@@ -138,18 +138,21 @@ const Browser::Image& Browser::image(const std::string& abs, unsigned max_side, 
         if (!force && load_ms_ > 8) return loading;
         const auto start = std::chrono::steady_clock::now();
         Image img;
-        auto upload = [&](DXGI_FORMAT format, unsigned w, unsigned h, unsigned pitch, const void* pixels) {
+        // `levels`: the picture, then (textures) its smaller mips, so the GPU shrinks it smoothly when it's drawn small
+        // (a single large mip skips pixels: fine detail turns grainy, user 2026-10-06).
+        auto upload = [&](DXGI_FORMAT format, unsigned w, unsigned h,
+                          const std::vector<D3D11_SUBRESOURCE_DATA>& levels) {
             D3D11_TEXTURE2D_DESC desc{};
             desc.Width = w;
             desc.Height = h;
-            desc.MipLevels = desc.ArraySize = 1;
+            desc.MipLevels = UINT(levels.size());
+            desc.ArraySize = 1;
             desc.Format = format;
             desc.SampleDesc.Count = 1;
             desc.Usage = D3D11_USAGE_IMMUTABLE;
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-            const D3D11_SUBRESOURCE_DATA data{pixels, pitch, 0};
             ID3D11Texture2D* tex = nullptr;
-            if (FAILED(device_->CreateTexture2D(&desc, &data, &tex)))
+            if (FAILED(device_->CreateTexture2D(&desc, levels.data(), &tex)))
                 throw std::runtime_error("the graphics card can't show this format");
             device_->CreateShaderResourceView(tex, nullptr, &img.srv);
             tex->Release();
@@ -160,8 +163,11 @@ const Browser::Image& Browser::image(const std::string& abs, unsigned max_side, 
             const fs::path file = max_side > kThumbSide && !rel.empty() ? remod::preview_file(root_, rel) : fs::path(abs);
             const FileKind kind = kind_of(abs);
             if (kind == FileKind::Texture) {
-                const remod::TexPixels p = remod::read_tex_pixels(file, max_side);
-                upload(display_format(p.format), p.stored_width, p.stored_height, p.row_pitch, p.data.data());
+                const std::vector<remod::TexPixels> mips = remod::read_tex_mips(file, max_side);
+                std::vector<D3D11_SUBRESOURCE_DATA> levels;
+                for (const auto& m : mips) levels.push_back({m.data.data(), m.row_pitch, 0});
+                const remod::TexPixels& p = mips[0];
+                upload(display_format(p.format), p.stored_width, p.stored_height, levels);
                 img.width = float(p.width);
                 img.height = float(p.height);
                 img.u = float(p.width) / float(p.stored_width);
@@ -169,7 +175,7 @@ const Browser::Image& Browser::image(const std::string& abs, unsigned max_side, 
             } else if (kind == FileKind::Image) {
                 unsigned w = 0, h = 0;
                 const std::vector<std::uint8_t> bgra = remod::read_image_bgra(file, w, h);
-                upload(DXGI_FORMAT_B8G8R8A8_UNORM, w, h, w * 4, bgra.data());
+                upload(DXGI_FORMAT_B8G8R8A8_UNORM, w, h, {{bgra.data(), w * 4, 0}});  // ponytail: one level
                 img.width = float(w);
                 img.height = float(h);
             } else {
@@ -407,6 +413,10 @@ void Browser::draw_places(const std::string& natives_root) {
     if (indexed) drag_source(root_.string(), true);
     if (open) {
         if (indexed) draw_tree(index_->tree, 0, "");
+        // The index leaves out streaming\ (the high-resolution copies, the movies): browsed on disk, read when opened.
+        // ponytail: not searchable from Game files; indexing it would double the index's time and every hit.
+        if (std::error_code ec; indexed && fs::is_directory(root_ / "streaming", ec))
+            draw_disk_folder(root_ / "streaming", "streaming");
         ImGui::TreePop();
     }
     ImGui::PopID();
@@ -422,6 +432,7 @@ void Browser::draw_places(const std::string& natives_root) {
 
 void Browser::select_texture(const std::string& abs, const std::vector<remod::Profile>& profiles) {
     external_ = nullptr;  // the viewer shows the texture again
+    close_movie();
     texture_ = abs;
     info_.clear();
     if (kind_of(abs) != FileKind::Texture) return;  // an image: the viewer shows it
@@ -446,6 +457,7 @@ void Browser::select_texture(const std::string& abs, const std::vector<remod::Pr
 
 void Browser::select_mesh(const std::string& abs) {
     external_ = nullptr;
+    close_movie();
     mesh_focus_ = view_open_ = true;
     if (abs == mesh_) return;  // picked again: shows it again
     mesh_ = abs;
@@ -543,7 +555,10 @@ std::string Browser::draw(const std::string& natives_root, const std::string& no
     ImGui::End();
 
     draw_popouts();  // both layouts
-    if (browser_only) return chosen;
+    if (browser_only) {
+        movie_view_.close();  // no viewer in this layout: shown again, from the start, when it's back
+        return chosen;
+    }
     draw_textures(profiles, chosen);
     draw_viewer(noesis_exe);
     return chosen;
@@ -611,13 +626,16 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
             const bool folder = e.kind == FileKind::Folder;
             const std::string label = full_paths ? rel_in_game(e.path) : display_name(e.path) + (folder ? "\\" : "");
             ImGui::PushID(i);
-            if (ImGui::Selectable(label.c_str(), e.path == (e.kind == FileKind::Mesh ? mesh_ : texture_),
+            const std::string& shown = e.kind == FileKind::Mesh ? mesh_ : e.kind == FileKind::Movie ? movie_ : texture_;
+            if (ImGui::Selectable(label.c_str(), e.path == shown,
                                   ImGuiSelectableFlags_AllowDoubleClick)) {
                 const bool twice = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
                 if (folder) {
                     if (twice) go(e.path);
                 } else if (e.kind == FileKind::Mesh) {
                     select_mesh(e.path);
+                } else if (e.kind == FileKind::Movie) {
+                    show_movie(e.path);
                 } else if (e.kind == FileKind::Texture || e.kind == FileKind::Image) {
                     mesh_focus_ = false;  // the 3D view keeps the last mesh
                     select_texture(e.path, profiles);
@@ -742,6 +760,15 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
         ImGui::Begin("Preview###viewer");
         external_();
         ImGui::End();
+        return;
+    }
+    if (movie_open_) {
+        ImGui::Begin("Movie###viewer", &movie_open_);
+        ImGui::TextUnformatted(display_name(movie_).c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", movie_.c_str());
+        movie_view_.draw(movie_);
+        ImGui::End();
+        if (!movie_open_) movie_view_.close();
         return;
     }
     const bool in_3d = view_open_ && !mesh_.empty();

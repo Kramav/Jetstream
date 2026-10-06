@@ -2,8 +2,8 @@
 
 Node-based modding tool for Capcom RE Engine games. First target: **Resident Evil 4 (2023), "RE4R"**.
 Long-term: AI-assisted asset generation plus optional REFramework runtime features.
-**Current scope: M1 is done (polish goes on). Next: M3 routes 1 and 2 (movies), then M2 (REFramework
-scripting); see §10. AI texture generation (M4) isn't started.**
+**Current scope: M1 is done (polish goes on). M3 route 1 (replacing movies) is done (2026-10-06); route 2 waits
+for its spike. Then M2 (REFramework scripting); see §10. AI texture generation (M4) isn't started.**
 
 Source labels used below: **[official]** = official/authoritative docs, **[guide]** = community guide,
 **[inferred]** = design decision or assumption from planning, **[TBD-spike]** = must be confirmed by a manual in-game test.
@@ -905,6 +905,9 @@ propose them as next steps before then.
 - [ ] **Channel meanings (§9 table).** Are the inferred meanings right (e.g. `albd` alpha = dielectric vs metal,
   `nrrc` normal in G/A)?
 - [ ] **Noesis converter only:** does the game accept a texture with more mips than the original (§9, parked)?
+- [ ] **Replaced movies (§10 M3 route 1).** Example 12 (mva000's test card) and a logo's (mv7001: beeps): does it
+  play; is the file's sound played (the logos); does a different length play fully (Same length off); which movie
+  plays where.
 
 ## 10. Milestones after M1
 
@@ -912,7 +915,8 @@ propose them as next steps before then.
 runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 
 - **NEXT (user, 2026-10-03): M3 routes 1 and 2**, below: replace a game movie, then play a movie when we choose.
-  Prepared, see M3 "Prepared".
+  **Route 1 done (user, 2026-10-06: "then we can consider route 1 done", once sound was re-encoded).** Its in-game
+  check is in §9's list. Route 2: prepared, see M3 "Prepared".
 - **M2: REFramework scripting (user, 2026-10-03).** Help users make script mods for REFramework (Lua in
   `reframework/autorun`). Survey: REFramework (MIT) is the runtime and has no packaging conventions; EMV Engine (MIT,
   RE4R through the SILVER fork) is a shared Lua library; REE Content Editor (MIT, very active) edits and patches RE
@@ -945,8 +949,18 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     - Out: new movie, and 1080p copy (`<id>_fhd`, or nothing). Each is encoded H.264 High at its original's size,
       frame rate (whole or x/1.001) and average bit rate (unconstrained VBR). Hardware encoder allowed.
     - The video: the source reader's video processor scales it, keeping the shape (black bars, observed). Frames
-      are repeated or dropped to the frame rate. Its length is kept (logged when it differs); its sound is dropped
-      (a warning when the original has sound in the file).
+      are repeated or dropped to the frame rate. Its length is kept (logged when it differs).
+    - **Sound (2026-10-06; user: "we need to reencode the sound accordingly as well"):** only where the original has
+      sound in the file (mv7000 / 7001: AAC LC 48 kHz stereo ~380 kbps; mva300 / 301: the same format at ~2 kbps,
+      likely silence) [game data]; the other 25 have no sound track (their sound is in the sound bank) and their
+      replacements get none either. The track: AAC (Windows' encoder: 44.1 / 48 kHz, 1 / 2 / 6 channels, 192 kbps)
+      at the original's rate and channels, written alongside each frame and exactly as long as the picture. From the
+      video's first audio track through a second source reader asked for PCM at that rate and channels (Windows
+      converts: 44.1 kHz mono -> 48 kHz stereo checked, pitch kept: a 440 Hz tone measured 440), cut or padded with
+      silence; a video without sound gives silence; a test card a 1 kHz beep for the first tenth of each second.
+      `encode_movie` returns what the sound is, shown in the block's message. `read_mp4_info` reads the
+      AudioSampleEntry's rate and channels (`MovieInfo::audio_rate` / `audio_channels`; `movie-info` prints them).
+      ponytail: the audio track's own start offset and gaps are ignored (decoded sound is taken as continuous).
     - No video: a GDI test card (the id, "s / total s"), as long as the original. Same frame count as the game's
       (mva000: 1828 and 1827).
     - The run cache: keyed on the files' path, size and write time (not their bytes) and "mf2". `prune_cache` keeps
@@ -972,7 +986,23 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     - Checked (2026-10-06): tests (same length cut and held; the export / wait / done-without-edit / encode / own
       length / another movie flow), example 13 from the CLI (a 5 s edit came out 15 s). **Not checked by eye:** the
       Edit video block and its YOUR STEP card in the app.
-    - Not done: sound (the Wwise question first); other games' movie folders.
+    - **Movie preview (user, 2026-10-06: "a movie preview in use mode, where the mesh and previews live"):** core
+      `MoviePlayer` decodes on a thread of its own (Media Foundation source reader, RGB32 scaled to fit 1280 px,
+      Lock2D for the row order), opens paused on the first frame; play / pause / seek; `take` hands the newest frame.
+      Game movies by their `.mov.1.x64` name: `open_reader` (shared with `encode_movie`) gives Windows the byte stream
+      as `video/mp4` for names it doesn't know, after `read_mp4_info` (so the stub says to use the streaming one).
+      App `MovieView` (app/movie_view.*): a dynamic D3D11 texture, Play / Pause, a time bar (dragging seeks),
+      `zoom_area`. The viewer's fourth mode, "Movie###viewer" with a close X: a movie clicked in the Browser
+      (`FileKind::Movie`: any name with `.mov.` in it, as the game's `<id>.mov.1.x64`, and mp4, m4v, mov, wmv, avi,
+      mkv), or a block's **Preview movie** button (Use layout; any block whose last run's file is a movie). **Fixed
+      2026-10-06 (user: "not occurring for me"):** the first rule wanted digits only after `.mov.` (as `.mesh.<n>`),
+      so the game's movies were Other and clicking them did nothing; the tests had covered the player, not the name. Picking a texture or mesh, a block's picture, or Build
+      layout stops it. Measured: the 4K intro plays at 30 fps in Debug (software decode, 59 frames in 2 s).
+      ponytail: no hardware decoding and no frame dropping (a slower decode falls behind the clock); no sound.
+      Checked: tests (first frame paused, fitted size, seek, play to the end, the `.x64` name, the stub; the real
+      intro with `REMOD_GAME`). **Not checked by eye:** the viewer, its controls, the block button.
+    - Not done: replacing a story movie's sound (in the game's Wwise sound bank, not the file: §10 Future work);
+      other games' movie folders.
   - **Route 1 spike (the user's, in game):** build example 12 (or Replace movie on another movie), install the zip
     through Fluffy. Find out: does it play; a different length; a silent movie's sound (its Wwise container); which
     movie plays where (mva000 is likely the intro: 4K, 61 s).
@@ -1032,6 +1062,11 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     channel. Which RE4R textures pack what: §9 (spike 2026-10-02; meanings inferred, layouts observed). **Built
     2026-10-02** (§4 Channel tools).
   - **Mod options:** one mod with variants to choose in Fluffy.
+  - **Story movies' sound (user, 2026-10-06: a future consideration).** 25 of the 29 movies (the story movies, the
+    radio calls, the tutorials) have no sound in the file: the game plays it from its Wwise sound bank
+    (`snd_cont_<id>.user`, named by each movie's prefab). Replace movie changes only the picture, so their sound stays
+    the original's, timed to the original length. Replacing it means reading and rebuilding Wwise banks; not
+    surveyed yet (existing tools first).
   - Frames: done as **Replace photo** (§4; RE4R's UI frames are opaque, no transparent opening). Open: a picture
     printed at an angle or in perspective (four-corner warp) if one turns up; in-world paintings usually have their
     own picture texture (Resize "Match size of" covers them).
@@ -1166,9 +1201,16 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     Search: inside the game files the index search (nicknames too), elsewhere a name filter of the current folder.
     **Nicknames apply inside the game files only (user: no file bloat).** A mesh's textures are matched only inside
     the game files (it needs the index); elsewhere the 3D shape shows untextured. The index still skips `streaming/`;
-    browse to it on disk to see those copies.
+    Game files shows it as a `streaming` folder browsed on disk (user, 2026-10-06: "some level of access"; read when
+    opened, not searchable from Game files).
   - Core: `core/browse.*` (index, tree, search, `mesh_textures`, `preview_file`) and `read_tex_pixels`. The app
     uploads the stored mip to D3D11 as is: RE Engine's format numbers are DXGI's, so the GPU decodes BC1-7 itself.
+    **With its smaller stored mips (2026-10-06, `read_tex_mips`; user: streaming copies "seem lower quality, even at
+    high resolution"):** one 2048 px mip drawn in a ~400 px viewer skipped pixels (grainy). The data was fine: Leon's
+    `lowerbody_albd` is BC7 sRGB in both copies (base 1024, 2 mips; streaming 4096, 4 mips), the streaming copy
+    scaled to 1024 matches the base (PSNR 33.9 dB), and a crop of it holds real detail the base enlarged doesn't
+    (images looked at). The chain stops at a mip not half the one above (a padded texture). Images (PNG) still
+    upload one level (ponytail: GenerateMips needs a render-target format).
     sRGB formats are shown as their UNORM twins (the back buffer is UNORM).
   - Measured on RE4R (Debug): index 3.4 s for 20,603 textures + 6,051 meshes (streaming/ skipped); thumbnails
     ~0.5 ms each; 20,602 of 20,603 readable (one debug texture holds no images).

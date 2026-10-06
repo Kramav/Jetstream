@@ -172,6 +172,10 @@ FileKind file_kind(const std::string& name) {
     if (is_kind(n, ".mesh.")) return FileKind::Mesh;
     for (const char* ext : {".png", ".tga", ".jpg"})
         if (n.ends_with(ext)) return FileKind::Image;
+    // A game movie: <id>.mov.1.x64 (not digits only after ".mov.", unlike .tex.<n> and .mesh.<n>).
+    if (n.find(".mov.") != std::string::npos) return FileKind::Movie;
+    for (const char* ext : {".mp4", ".m4v", ".mov", ".wmv", ".avi", ".mkv"})
+        if (n.ends_with(ext)) return FileKind::Movie;
     return FileKind::Other;
 }
 

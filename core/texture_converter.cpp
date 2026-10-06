@@ -190,24 +190,28 @@ TexMeta read_tex_meta(const fs::path& tex, const Profile& profile) {
     return m;
 }
 
-TexPixels read_tex_pixels(const fs::path& tex, std::uint32_t max_side) {
+namespace {
+
+// The header of a texture a preview can show, and the mip read_tex_pixels picks: the largest no bigger than max_side.
+std::pair<TexHeader, std::uint32_t> preview_mip(const fs::path& tex, std::uint32_t max_side) {
     const TexHeader h = read_tex_header(tex);
     if (h.images == 0 || h.mips == 0) throw ConvertError(tex.string() + " holds no images");
-    const Layout* layout = layout_of(h.format);
-    if (!layout) throw ConvertError("can't preview " + format_name(h.format));
-    const auto [bytes, block] = *layout;
-
-    const std::uint32_t width = h.width, height = h.height, mips = h.mips;
+    if (!layout_of(h.format)) throw ConvertError("can't preview " + format_name(h.format));
     std::uint32_t mip = 0;
-    while (mip + 1 < mips && std::max(width >> mip, height >> mip) > max_side) ++mip;
+    while (mip + 1 < h.mips && std::max(h.width >> mip, h.height >> mip) > max_side) ++mip;
+    return {h, mip};
+}
+
+TexPixels read_mip(const fs::path& tex, const TexHeader& h, std::uint32_t mip) {
+    const auto [bytes, block] = *layout_of(h.format);
     const std::string b = read_prefix(tex, h.size + 16 * (mip + 1));
     if (b.size() < h.size + 16 * (mip + 1)) throw ConvertError(tex.string() + " is cut short");
     const size_t entry = h.size + 16 * mip;
     const std::uint64_t offset = std::uint64_t(le32(b, entry)) | (std::uint64_t(le32(b, entry + 4)) << 32);
     TexPixels p;
     p.format = h.format;
-    p.width = std::max(1u, width >> mip);
-    p.height = std::max(1u, height >> mip);
+    p.width = std::max(1u, std::uint32_t(h.width) >> mip);
+    p.height = std::max(1u, std::uint32_t(h.height) >> mip);
     p.row_pitch = le32(b, entry + 8);
     const std::uint32_t size = le32(b, entry + 12);
     const std::uint32_t cell = block ? 4 : 1;
@@ -224,6 +228,32 @@ TexPixels read_tex_pixels(const fs::path& tex, std::uint32_t max_side) {
     in.read(reinterpret_cast<char*>(p.data.data()), std::streamsize(size));
     if (!in) throw ConvertError(tex.string() + " is cut short");
     return p;
+}
+
+}  // namespace
+
+TexPixels read_tex_pixels(const fs::path& tex, std::uint32_t max_side) {
+    const auto [h, mip] = preview_mip(tex, max_side);
+    return read_mip(tex, h, mip);
+}
+
+std::vector<TexPixels> read_tex_mips(const fs::path& tex, std::uint32_t max_side) {
+    const auto [h, first] = preview_mip(tex, max_side);
+    std::vector<TexPixels> chain{read_mip(tex, h, first)};
+    // Each at least the first's stored size halved (what a GPU's mip chain expects), else the chain stops there.
+    for (std::uint32_t mip = first + 1, k = 1; mip < h.mips; ++mip, ++k) {
+        TexPixels p;
+        try {
+            p = read_mip(tex, h, mip);
+        } catch (const ConvertError&) {  // a damaged smaller mip: the preview does without it
+            break;
+        }
+        if (p.stored_width < std::max(1u, chain[0].stored_width >> k) ||
+            p.stored_height < std::max(1u, chain[0].stored_height >> k))
+            break;
+        chain.push_back(std::move(p));
+    }
+    return chain;
 }
 
 Bgra decode_tex(const fs::path& tex, std::uint32_t max_side, unsigned* full_width, unsigned* full_height) {
