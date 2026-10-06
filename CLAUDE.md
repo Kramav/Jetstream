@@ -308,7 +308,9 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   (node state `exported_from` / `exported_time`, via `RunResult::state` / `RunError::state` and `apply_run`); a
   different texture re-exports over the file (logged; the Edit image's "done" resets), and previews skip the stale
   file and start from the texture. No record (graphs from before, the CLI, which doesn't save): the file is trusted.
-- PackageMod packages every linked texture. Several previews are tiled into one `preview.png`.
+- PackageMod packages every linked texture, and every linked **other file** (a Path with a game path: Replace
+  movie's movies) as it is. No texture is required (a mod can be movies only); nothing at all fails the run.
+  Several previews are tiled into one `preview.png`.
   "Replace existing" overwrites only a previous build of the same mod.
 - Old graph files are migrated on load: PackageMod's typed `screenshot` becomes ImportImage → preview.
 - LoadTex infers the game path when the `.tex` sits inside a `natives/STM/...` tree; otherwise set `game_path`.
@@ -650,9 +652,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
-  (`edits/`, `mods/`) beside them. Eleven: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
-  edit with streaming, conditions filter, channels, if / else, backup. **All eleven run** (CLI, `--edited true`, the
-  real game files, outputs in a scratch copy); the photo frame and logo results looked at as images. Not opened in
+  (`edits/`, `mods/`) beside them. Thirteen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  edit with streaming, conditions filter, channels, if / else, backup, movie test card, movie edited by hand
+  (2026-10-06). **All thirteen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
+  example 13's edit stood in by the movie itself); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
 - Runs from `remod run --graph <file> [--noesis <exe>]` and from the app's Run button. Programs edit graphs through
@@ -931,21 +934,48 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       movies with `REMOD_GAME`.
     - Packaging already takes a movie: `build_package` copies a file that isn't a texture as it is, at its game path
       (test: both copies of mva000 at `streaming/_chainsaw/movie/mv/mva000/`). The CLI's `package` takes one file;
-      the graph's Package takes textures only (a movie kind or block comes with route 1's build).
+      the graph's Package takes them through its **other file** input (2026-10-06).
     - Route 2's probe: `spikes/movie_probe.lua` (REFramework, read-only): logs the methods and fields of the movie
       types the game's exe names (`via.movie.Movie`, `MovieManager`, `MovieResource`, `MovieResourceHolder`,
       `MovieEntry`, `MovieContext`, `chainsaw.FullScreenMovieGui` and its `OpenParam` / `CloseParam`) to
       `reframework/data/remod_movie_probe.txt`; with WATCH_CALLS on, also which of their methods the game calls while
       a movie plays.
-  - **Route 1 spike (the user's, in game):** a short H.264 MP4 of one movie's size put in its place (both copies of an
-    `mv` movie), installed through Fluffy. Check it with `remod movie-info`. The test mod by hand:
-    `MovieTest\modinfo.ini` (`name=MovieTest`) and
-    `MovieTest\natives\STM\streaming\_chainsaw\movie\mv\mva000\mva000.mov.1.x64` + `mva000_fhd.mov.1.x64` (the MP4,
-    renamed), zipped with the folder at the root. Which movie plays where: optionally replace every `mv` movie with one
-    showing its own id (needs the encoder, route 1's build). Find out: does it play; a different length; a silent movie's
-    sound (its Wwise container); which movie plays where (mva000 is likely the intro: 4K, 61 s). Then build: a
-    "Replace movie" block (the user's video, checked or encoded to match via Media Foundation, written as both
-    copies).
+  - **Replace movie block: built 2026-10-06** (`ReplaceMovie`, Transform; core `encode_movie`, Media Foundation).
+    - In: Game movie (either copy, inside a natives tree: the game path), Your video (optional).
+    - Out: new movie, and 1080p copy (`<id>_fhd`, or nothing). Each is encoded H.264 High at its original's size,
+      frame rate (whole or x/1.001) and average bit rate (unconstrained VBR). Hardware encoder allowed.
+    - The video: the source reader's video processor scales it, keeping the shape (black bars, observed). Frames
+      are repeated or dropped to the frame rate. Its length is kept (logged when it differs); its sound is dropped
+      (a warning when the original has sound in the file).
+    - No video: a GDI test card (the id, "s / total s"), as long as the original. Same frame count as the game's
+      (mva000: 1828 and 1827).
+    - The run cache: keyed on the files' path, size and write time (not their bytes) and "mf2". `prune_cache` keeps
+      every file just written; ponytail: one 512 MB limit, a 4K movie can push every texture out.
+    - Example `12_replace_a_movie` (the mva000 test card): 4K in 17 s, 1080p in 5 s, on this PC.
+    - Checked: tests (card, video scaled and retimed to 29.97, the block both copies, without an fhd, the stub
+      refused, a re-run unchanged, Package with nothing). ffprobe on the results: profile, level (5.1 / 4.0), size,
+      fps and frame count match the originals. Frames looked at as images (card; mva402 fitted into 4K).
+    - **Same length as the original (user, 2026-10-06: "do the videos need to be the same length?"), on by default:**
+      a longer video is cut, a shorter one holds its last frame (`encode_movie`'s `same_length`). Why the default:
+      `mva000.pfb` names the `.mov`, a render texture and `snd_cont_mva000.user` (sound container); neither it,
+      `mva000.user` nor `movieloadtable.user` holds the length (searched for 60.93 s / 1828 frames as float, double
+      and int) [game data], so the length is the MP4's, and the sound bank is timed to the original. Off: the
+      video's own length; whether the game plays that fully is still the in-game question.
+    - **Editing a movie by hand (user, 2026-10-06):** `ExportMovie` (Source) copies the full-size movie (`movie_files`:
+      either copy picked gives `<id>` and `<id>_fhd`) to its Video file, kept between runs unless from another movie
+      (state `exported_from`, `fresh_exports`). `EditVideo` (manual): a video editor renders a new file rather than
+      saving over its source, so it has a **Your edit** field (default `<video>_edited.mp4`) and passes that on;
+      done with no such file fails the run. Manual steps are found by `NodeSpec::manual`, not by type
+      (`for_editing`, validate's required export file, `set_edit_done`, the API's `edit_done`); `edit_is_done` is
+      shared with Edit image. Example `13_edit_a_movie_by_hand` (mva402: small, so the examples test stays quick; the
+      test stands in the movie itself as the edit).
+    - Checked (2026-10-06): tests (same length cut and held; the export / wait / done-without-edit / encode / own
+      length / another movie flow), example 13 from the CLI (a 5 s edit came out 15 s). **Not checked by eye:** the
+      Edit video block and its YOUR STEP card in the app.
+    - Not done: sound (the Wwise question first); other games' movie folders.
+  - **Route 1 spike (the user's, in game):** build example 12 (or Replace movie on another movie), install the zip
+    through Fluffy. Find out: does it play; a different length; a silent movie's sound (its Wwise container); which
+    movie plays where (mva000 is likely the intro: 4K, 61 s).
   - **Route 2 spike:** REFramework installed, `spikes/movie_probe.lua` in `reframework/autorun`, play a movie, send
     the log. It decides whether Lua can start the game's movie player on a new `.mov`, or a C++ plugin is needed.
   - **Research (2026-10-03, read-only look at the extracted game files).**

@@ -1,7 +1,20 @@
 #include "movie.hpp"
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <codecapi.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <wrl/client.h>
+
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -52,6 +65,29 @@ std::vector<Box> boxes(Reader& r, std::uint64_t from, std::uint64_t to) {
     }
     return out;
 }
+
+void check(HRESULT hr, const std::string& what) {
+    if (FAILED(hr)) {
+        char hex[16];
+        std::snprintf(hex, sizeof hex, "0x%08lX", static_cast<unsigned long>(hr));
+        throw std::runtime_error(what + " failed (" + hex + ")");
+    }
+}
+
+// COM and Media Foundation for the calling thread, for one call (as image.cpp's ComScope; MFStartup counts).
+struct MfScope {
+    bool com = false;
+    MfScope() {
+        const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (hr != RPC_E_CHANGED_MODE) check(hr, "CoInitializeEx");
+        com = SUCCEEDED(hr);
+        check(MFStartup(MF_VERSION), "starting Media Foundation");
+    }
+    ~MfScope() {
+        MFShutdown();
+        if (com) CoUninitialize();
+    }
+};
 
 const Box* find(const std::vector<Box>& list, const char* type) {
     for (const Box& b : list)
@@ -104,7 +140,163 @@ MovieInfo read_mp4_info(const std::filesystem::path& file) {
             info.fps = double(frames) / info.seconds;
         }
     }
+    if (info.seconds > 0) info.bitrate = std::uint64_t(double(r.size) * 8 / info.seconds);
     return info;
+}
+
+using Microsoft::WRL::ComPtr;
+
+void encode_movie(const std::filesystem::path& video, const MovieInfo& like, const std::string& title,
+                  const std::filesystem::path& out, bool same_length) {
+    if (!like.width || !like.height || like.fps <= 0) throw std::runtime_error("the movie to match has no video track");
+    MfScope mf;
+    // The frame rate as a ratio: whole, or NTSC's x/1.001 (the game's 29.97).
+    // ponytail: those two kinds only; other fractional rates round to whole frames.
+    UINT32 num = UINT32(std::lround(like.fps)), den = 1;
+    if (const double ntsc = like.fps * 1.001;
+        std::abs(like.fps - num) > 0.005 && std::abs(ntsc - std::round(ntsc)) < 0.005)
+        num = UINT32(std::lround(ntsc)) * 1000, den = 1001;
+    const LONGLONG period = LONGLONG(10'000'000.0 * den / num);  // 100 ns units
+    const UINT32 bitrate = UINT32(std::clamp<std::uint64_t>(like.bitrate, 1'000'000, 200'000'000));
+    const GUID input = video.empty() ? MFVideoFormat_RGB32 : MFVideoFormat_NV12;
+    const LONGLONG frames = std::llround(like.seconds * num / den);  // the original's
+
+    ComPtr<IMFAttributes> options;
+    check(MFCreateAttributes(&options, 2), "MFCreateAttributes");
+    options->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4);  // whatever the file's name
+    options->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+    ComPtr<IMFSinkWriter> writer;
+    check(MFCreateSinkWriterFromURL(out.c_str(), nullptr, options.Get(), &writer), "creating " + out.string());
+    auto video_type = [&](const GUID& subtype) {
+        ComPtr<IMFMediaType> t;
+        check(MFCreateMediaType(&t), "MFCreateMediaType");
+        t->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+        t->SetGUID(MF_MT_SUBTYPE, subtype);
+        t->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+        MFSetAttributeSize(t.Get(), MF_MT_FRAME_SIZE, like.width, like.height);
+        MFSetAttributeRatio(t.Get(), MF_MT_FRAME_RATE, num, den);
+        MFSetAttributeRatio(t.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+        return t;
+    };
+    const ComPtr<IMFMediaType> h264 = video_type(MFVideoFormat_H264);
+    h264->SetUINT32(MF_MT_AVG_BITRATE, bitrate);
+    h264->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High);  // as the game's movies
+    DWORD stream = 0;
+    check(writer->AddStream(h264.Get(), &stream), "setting up the H.264 encoder");
+    ComPtr<IMFAttributes> rate;  // variable bit rate around the original's: a still test card stays small
+    check(MFCreateAttributes(&rate, 2), "MFCreateAttributes");
+    rate->SetUINT32(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_UnconstrainedVBR);
+    rate->SetUINT32(CODECAPI_AVEncCommonMeanBitRate, bitrate);
+    check(writer->SetInputMediaType(stream, video_type(input).Get(), rate.Get()),
+          "setting up the H.264 encoder for " + std::to_string(like.width) + "x" + std::to_string(like.height));
+    check(writer->BeginWriting(), "starting to write " + out.string());
+
+    auto write = [&](IMFMediaBuffer* buffer, LONGLONG frame) {
+        ComPtr<IMFSample> sample;
+        check(MFCreateSample(&sample), "MFCreateSample");
+        sample->AddBuffer(buffer);
+        sample->SetSampleTime(frame * period);
+        sample->SetSampleDuration(period);
+        check(writer->WriteSample(stream, sample.Get()), "encoding a frame");
+    };
+
+    if (video.empty()) {
+        // The card: drawn with GDI into a bottom-up DIB (MF's RGB32 is bottom-up too), again each second.
+        struct Gdi {  // released however this ends
+            HDC dc = CreateCompatibleDC(nullptr);
+            HBITMAP bmp = nullptr;
+            HFONT title_font = nullptr, time_font = nullptr;
+            ~Gdi() { DeleteObject(title_font), DeleteObject(time_font), DeleteObject(bmp), DeleteDC(dc); }
+        } gdi;
+        BITMAPINFO bi{};
+        bi.bmiHeader = {sizeof(BITMAPINFOHEADER), LONG(like.width), LONG(like.height), 1, 32, BI_RGB};
+        void* bits = nullptr;
+        gdi.bmp = CreateDIBSection(gdi.dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        auto font = [](int px) {
+            return CreateFontW(-px, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI");
+        };
+        gdi.title_font = font(int(like.height / 5));
+        gdi.time_font = font(int(like.height / 14));
+        if (!gdi.bmp || !gdi.title_font || !gdi.time_font) throw std::runtime_error("can't draw the test card");
+        const HDC dc = gdi.dc;
+        SelectObject(dc, gdi.bmp);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(255, 255, 255));
+        const std::wstring name(title.begin(), title.end());  // ponytail: ASCII (movie ids)
+        const DWORD bytes = like.width * like.height * 4;
+        const int total = int(std::lround(like.seconds));
+        ComPtr<IMFMediaBuffer> buffer;
+        for (LONGLONG k = 0, shown = -1; k < frames; ++k) {
+            if (const LONGLONG second = k * den / num; second != shown) {
+                shown = second;
+                RECT all{0, 0, LONG(like.width), LONG(like.height)};
+                const HBRUSH back = CreateSolidBrush(RGB(20, 40, 90));
+                FillRect(dc, &all, back);
+                DeleteObject(back);
+                RECT top = all, bottom = all;
+                top.bottom = bottom.top = LONG(like.height * 55 / 100);
+                SelectObject(dc, gdi.title_font);
+                DrawTextW(dc, name.c_str(), -1, &top, DT_CENTER | DT_BOTTOM | DT_SINGLELINE);
+                SelectObject(dc, gdi.time_font);
+                const std::wstring time = std::to_wstring(second) + L" / " + std::to_wstring(total) + L" s";
+                DrawTextW(dc, time.c_str(), -1, &bottom, DT_CENTER | DT_TOP | DT_SINGLELINE);
+                GdiFlush();
+                check(MFCreateMemoryBuffer(bytes, &buffer), "MFCreateMemoryBuffer");
+                BYTE* data = nullptr;
+                check(buffer->Lock(&data, nullptr, nullptr), "locking a frame");
+                std::memcpy(data, bits, bytes);
+                buffer->Unlock();
+                buffer->SetCurrentLength(bytes);
+            }
+            write(buffer.Get(), k);  // a frame within the same second shares its buffer
+        }
+    } else {
+        // The video, decoded and scaled by the source reader's video processor (it keeps the shape: black bars).
+        ComPtr<IMFAttributes> processing;
+        check(MFCreateAttributes(&processing, 1), "MFCreateAttributes");
+        processing->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+        ComPtr<IMFSourceReader> reader;
+        if (FAILED(MFCreateSourceReaderFromURL(video.c_str(), processing.Get(), &reader)))
+            throw std::runtime_error("Windows can't open " + video.filename().string() + " as a video");
+        constexpr DWORD first = DWORD(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+        reader->SetStreamSelection(DWORD(MF_SOURCE_READER_ALL_STREAMS), FALSE);
+        if (FAILED(reader->SetStreamSelection(first, TRUE)))
+            throw std::runtime_error(video.filename().string() + " has no video track");
+        if (FAILED(reader->SetCurrentMediaType(first, nullptr, video_type(MFVideoFormat_NV12).Get())))
+            throw std::runtime_error("Windows can't decode " + video.filename().string() + "'s video (codec missing?)");
+        // Frame k shows the last frame starting at or before k's time: repeated or dropped to the frame rate. After
+        // the video's end (same_length) its last frame stays.
+        ComPtr<IMFSample> shown, ahead;
+        LONGLONG ahead_time = 0, end = 0;
+        auto pull = [&] {
+            for (ahead.Reset();;) {
+                DWORD flags = 0;
+                LONGLONG time = 0;
+                check(reader->ReadSample(first, 0, nullptr, &flags, &time, &ahead),
+                      "decoding " + video.filename().string());
+                if (flags & MF_SOURCE_READERF_ENDOFSTREAM) return;
+                if (!ahead) continue;  // a gap
+                LONGLONG length = 0;
+                ahead->GetSampleDuration(&length);
+                ahead_time = time;
+                end = std::max(end, time + std::max(length, period));
+                return;
+            }
+        };
+        pull();
+        if (!ahead) throw std::runtime_error(video.filename().string() + " has no frames");
+        const LONGLONG start = ahead_time;
+        for (LONGLONG k = 0; same_length ? k < frames : ahead || start + k * period + period / 2 < end; ++k) {
+            while (ahead && ahead_time <= start + k * period) {
+                shown = ahead;
+                pull();
+            }
+            ComPtr<IMFMediaBuffer> buffer;
+            check(shown->ConvertToContiguousBuffer(&buffer), "reading a frame");
+            write(buffer.Get(), k);
+        }
+    }
+    check(writer->Finalize(), "finishing " + out.string());
 }
 
 }  // namespace remod

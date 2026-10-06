@@ -146,7 +146,6 @@ TEST_CASE("validate lists every problem") {
     const auto errors = g.validate();
     CHECK(has(errors, "Mod name is required"));
     CHECK(has(errors, "Output folder is required"));
-    CHECK(has(errors, "input 'texture' is not connected"));
     CHECK(has(errors, "unknown parameter 'typo'"));
     CHECK(has(errors, "Bogus (node 7): unknown node type"));
     CHECK(pipeline("a", "b.png", "c").validate().empty());
@@ -483,10 +482,10 @@ TEST_CASE("every input can be linked, with type rules") {
     CHECK(g.links_into(6, "parts").size() == 2);
 }
 
-TEST_CASE("a multiple input takes any number of links; required means at least one") {
+TEST_CASE("a multiple input takes any number of links") {
     Graph g = pipeline("a.tex.143221013", "a.png", "out");
-    g.disconnect(5);  // PackageMod's only texture
-    CHECK(has(g.validate(), "input 'texture' is not connected"));
+    g.disconnect(5);  // PackageMod's only texture: fine (a mod of movies has none); its run says if it has nothing
+    CHECK(g.validate().empty());
     REQUIRE(g.connect({4, "tex", 5, "tex"}).empty());
     g.add_node("SaveTex");  // node 7
     REQUIRE(g.connect({7, "tex", 5, "tex"}).empty());
@@ -640,7 +639,7 @@ TEST_CASE("run: one run exports every image that needs editing") {
 
     const auto first = remod::run_graph(g, opt);
     CHECK(first.paused);
-    CHECK_THAT(first.message, ContainsSubstring("edit 2 images") && ContainsSubstring("Done editing on the Edit image steps"));
+    CHECK_THAT(first.message, ContainsSubstring("edit 2 images") && ContainsSubstring("Done editing on the edit steps"));
     CHECK(conv.loads == 2);
     CHECK(conv.saves == 0);
     CHECK(fs::exists(tmp.path / "a.png"));

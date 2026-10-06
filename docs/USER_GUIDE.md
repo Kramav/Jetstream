@@ -105,6 +105,9 @@ Undo / redo: **Ctrl+Z** / **Ctrl+Y**. Save: **Ctrl+S**. A `*` in the title means
 | Mesh mask, Blend in mask | Change only one part of a texture, e.g. a character's trousers. |
 | Recolour part | Built from blocks: a mesh, its parts' material names and a colour change give both new textures (the texture and its streaming copy), changed on those parts only. |
 | Preview | Shows a picture on the graph. |
+| Export movie | Copies a game movie to a file for you to edit (below). |
+| Edit video | **Your step:** edit the movie and render your edit; the run waits until you click Done editing. |
+| Replace movie | A new version of one of the game's movies: your video, or a test card (below). |
 | Package for Fluffy | Builds the mod and its zip. |
 | Copy / Move / Rename / Delete file, Make folder | File housekeeping. Delete uses the Recycle Bin. |
 | Run program | Runs a program or script as a step (below). |
@@ -169,6 +172,38 @@ Two blocks do this:
 
 Without a streaming copy, the second output gives nothing: Package gets the one texture, and the block's streaming
 conversion shows Not needed. With Files in folder, each texture gets two or one.
+
+## Movies
+
+The game's pre-rendered movies are video files under `natives\STM\streaming\_chainsaw\movie\`, named
+`<id>.mov.1.x64`. Movies in `mv` have a 1080p copy beside them, `<id>_fhd.mov.1.x64`. **Replace movie** makes both:
+1. **Game movie:** pick either copy in your REtool folder (the one under `streaming`; the file of the same name
+   outside it is only a stub).
+2. **Your video:** any video Windows plays (mp4, mov, wmv...). It's scaled to the movie's size, with black bars if
+   its shape differs, and retimed to the movie's frame rate. Its sound isn't used. **Leave it empty for a test
+   card:** the movie's name and the seconds counting, as long as the original. Use that to find out where the game
+   plays a movie.
+3. **Same length as the original** (on by default): a longer video is cut, a shorter one holds its last frame, so
+   the movie lasts as long as the original. The movie's sound isn't in the file: the game plays it from its sound
+   bank, timed to the original, so a different length would put picture and sound out of step.
+4. Link both outputs into Package's **other file** inputs.
+
+Encoding takes a while for a 4K movie (about 20 s for the 61 s intro on a PC with a hardware encoder). A run with
+nothing changed reuses it. Example `12_replace_a_movie` is the test card for `mva000`, ready to run.
+
+### Editing a movie by hand
+
+1. **Export movie** copies the game's movie (the full-size one) to its **Video file**, e.g. `edits\mva000.mp4`.
+2. **Edit video** is your step. Open the copy in your video editor (**Open with** can name it), edit, and render
+   (export) the result to **Your edit**: by default `<video>_edited.mp4` beside the copy. Click **Done editing**.
+3. **Replace movie** takes the edit as **Your video**.
+
+Feed the same movie to Export movie and Replace movie from one Value through a Split. Your copy is kept between
+runs; picking another movie exports again and the edit step waits again. Example `13_edit_a_movie_by_hand` is the
+whole chain, for `mva402`.
+
+Not known yet (needs a test in game): whether a movie of another length plays fully (turn off **Same length** to
+try); how the sound of `mv` movies behaves; which movie plays where.
 
 ## Built from blocks
 

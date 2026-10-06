@@ -266,6 +266,32 @@ copy = g.add('CopyFile', 'Back up the build', dest='backups/', if_exists='overwr
 g.link(pkg, 'mod', copy, 'source')
 g.save('11_back_up_each_build.json')
 
+# 12. Movies: a test card in place of a game movie (both its copies), to see where and how the game plays it.
+g = Graph()
+movie = g.add('ReplaceMovie', 'The movie to replace',
+              movie='{game}/streaming/_chainsaw/movie/mv/mva000/mva000.mov.1.x64', video='')
+pkg = package(g, 'Movie test', 'mva000 replaced by a test card showing its name and the seconds')
+g.link(movie, 'movie', pkg, 'file')
+g.link(movie, 'fhd', pkg, 'file')
+g.save('12_replace_a_movie.json')
+
+# 13. A movie edited by hand: Export movie copies it out, Edit video waits for your edit, Replace movie encodes it.
+g = Graph()
+which = g.add('Value', 'The movie', value='{game}/streaming/_chainsaw/movie/mv/mva402/mva402.mov.1.x64')
+split = g.add('Split')
+export = g.add('ExportMovie', video='edits/mva402.mp4')
+edit = g.add('EditVideo')
+movie = g.add('ReplaceMovie', same_length='true')
+pkg = package(g, 'Edited movie', 'mva402 edited by hand')
+g.link(which, 'value', split, 'in')
+g.link(split, 'out', export, 'movie')
+g.link(split, 'out', movie, 'movie')
+g.link(export, 'video', edit, 'video')
+g.link(edit, 'video', movie, 'video')
+g.link(movie, 'movie', pkg, 'file')
+g.link(movie, 'fhd', pkg, 'file')
+g.save('13_edit_a_movie_by_hand.json')
+
 
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):

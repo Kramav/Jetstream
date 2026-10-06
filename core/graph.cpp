@@ -551,7 +551,8 @@ std::vector<std::string> Graph::validate() const {
                 std::function<bool(int, const std::string&)> to_edit = [&](int id, const std::string& port) {
                     for (const size_t i : links_from(id, port)) {
                         const Node* to = find(links[i].to_node);
-                        if (to && (to->type == "EditImage" || (to->type == "Split" && to_edit(to->id, "out"))))
+                        const NodeSpec* to_spec = to ? find_spec(to->type) : nullptr;
+                        if (to_spec && (to_spec->manual || (to->type == "Split" && to_edit(to->id, "out"))))
                             return true;
                     }
                     return false;
@@ -1027,7 +1028,7 @@ RunResult run_expanded(const Graph& g, const RunOptions& opt) {
         result.message += to_edit.size() == 1 ? to_edit[0].string() : std::to_string(to_edit.size()) + " images:";
         if (to_edit.size() > 1)
             for (const auto& p : to_edit) result.message += "\n  " + p.string();
-        result.message += std::string("\nthen click Done editing on the Edit image step") + (to_edit.size() > 1 ? "s" : "") +
+        result.message += std::string("\nthen click Done editing on the edit step") + (to_edit.size() > 1 ? "s" : "") +
                           " and Run again (from the CLI: run again with --edited true).";
     } else {
         result.message = "Done.";
@@ -1370,7 +1371,8 @@ void set_edit_done(Graph& g, int node, bool done, const std::string& item) {
             });
         return;
     }
-    if (!n || n->type != "EditImage") return;
+    const NodeSpec* spec = n ? find_spec(n->type) : nullptr;
+    if (!spec || !spec->manual) return;
     const std::string key = item.empty() ? "done" : "done@" + item;
     if (done)
         n->params[key] = "true";

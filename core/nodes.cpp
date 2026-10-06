@@ -3,6 +3,7 @@
 
 #include "browse.hpp"
 #include "image.hpp"
+#include "movie.hpp"
 #include "package.hpp"
 #include "process.hpp"
 
@@ -241,14 +242,15 @@ bool for_editing(const Graph& g, int id) {
     for (const Link& l : g.links) {
         if (l.from_node != id) continue;
         const Node* to = g.find(l.to_node);
-        if (to && (to->type == "EditImage" || (to->type == "Split" && for_editing(g, to->id)))) return true;
+        const NodeSpec* spec = to ? find_spec(to->type) : nullptr;
+        if (spec && (spec->manual || (to->type == "Split" && for_editing(g, to->id)))) return true;
     }
     return false;
 }
 
 std::string file_bytes(const fs::path& file);
 std::string hash_hex(const std::string& bytes);
-void prune_cache(const fs::path& dir, const fs::path& keep);
+void prune_cache(const fs::path& dir, const std::vector<fs::path>& keep);
 
 NodeSpec export_image() {
     return {
@@ -287,7 +289,7 @@ NodeSpec export_image() {
                     r.run.options.converter.load_tex(tex.path, target, r.profile());
                     if (target != out) {
                         fs::rename(target, out);
-                        prune_cache(cache, out);
+                        prune_cache(cache, {out});
                     }
                     r.done("exported a working copy", out);
                 }
@@ -330,6 +332,19 @@ NodeSpec export_image() {
     };
 }
 
+// A manual step's "done" (Edit image, Edit video): false again once the file it edits was exported afresh this run.
+bool edit_is_done(NodeRun& r, const char* input) {
+    const Graph& g = r.run.graph;
+    const bool re_exported =
+        r.run.fresh_exports.contains({g.links[g.links_into(r.node.id, input).at(0)].from_node, r.run.item});
+    if (re_exported) {  // a new file: an earlier "done" doesn't count
+        r.set_state("done", "");
+        if (!r.item()) r.run.result.reset_edits.push_back(r.node.id);
+    }
+    const std::string* flag = r.state("done");
+    return r.run.options.edits_done || (!re_exported && flag && *flag == "true");
+}
+
 NodeSpec edit_image() {
     return {
         .type = "EditImage",
@@ -348,15 +363,7 @@ NodeSpec edit_image() {
         .family = Family::Manual,
         .run = [](NodeRun& r) {
             const Value png = r.input("png");
-            const Graph& g = r.run.graph;
-            const bool re_exported =
-                r.run.fresh_exports.contains({g.links[g.links_into(r.node.id, "png").at(0)].from_node, r.run.item});
-            if (re_exported) {  // a new image: an earlier "done" doesn't count
-                r.set_state("done", "");
-                if (!r.item()) r.run.result.reset_edits.push_back(r.node.id);
-            }
-            const std::string* flag = r.state("done");
-            if (r.run.options.edits_done || (!re_exported && flag && *flag == "true")) {
+            if (edit_is_done(r, "png")) {
                 r.output("image", png);
                 r.done("edited " + png.path.filename().string(), png.path);
             } else {
@@ -413,7 +420,8 @@ std::string cache_name(const fs::path& image, const fs::path& original, const Pr
 }
 
 // Oldest first (a reuse touches its file) until the cache is under its limit; `keep` (just written) stays.
-void prune_cache(const fs::path& dir, const fs::path& keep) {
+// ponytail: one limit for textures and movies; a 4K movie can push every texture out (they're made again when needed).
+void prune_cache(const fs::path& dir, const std::vector<fs::path>& keep) {
     constexpr std::uintmax_t limit = 512ull << 20;  // ponytail: fixed; a setting if someone needs more
     std::error_code ec;
     std::vector<std::pair<fs::file_time_type, fs::path>> files;
@@ -426,7 +434,7 @@ void prune_cache(const fs::path& dir, const fs::path& keep) {
     std::ranges::sort(files);
     for (const auto& [time, file] : files) {
         if (total <= limit) break;
-        if (file == keep) continue;
+        if (std::ranges::find(keep, file) != keep.end()) continue;
         const std::uintmax_t size = fs::file_size(file, ec);
         if (fs::remove(file, ec)) total -= size;
     }
@@ -468,7 +476,7 @@ NodeSpec save_tex() {
                 m = r.run.options.converter.save_tex(image, original.path, target, r.profile());
                 if (target != out) {
                     fs::rename(target, out);
-                    prune_cache(cache, out);
+                    prune_cache(cache, {out});
                 }
                 r.output("tex", file_value(out, original.game_path));
                 r.done("encoded " + m.format + ", " + std::to_string(m.mip_count) + " mips");
@@ -577,7 +585,7 @@ void write_image(NodeRun& r, const Bgra& image, const std::string& what) {
             const fs::path part = cache / (name + ".part.png");
             save_png(part, image);
             fs::rename(part, out);
-            prune_cache(cache, out);
+            prune_cache(cache, {out});
         }
         r.output("image", file_value(out));
         r.done(what, out);
@@ -1065,8 +1073,10 @@ NodeSpec package_mod() {
         .title = "Package for Fluffy",
         .summary = "Builds the mod folder and a .zip to add in Fluffy Mod Manager. Connect as many textures as the mod "
                    "replaces; previews are combined into the one image Fluffy shows.",
-        .inputs = {{.name = "tex", .label = "texture", .type = Tex, .required = true, .multiple = true,
+        .inputs = {{.name = "tex", .label = "texture", .type = Tex, .multiple = true,
                     .hint = "Each new texture in the mod. A new line appears as you connect one."},
+                   {.name = "file", .label = "other file", .type = Path, .multiple = true,
+                    .hint = "Files that go in the mod as they are at their in-game path, e.g. Replace movie's movies."},
                    {.name = "preview", .label = "preview", .type = Image, .multiple = true,
                     .hint = "Images for Fluffy's preview, e.g. the edited images. Several are tiled into one picture."},
                    {.name = "name", .label = "Mod name", .type = Text, .widget = Widget::Text, .required = true,
@@ -1100,6 +1110,14 @@ NodeSpec package_mod() {
                                      r.profile().natives_root + " folder)");
                 spec.files.push_back({tex.path, tex.game_path});
             }
+            const size_t textures = spec.files.size();
+            for (const auto& file : r.values("file")) {
+                if (file.game_path.empty())
+                    throw GraphError("in-game path unknown for " + file.path.filename().string() +
+                                     ": 'other file' takes files from blocks that know it, such as Replace movie");
+                spec.files.push_back({file.path, file.game_path});
+            }
+            if (spec.files.empty()) throw GraphError("nothing to package: connect a texture or another file");
             std::vector<fs::path> previews;
             for (const auto& v : r.values("preview")) previews.push_back(v.path);
             // One preview is used as it is, except a TGA: Fluffy's TGA support is unconfirmed ([guide]), so it goes
@@ -1117,9 +1135,11 @@ NodeSpec package_mod() {
             bool unchanged = false;
             const fs::path root = build_package(r.profile(), spec, &unchanged);
             r.output("mod", file_value(fs::path(root) += ".zip"));
+            const size_t others = spec.files.size() - textures;
+            std::string what = textures || !others ? std::to_string(textures) + " texture(s)" : "";
+            if (others) what += (what.empty() ? "" : " and ") + std::to_string(others) + " other file(s)";
             r.done(unchanged ? root.filename().string() + ".zip unchanged (the same build is there)"
-                             : "packaged " + std::to_string(spec.files.size()) + " texture(s) into " +
-                                   root.filename().string() + ".zip",
+                             : "packaged " + what + " into " + root.filename().string() + ".zip",
                    fs::path(root) += ".zip");
         },
         .preview = [](NodeRun& r) {
@@ -1128,6 +1148,226 @@ NodeSpec package_mod() {
             r.change(ChangeKind::Write, r.resolve(r.text("out")) / name);
             r.change(ChangeKind::Write, (r.resolve(r.text("out")) / name) += ".zip");
             r.output("mod", file_value(fs::absolute(r.resolve(r.text("out")) / name) += ".zip"));  // as build_package
+        },
+    };
+}
+
+// ---- Movies (CLAUDE.md §10 M3, route 1) ----
+
+constexpr const char* kVideoFormats = "mp4,m4v,mov,wmv,avi,mkv";
+
+// A game movie and its 1080p copy, from either one picked: <folder>/<id>.mov.1.x64 and <id>_fhd.mov.1.x64.
+struct MovieFiles {
+    fs::path main, fhd;  // the fhd copy may not exist
+    std::string id;
+    std::string folder;  // their in-game folder, ending in '/'
+};
+
+MovieFiles movie_files(const NodeRun& r, const fs::path& picked) {
+    const auto natives = split_natives(picked, r.profile().natives_root);
+    if (!natives)
+        throw GraphError(picked.filename().string() + " isn't inside a " + r.profile().natives_root +
+                         " folder, so its in-game path isn't known: pick it in your REtool folder");
+    const std::string name = picked.filename().string();
+    std::string low = name;
+    std::ranges::transform(low, low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const size_t dot = low.find(".mov.");
+    if (dot == std::string::npos) throw GraphError(name + " isn't a game movie (<id>.mov.1.x64)");
+    const std::string id = name.substr(0, low.substr(0, dot).ends_with("_fhd") ? dot - 4 : dot), rest = name.substr(dot);
+    const MovieFiles m{picked.parent_path() / (id + rest), picked.parent_path() / (id + "_fhd" + rest), id,
+                       natives->second.substr(0, natives->second.rfind('/') + 1)};
+    if (std::error_code ec; !fs::is_regular_file(long_path(m.main), ec)) throw GraphError("not found: " + m.main.string());
+    return m;
+}
+
+MovieInfo movie_info(const fs::path& file) {
+    try {
+        return read_mp4_info(long_path(file));
+    } catch (const std::exception& e) {
+        throw GraphError(std::string(e.what()) + " (the playable movie is the one under natives\\STM\\streaming\\; the "
+                         "file of that name outside it is a stub)");
+    }
+}
+
+InputSpec game_movie_input() {
+    return {.name = "movie", .label = "Game movie", .type = Path, .widget = Widget::Path, .required = true,
+            .hint = "The movie, from your REtool folder: natives\\STM\\streaming\\_chainsaw\\movie\\...\\<id>.mov.1.x64 "
+                    "(the 4K one or its _fhd copy). Use one Value (through a Split) for Export movie and Replace movie.",
+            .path = PathKind::OpenFile, .filter = "x64"};
+}
+
+NodeSpec export_movie_node() {
+    return {
+        .type = "ExportMovie",
+        .title = "Export movie",
+        .summary = "Copies one of the game's movies (the full-size one) to a video file you can edit, for an Edit video "
+                   "step. A file already there (your copy) is kept, unless it's from another movie.",
+        .inputs = {game_movie_input()},
+        .outputs = {{.name = "video", .type = Path, .label = "video", .field = "video", .field_label = "Video file",
+                     .hint = "Where to put the copy, e.g. edits\\mva000.mp4.", .path = PathKind::SaveFile,
+                     .filter = "mp4"}},
+        .state = {"exported_from"},
+        .family = Family::Source,
+        .run = [](NodeRun& r) {
+            const MovieFiles m = movie_files(r, r.resolve(r.text("movie")));
+            movie_info(m.main);  // a movie, not the stub
+            const fs::path out = r.resolve(r.text("video"));
+            r.claim(out);
+            const std::string* from = r.state("exported_from");
+            const bool stale = from && *from != m.main.string();
+            if (std::error_code ec; fs::exists(long_path(out), ec) && !stale) {
+                r.done("kept your " + out.filename().string(), out);
+            } else {
+                r.change(ChangeKind::Write, out);
+                if (stale) r.log(out.filename().string() + " is from another movie (" + *from + "): exporting again");
+                if (out.has_parent_path()) fs::create_directories(long_path(out.parent_path()));
+                fs::copy_file(long_path(m.main), long_path(out), fs::copy_options::overwrite_existing);
+                r.run.fresh_exports.insert({r.node.id, r.run.item});  // an earlier "done" on it no longer counts
+                r.done("exported " + out.filename().string(), out);
+            }
+            r.set_state("exported_from", m.main.string());
+            r.output("video", file_value(out));
+        },
+        .preview = [](NodeRun& r) {
+            r.change(ChangeKind::Write, r.resolve(r.text("video")));
+            r.output("video", file_value(r.resolve(r.text("video"))));
+        },
+    };
+}
+
+NodeSpec edit_video_node() {
+    return {
+        .type = "EditVideo",
+        .title = "Edit video",
+        .summary = "YOUR STEP: edit the video in your video editor and render (export) the result to Your edit, then "
+                   "click Done editing. The run waits here until you do.",
+        .inputs = {{.name = "video", .label = "video to edit", .type = Path, .required = true},
+                   {.name = "editor", .label = "Open with", .type = Path, .widget = Widget::Path,
+                    .hint = "The program Open in editor uses, e.g. your video editor's .exe. Empty: Windows' program "
+                            "for the video's file type.",
+                    .path = PathKind::OpenFile, .filter = "exe"}},
+        .outputs = {{.name = "video", .type = Path, .label = "edited video", .field = "edited", .field_label = "Your edit",
+                     .hint = "The file your video editor renders the edit to (a new file: editors read the original "
+                             "while you work). Empty: <video>_edited.mp4 beside the video.",
+                     .path = PathKind::SaveFile, .filter = kVideoFormats, .field_optional = true}},
+        .state = {"done"},
+        .manual = true,
+        .family = Family::Manual,
+        .run = [](NodeRun& r) {
+            const Value video = r.input("video");
+            const std::string typed = r.text("edited");
+            const fs::path edited = !typed.empty() ? r.resolve(typed)
+                                                   : video.path.parent_path() / (video.path.stem().string() + "_edited.mp4");
+            if (edit_is_done(r, "video")) {
+                if (std::error_code ec; !fs::is_regular_file(long_path(edited), ec))
+                    throw GraphError("your edit isn't there: render it to " + edited.string() +
+                                     ", or click Edit again");
+                r.output("video", file_value(edited, video.game_path));
+                r.done("edited: " + edited.filename().string(), edited);
+            } else {
+                r.wait("edit " + video.path.filename().string() + " in your video editor, render it to " +
+                           edited.filename().string() + ", then click Done editing",
+                       video.path);
+                r.log("waiting for you to render your edit of " + video.path.string() + " to " + edited.string());
+            }
+        },
+        .preview = [](NodeRun& r) {
+            const Value video = r.input("video");
+            const std::string typed = r.text("edited");
+            r.output("video", file_value(!typed.empty() ? r.resolve(typed)
+                                                        : video.path.parent_path() /
+                                                              (video.path.stem().string() + "_edited.mp4")));
+        },
+    };
+}
+
+NodeSpec replace_movie_node() {
+    return {
+        .type = "ReplaceMovie",
+        .title = "Replace movie",
+        .summary = "A new version of one of the game's movies: your video, or with none a test card showing the "
+                   "movie's name and the seconds, encoded H.264 at the movie's size, frame rate and bit rate. A "
+                   "movie with a 1080p copy beside it (<id>_fhd) gets both made; connect both to Package for Fluffy.",
+        .inputs = {game_movie_input(),
+                   {.name = "video", .label = "Your video", .type = Path, .widget = Widget::Path,
+                    .hint = "Any video Windows plays (mp4, mov, wmv...), or an Edit video step's edit. Scaled to the "
+                            "movie's size (black bars if its shape differs); its sound isn't used. Empty: a test card, "
+                            "to see where and how the game plays the movie.",
+                    .path = PathKind::OpenFile, .filter = kVideoFormats},
+                   {.name = "same_length", .label = "Same length as the original", .type = Text,
+                    .widget = Widget::Checkbox,
+                    .hint = "Cut a longer video, and hold the last frame of a shorter one, to the original's length. "
+                            "The movie's sound plays from the game's sound bank, timed to the original. Off: your "
+                            "video's own length (untested in game).",
+                    .initial = "true"}},
+        .outputs = {{"movie", Path, "new movie"}, {"fhd", Path, "1080p copy (if any)"}},
+        .family = Family::Transform,
+        .run = [](NodeRun& r) {
+            const MovieFiles m = movie_files(r, r.resolve(r.text("movie")));
+            const std::string video_text = r.text("video");
+            const fs::path video = video_text.empty() ? fs::path() : r.resolve(video_text);
+            const bool same_length = r.text("same_length") != "false";
+            std::error_code ec;
+            if (!video.empty() && !fs::is_regular_file(long_path(video), ec))
+                throw GraphError("video not found: " + video.string());
+            // What the encode is made from, for the run cache. ponytail: files by name, size and write time, not
+            // their bytes (hundreds of MB); a video edited within the same second with the same size is missed.
+            auto stamp = [&](const fs::path& f) {
+                return f.string() + '|' + std::to_string(fs::file_size(long_path(f))) + '|' +
+                       std::to_string(fs::last_write_time(long_path(f)).time_since_epoch().count());
+            };
+            const fs::path& cache = r.run.options.cache_dir;
+            std::vector<fs::path> made;
+            std::string message;
+            for (const auto& [port, original] : {std::pair<const char*, fs::path>{"movie", m.main}, {"fhd", m.fhd}}) {
+                const std::string file = original.filename().string();
+                if (!fs::is_regular_file(long_path(original), ec)) {
+                    r.nothing("fhd", "no 1080p copy of " + m.id);
+                    continue;
+                }
+                const MovieInfo like = movie_info(original);
+                if (!like.audio.empty())
+                    r.warn(file + " has its sound in the file; the new one has none (only the picture is replaced). "
+                                  "Untested in game.");
+                const fs::path out =
+                    cache.empty() ? r.temp_file("_" + file + ".mp4")
+                                  : cache / (hash_hex(stamp(original) + '\0' + (video.empty() ? "card" : stamp(video)) +
+                                                      (same_length ? "|same" : "|own") + "|mf2") +
+                                             ".mp4");
+                const std::string size = std::to_string(like.width) + "x" + std::to_string(like.height);
+                if (!cache.empty() && fs::is_regular_file(out, ec)) {
+                    fs::last_write_time(out, fs::file_time_type::clock::now(), ec);  // recently used: pruned last
+                    message += (message.empty() ? "" : ", ") + size + " unchanged";
+                } else {
+                    // Written as .part, then renamed, so a cut-off encode is never reused.
+                    fs::path target = out;
+                    if (!cache.empty()) {
+                        fs::create_directories(cache);
+                        (target = out).replace_extension(".part.mp4");
+                        fs::remove(target, ec);
+                    }
+                    const auto start = std::chrono::steady_clock::now();
+                    try {
+                        encode_movie(video, like, m.id, target, same_length);
+                    } catch (const std::runtime_error& e) {
+                        fs::remove(target, ec);
+                        throw GraphError(e.what());
+                    }
+                    if (target != out) fs::rename(target, out);
+                    char took[64];
+                    std::snprintf(took, sizeof took, " in %.0f s",
+                                  std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+                    message += (message.empty() ? "encoded " : ", ") + size + took;
+                    const MovieInfo got = read_mp4_info(out);
+                    if (std::abs(got.seconds - like.seconds) > 0.5)
+                        r.log(file + ": the new movie is " + std::to_string(std::lround(got.seconds)) +
+                              " s, the original " + std::to_string(std::lround(like.seconds)) + " s");
+                }
+                made.push_back(out);
+                r.output(port, file_value(out, m.folder + file));
+            }
+            if (!cache.empty()) prune_cache(cache, made);
+            r.done(message + (video.empty() ? " (test card)" : ""), made.front());
         },
     };
 }
@@ -1994,7 +2234,7 @@ const std::vector<NodeSpec>& node_specs() {
         resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), part_texture_node(),
         mesh_mask_node(),
         mask_blend_node(), replace_photo_node(),
-        preview_node(), package_mod(),
+        preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), if_node(), first_of_node(), file_exists_node(), text_matches_node(), not_node(),
@@ -2041,8 +2281,18 @@ const char* ai_note(std::string_view type) {
         {"ReplacePhoto", "Only for RE4R UI frames holding an old photo (cs_ui3210_file_*): puts a new picture in the "
                          "photo's place, keeping the frame and the photo's ageing. Not for general overlays."},
         {"Preview", "Shows an image on the graph; changes nothing. Use image on it to see an intermediate result."},
-        {"PackageMod", "End of a mod graph: textures (any number, or every item of a list) into a Fluffy Mod Manager "
-                       ".zip. Needs a mod name and output folder; Replace existing to rebuild."},
+        {"PackageMod", "End of a mod graph: textures (any number, or every item of a list) and other files (Replace "
+                       "movie's) into a Fluffy Mod Manager .zip. Needs a mod name and output folder; Replace existing "
+                       "to rebuild."},
+        {"ReplaceMovie", "Replaces a pre-rendered game movie (streaming/_chainsaw/movie/...). Link both outputs into "
+                         "Package's 'other file'. Leave Your video empty for a test card naming the movie, to find out "
+                         "where it plays. Keep 'Same length' on: the movie's sound is timed to the original. Encoding "
+                         "a 4K movie takes a while; an unchanged run reuses it."},
+        {"ExportMovie", "Start of a hand-edited movie: Export movie -> Edit video -> Replace movie's Your video. Feed "
+                        "its Game movie and Replace movie's from one Value through a Split."},
+        {"EditVideo", "The user's manual step for a movie: a run pauses here. Never mark it done yourself: tell the user "
+                      "which file to edit and where to render the edit, and call edit_done only after they say "
+                      "they've finished."},
         {"CopyFile", "Copy a file (backups, staging). Writing outside the graph's folder needs the user's approval."},
         {"MoveFile", "Move a file; removing the original needs the user's approval."},
         {"RenameFile", "Rename a file in place; needs the user's approval (it removes the old name)."},

@@ -1503,7 +1503,7 @@ ImVec2 draw_block_preview(ImDrawList* draw, ImVec2 at, const remod::NodeSpec& sp
             y += step;
         }
         if (spec.manual) {
-            label(x0, y + style.FramePadding.y, "Run first: Export image creates the file to edit.", dim);
+            label(x0, y + style.FramePadding.y, "Run first: it makes the file to edit.", dim);
             y += step;
             box(x0, y, ImGui::CalcTextSize("Done editing").x + style.FramePadding.x * 2, button);
             label(x0 + style.FramePadding.x, y + style.FramePadding.y, "Done editing", text);
@@ -2784,7 +2784,7 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
             if (manual) {  // Edit image: the user's own step
                 const std::filesystem::path file = status ? status->file : std::filesystem::path();
                 if (file.empty()) {
-                    folding(detail, [] { ImGui::TextDisabled("Run first: Export image creates the file to edit."); });
+                    folding(detail, [] { ImGui::TextDisabled("Run first: it makes the file to edit."); });
                 } else {
                     if (ImGui::Button("Open in editor")) open_edit(s, n.id, file);
                     if (ImGui::IsItemHovered()) hovered_hint = open_edit_hint(s, n.id);

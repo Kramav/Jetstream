@@ -1,0 +1,48 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "ReplaceMovie",
+      "params": {
+        "movie": "{game}/streaming/_chainsaw/movie/mv/mva000/mva000.mov.1.x64",
+        "video": "",
+        "title": "The movie to replace"
+      }
+    },
+    {
+      "id": 2,
+      "type": "PackageMod",
+      "params": {
+        "name": "Movie test",
+        "out": "mods",
+        "version": "1.0",
+        "description": "mva000 replaced by a test card showing its name and the seconds",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "movie"
+      ],
+      "to": [
+        2,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        1,
+        "fhd"
+      ],
+      "to": [
+        2,
+        "file"
+      ]
+    }
+  ]
+}

@@ -16,8 +16,8 @@ constexpr const char* kInstructions =
     "link; validate until it reports no problems; preview and view_image to check results before running; "
     "save_graph (a run needs the graph saved: its folder is where it may write freely); run. "
     "A run asks the user, in a dialog of its own, to allow removing files, writing outside the graph's folder and "
-    "starting programs; you cannot approve anything. A run that pauses at an Edit image step waits for the user: "
-    "tell them which file to edit and call edit_done only after they say they have finished. Game files are never "
+    "starting programs; you cannot approve anything. A run that pauses at an Edit image or Edit video step waits for "
+    "the user: tell them which file to edit and call edit_done only after they say they have finished. Game files are never "
     "changed. Texture paths: files named .tex.143221013 under an extracted natives/STM folder.";
 
 struct Tool {
@@ -75,10 +75,10 @@ const std::vector<Tool>& tools() {
          object()},
         {"run", "",
          "Run the graph. The user is asked in a dialog to allow any change that needs approval; you can't approve. "
-         "Returns where every block got to; 'paused' means an Edit image step waits for the user.",
+         "Returns where every block got to; 'paused' means an Edit image or Edit video step waits for the user.",
          object()},
         {"edit_done", "edit_done",
-         "Mark an Edit image step done ONLY after the user says they finished editing that image.",
+         "Mark an Edit image or Edit video step done ONLY after the user says they finished that edit.",
          object({{"id", number("The Edit image block.")},
                  {"item", text("For a block repeated for a list: the item (its 'item' in run's nodes).")},
                  {"done", {{"type", "boolean"}, {"description", "False to mark it not done."}}}},

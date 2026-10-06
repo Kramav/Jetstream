@@ -352,12 +352,15 @@ TEST_CASE("every example graph runs on the game files (set REMOD_GAME to the ext
     for (const remod::CustomNode& c : remod::load_custom_library(REMOD_BLOCKS_DIR)) remod::register_custom(c);
     remod::set_game_files_dir(game);
     TempDir tmp;  // a copy: they write next to themselves (edits\, mods\, backups\)
-    fs::copy(REMOD_EXAMPLES_DIR, tmp.path, fs::copy_options::recursive);
+    fs::copy(REMOD_EXAMPLES_DIR, tmp.path);  // files only: not mods etc. left by the user's own runs
     const auto converter = remod::make_converter({});
     int ran = 0;
     for (const auto& e : fs::directory_iterator(tmp.path)) {
         if (e.path().extension() != ".json") continue;
         INFO(e.path().filename().string());
+        if (e.path().filename() == "13_edit_a_movie_by_hand.json")  // your edit, rendered: here the movie itself
+            fs::copy_file(fs::path(game) / "streaming/_chainsaw/movie/mv/mva402/mva402.mov.1.x64",
+                          (fs::create_directories(tmp.path / "edits"), tmp.path / "edits/mva402_edited.mp4"));
         const Graph g = remod::load_graph(e.path());
         CHECK(g.validate().empty());
         const remod::RunOptions opt{.profile = re4r(), .converter = *converter, .base_dir = tmp.path,

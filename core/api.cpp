@@ -312,7 +312,8 @@ std::string ApiSession::call(const std::string& request) {
             }
         } else if (op == "edit_done") {
             const Node& n = node_of(graph_, r);
-            if (n.type != "EditImage") throw GraphError("block " + std::to_string(n.id) + " isn't an Edit image step");
+            if (const NodeSpec* spec = find_spec(n.type); !spec || !spec->manual)
+                throw GraphError("block " + std::to_string(n.id) + " isn't a manual step (Edit image, Edit video)");
             set_edit_done(graph_, n.id, r.value("done", true), r.value("item", std::string()));
         } else if (op == "validate") {
             reply["problems"] = graph_.validate();

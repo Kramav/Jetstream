@@ -27,7 +27,7 @@ constexpr const char* kUsage =
     "remod " REMOD_VERSION "\n"
     "usage:\n"
     "  remod run --graph <file.json> [--profiles <dir>] [--edited true] [--noesis <Noesis64.exe>]\n"
-    "            --edited true: treat Edit image steps as done (you've edited the images)\n"
+    "            --edited true: treat Edit image / Edit video steps as done (you've made your edits)\n"
     "  remod tex2png --profile <toml> --tex <file.tex.N> --out <file.png|.tga|.jpg> [--noesis <Noesis64.exe>]\n"
     "  remod png2tex --profile <toml> --png <edited.png|.tga|.jpg> --original <file.tex.N> --out <new.tex.N>\n"
     "                [--noesis <Noesis64.exe>]\n"

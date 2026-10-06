@@ -20,5 +20,7 @@ copy, somewhere of your own. Each writes its mod to a `mods` folder next to the 
 | `09_keep_the_alpha_data` | Channels: **Pick channel** shows the alpha (data, not transparency); **Merge channels** puts a picture in as the colour and keeps it. |
 | `10_if_else_picture_or_recolour` | If / else: `my_picture.png` if it's next to the graph, else a recolour. **File exists**, **Not**, two **If**s and **First of**. |
 | `11_back_up_each_build` | File steps: **Copy file** keeps a copy of each built mod in `backups`. |
+| `12_replace_a_movie` | **Replace movie**: a test card (the movie's name and the seconds) in place of `mva000` and its 1080p copy. Pick another movie, or put your video in **Your video**. |
+| `13_edit_a_movie_by_hand` | **Export movie** copies `mva402` to `edits`, **Edit video** waits while you edit it and render your edit to `edits\mva402_edited.mp4`, then **Replace movie** puts it in the game at the original's length. |
 
 The blocks are laid out when a graph opens. Move them as you like and save.
