@@ -16,3 +16,10 @@ build-*/
 # Outputs of running the examples
 examples/edits/
 examples/mods/
+
+# The Wwise spike's test files (spikes/wwise/README.md): sample WAVs, Wwise's .wem output, its project and log
+spikes/wwise/in/
+spikes/wwise/wem/
+spikes/wwise/project/
+spikes/wwise/wem_log.txt
+run.wsources

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Every sample WAV, three ways: Wwise's own Vorbis, Opus and PCM (README.md). Paths are relative to this file. -->
+<ExternalSourcesList SchemaVersion="1" Root="in">
+    <Source Path="noise_stereo.wav" Conversion="remod_vorbis" Destination="vorbis\noise_stereo.wem"/>
+    <Source Path="odd_length_stereo.wav" Conversion="remod_vorbis" Destination="vorbis\odd_length_stereo.wem"/>
+    <Source Path="silence_stereo.wav" Conversion="remod_vorbis" Destination="vorbis\silence_stereo.wem"/>
+    <Source Path="sweep_stereo.wav" Conversion="remod_vorbis" Destination="vorbis\sweep_stereo.wem"/>
+    <Source Path="tone_3ch.wav" Conversion="remod_vorbis" Destination="vorbis\tone_3ch.wem"/>
+    <Source Path="tone_mono.wav" Conversion="remod_vorbis" Destination="vorbis\tone_mono.wem"/>
+    <Source Path="tone_stereo.wav" Conversion="remod_vorbis" Destination="vorbis\tone_stereo.wem"/>
+    <Source Path="noise_stereo.wav" Conversion="remod_opus" Destination="opus\noise_stereo.wem"/>
+    <Source Path="odd_length_stereo.wav" Conversion="remod_opus" Destination="opus\odd_length_stereo.wem"/>
+    <Source Path="silence_stereo.wav" Conversion="remod_opus" Destination="opus\silence_stereo.wem"/>
+    <Source Path="sweep_stereo.wav" Conversion="remod_opus" Destination="opus\sweep_stereo.wem"/>
+    <Source Path="tone_3ch.wav" Conversion="remod_opus" Destination="opus\tone_3ch.wem"/>
+    <Source Path="tone_mono.wav" Conversion="remod_opus" Destination="opus\tone_mono.wem"/>
+    <Source Path="tone_stereo.wav" Conversion="remod_opus" Destination="opus\tone_stereo.wem"/>
+    <Source Path="noise_stereo.wav" Conversion="remod_pcm" Destination="pcm\noise_stereo.wem"/>
+    <Source Path="odd_length_stereo.wav" Conversion="remod_pcm" Destination="pcm\odd_length_stereo.wem"/>
+    <Source Path="silence_stereo.wav" Conversion="remod_pcm" Destination="pcm\silence_stereo.wem"/>
+    <Source Path="sweep_stereo.wav" Conversion="remod_pcm" Destination="pcm\sweep_stereo.wem"/>
+    <Source Path="tone_3ch.wav" Conversion="remod_pcm" Destination="pcm\tone_3ch.wem"/>
+    <Source Path="tone_mono.wav" Conversion="remod_pcm" Destination="pcm\tone_mono.wem"/>
+    <Source Path="tone_stereo.wav" Conversion="remod_pcm" Destination="pcm\tone_stereo.wem"/>
+</ExternalSourcesList>

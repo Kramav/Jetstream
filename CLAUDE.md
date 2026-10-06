@@ -1065,8 +1065,121 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
   - **Story movies' sound (user, 2026-10-06: a future consideration).** 25 of the 29 movies (the story movies, the
     radio calls, the tutorials) have no sound in the file: the game plays it from its Wwise sound bank
     (`snd_cont_<id>.user`, named by each movie's prefab). Replace movie changes only the picture, so their sound stays
-    the original's, timed to the original length. Replacing it means reading and rebuilding Wwise banks; not
-    surveyed yet (existing tools first).
+    the original's, timed to the original length. Replacing it means reading and rebuilding Wwise banks.
+    - **The game's side [game data, read-only, 2026-10-06]:** `snd_cont_mva000.user` names three triggers
+      (`snd_trgr_mva000_bgm` / `_dialogue` / `_se`) and a package (`snd_pack_mva000`). The audio is in
+      `streaming/_chainsaw/sound/wwise/ch_mva000_bgm.spck.1.x64` (AKPK, one WEM: Wwise Vorbis 0xFFFF, stereo 48 kHz,
+      1.4 MB) and `ch_mva000_dialogue.spck.1.x64.<lang>` (11 languages; English: one WEM, Wwise Opus 0x3041, 3
+      channels, 48 kHz). Every `.sbnk` checked (300) is bank version 140 = Wwise 2021.1; RE4R audio guides on Nexus
+      use Wwise 2021.1.14 to make WEMs.
+    - **Survey (2026-10-06; licences and activity from GitHub's API):**
+      | Candidate | Covers | Gap | Licence | Maintained |
+      |---|---|---|---|---|
+      | Wwise 2021.1 (Audiokinetic), `WwiseConsole convert-external-source` | The only encoder for Wwise Vorbis / Opus WEMs; command line | Install with an account; can't be bundled | Proprietary; free for non-commercial use | Yes (2021.1 is old; must match the game) |
+      | RingingBloom (Silvris) | BNK and PCK editors: replace WEMs; RE Engine sound files; the RE4R guides' tool | GUI only (C#); no licence | None (all rights reserved) | Release v2.1 2021-05; pushed 2025-03 |
+      | bnkextr (eXpl0it3r) | Extracts WEMs from BNK and PCK (AKPK); C++ | Extract only | Public domain or alternative | Release 2.0 2021-03; pushed 2026-10 |
+      | wwiser (bnnm) | Reads banks (events, timing, codecs); the reference for the format | Read only, by design; Python | None (issue #61 asking for one, unanswered) | Release 2026-08 |
+      | vgmstream | Decodes every Wwise codec (Vorbis, Opus) to PCM; C library and CLI | Decode only | ISC-style, permissive | Release r2117 2026-05; pushed 2026-09 |
+      | sound2wem (EternalLeo) | A script driving WwiseConsole for any audio file | Needs Wwise | MPL-2.0 | Release v6 2026-01 |
+      | wwiseutil / wwvorbis-go (hpxro7) | Unpack / repack BNK and PCK; Wwise Vorbis bindings | Abandoned; no usable encoder | GPL-3.0 | 2018 |
+      | REE Content Editor / REE-Lib | Edits the RSZ sound data (`.user` containers, `WwiseRszFileLoader`) | No BNK / PCK / WEM code | MIT | Yes, weekly |
+    - **Recommendation: build on them.** Write the AKPK package read / write ourselves in core (a table of ids,
+      offsets and sizes; bnkextr's public-domain code as the reference). Encode WEMs by driving Wwise 2021.1's
+      WwiseConsole as a managed dependency (detected or installed by the user, like Noesis; never bundled), with a
+      conversion setting per codec (Vorbis for music, Opus for dialogue). Decode WEMs for previews with vgmstream
+      (permissive). Banks: read them for lengths and codecs, own code with wwiser as the format reference (no
+      licence: nothing copied); write them only if a length or codec change proves to need it (in-game test first).
+      RingingBloom stays the user's own tool (no licence). AI's place: making the replacement audio (voice,
+      music: M4) that this pipeline then encodes and packs.
+    - **Open before building [TBD-spike]:** does a WEM of another length play fully without a bank edit; does the
+      bank's codec id have to match (Vorbis -> PCM shortcut); why 3 channels in the dialogue WEM.
+    - **Decided (user, 2026-10-06): no Wwise dependency.** The tool would write WEMs itself: Wwise Opus with libopus
+      (vcpkg, BSD) plus Wwise's header and packet-size table (vgmstream's reader documents the fields), Wwise Vorbis
+      with libvorbis (BSD) rewritten to Wwise's packet form and codebook ids (only if every codebook used is in
+      Wwise's aoTuV 6.03 library; uncertain), PCM as is. Fallbacks for music if Vorbis fails: PCM or Opus in its
+      place, if the game doesn't hold the bank's codec to it (in-game test).
+    - **Spike prepared (2026-10-06): `spikes/wwise/`.** 7 known WAVs (`make_samples.sh`), `samples.wsources` (each
+      as Vorbis, Opus and PCM: ShareSets `remod_vorbis` / `remod_opus` / `remod_pcm`), `run.cmd` (WwiseConsole
+      `convert-external-source`), README with the steps. The user runs Wwise 2021.1.14 once to make the reference
+      WEMs; the WAVs, the WEMs, the Wwise project and the log are git-ignored (user).
+      **Run 2026-10-06:** all 21 WEMs made. `Root` in the list resolves against neither the file nor the working
+      folder, so `run.cmd` writes `run.wsources` with an absolute Root (git-ignored).
+    - **Wwise Opus WEM layout [spike 2026-10-06, 7 files, all fields checked against the inputs]:** RIFF, no
+      padding, chunks `fmt `, `seek`, `data` in that order.
+      - `fmt ` is 36 bytes: tag 0x3041, channels, rate 48000, avg bytes/s = data size x rate / total samples
+        (floor), block align 0, bits 0, cbSize 16 (but **18** extra bytes follow: Wwise's quirk). Extra, little
+        endian: u16 960 (frame, 20 ms); **u32 channel config** (Wwise's AkChannelConfig: channels in bits 0-7,
+        type 1 = standard in bits 8-11, speaker mask from bit 12: mono 0x4101 = centre, stereo 0x3102 = L R, 3 ch
+        0x7103 = L R C [vgmstream's reader]); u32 total samples; u32 packet count; u16 pre-skip 312 (libopus's
+        lookahead, `OPUS_GET_LOOKAHEAD`); u8 1 (OpusHead version); u8 mapping family (0 mono / stereo, 1 for 3
+        channels).
+      - Packet count = ceil((samples + 312) / 960), i.e. the packets written. (Not ceil(samples / 960) + 1: the
+        game's English mva000 dialogue, 2,916,800 samples, has 3,039 packets.)
+      - `seek` = one u16 per packet: its byte size. `data` = the raw Opus packets back to back, no length prefixes
+        (their sizes sum to the data size exactly). Silence packets are 3 bytes (`fc ff fe`).
+      - Packets are plain 20 ms CELT fullband (TOC 0xf8 mono, 0xfc stereo). 3 channels are 2 streams: a stereo
+        packet in self-delimited form (TOC, length, frame), then a mono one, as libopus's multistream encoder packs
+        them. The framing fits every packet of the 3-channel sample and of the game's dialogue (de, en, es); not
+        decoded.
+      - **The game's own (mva000 dialogue, 3 ch) has the same layout, field for field.** So a writer is libopus's
+        multistream encoder plus this header; every field is computed, nothing copied.
+      - Not yet: whether the game needs anything the references lack.
+    - **Wwise PCM WEM layout [spike 2026-10-06, 7 files, all fields checked]:** a 64-byte header then the samples;
+      the easiest of the three. RIFF, `fmt ` (24), `JUNK` (4 zero bytes), `data`; RIFF size = file length - 8.
+      - `fmt `: tag 0xFFFE (extensible, but cbSize 6 and only 6 extra bytes, not the usual 22), channels, 48000,
+        avg = rate x align, align = 2 x channels, bits 16, cbSize 6. Extra: u16 0 (16 for the 3-channel file, as
+        in the Vorbis one: WAVEFORMATEXTENSIBLE's valid-bits slot; why only 3 ch is unknown, copy it), u32 channel
+        config (as Opus).
+      - `data`: 16-bit little-endian interleaved samples, at file offset 64.
+      - The samples equal the WAV's in 4 of 7 files; in the other 3 (two tones and the sweep) 1-2% of samples differ
+        by exactly 1. Not a plain rounding or scaling of the 16-bit values (tried x*32767/32768 rounded, truncated,
+        floored); likely a float stage inside Wwise. Inaudible, so a writer needn't reproduce it.
+    - **Wwise Vorbis WEM layout [spike 2026-10-06, 7 files; the parts below hold on all 7, the rest is marked]:**
+      RIFF with `fmt ` (66 bytes) then `data`, nothing else.
+      - `fmt `: tag 0xFFFF, channels, 48000, avg bytes/s = (data size - seek table size) x rate / total samples
+        (floor), align 0, bits 0, cbSize 48 (and 48 extra bytes, unlike Opus). Extra, little endian, offsets from
+        the extra's start:
+        | At | Field | Writer |
+        |---|---|---|
+        | 0 | u16 0 (16 for the 3-channel file, as PCM) | copy |
+        | 2 | u32 channel config, as Opus | computed |
+        | 6 | u32 total samples | computed |
+        | 10 | u32 loop start: the first audio packet, as an offset from the setup block's start (= setup block size: 203 mono and 3 ch, 217 stereo) | computed |
+        | 14 | u32 loop end: the audio's end, from the same start (= data size minus the seek table) | computed |
+        | 18, 20 | u16 loop start extra (0), u16 loop end extra (= @32 when not looping) | computed |
+        | 22 | u32 seek table size in bytes (= 4 x entries) | computed |
+        | 26 | u32 audio offset in `data` (= seek table + setup block) | computed |
+        | 30 | u16 largest audio packet payload, in bytes | computed |
+        | 32 | u16 **end padding**: decoded samples past the total (960, 64, 0, 8 here; game music 384) | computed |
+        | 34, 38 | two u32 that go with the setup block (stereo 0x3ed0, 0x40b0; mono and 3 ch 0x4704, 0x48cc; game music 0x4740, 0x4930); inferred: decoder memory sizes | copy with the setup |
+        | 42 | u32 the setup's hash (one per setup block, see below) | copy with the setup |
+        | 46 | u8 short block power (8 = 256), u8 long block power (11 = 2048) | from the setup |
+
+        Field names at 10-20 and 32 follow the Wwise SDK's Vorbis info struct as vgmstream's reader describes it
+        [recalled, not re-read]; the values are checked here: @32 equals the decoded length minus the total in all 7
+        and in the game's music.
+      - `data`: seek table, then the setup block (u16 size, payload), then audio packets, each u16 payload size +
+        payload, ending exactly at the chunk's end.
+      - **Audio packets:** Vorbis audio packets without the packet-type bit; the first bit is the mode, and mode 1
+        is the long block. Checked by counting: each packet gives (previous block + this block) / 4 samples, and
+        the sum minus the total is exactly @32's padding, in all 7 and in the game's music.
+      - **Seek table, solved:** entries of u16 samples + u16 bytes, each a step from the entry before. An entry is
+        a packet: the first packet whose end (in decoded samples) is at least the previous entry's end + G (from 0),
+        as many as fit. Samples = that packet's end, bytes = its offset from the setup block's start. G is the
+        conversion's seek granularity: 16384 in the samples (Wwise's default), **2048 in the game's music**. Holds
+        for every entry of all 7 and of the game's 1,439. (The silent file's bytes "exceeding its audio" was only
+        the 217-byte setup counted in.)
+      - **The setup block is a fixed blob per encoder setting and channel layout.** All 5 stereo samples have the
+        same bytes (215), mono and 3 channels share theirs (201); the game's music has another (228, higher
+        quality). Its payload starts with the codebook count - 1 (8 bits), then a 10-bit id per codebook, an index
+        into Wwise's built-in codebook library (aoTuV 6.03): stereo 38-49, 62-76, 416-430; mono 38-49, 62-76,
+        213-224; game music 50-76, 463-479. So a writer can ship one reference setup (with its hash and the two
+        u32s) per layout and quality; the remaining question is encoding audio that uses exactly those codebooks.
+      - **Next for Vorbis:** encode with aoTuV / libvorbis (BSD) at a quality and see whether its own setup, written
+        in Wwise's form (codebooks replaced by ids found in the library), is byte-identical to one of these. Wwise's
+        encoder is aoTuV 6.03, so a match is likely; the library's codebooks come from ww2ogg's
+        `packed_codebooks_aoTuV_603.bin` (BSD; check its licence before shipping). If they match, the hash and the
+        two u32s come with it; if not, Opus or PCM takes the music slot (the fallback above).
   - Frames: done as **Replace photo** (§4; RE4R's UI frames are opaque, no transparent opening). Open: a picture
     printed at an angle or in perspective (four-corner warp) if one turns up; in-world paintings usually have their
     own picture texture (Resize "Match size of" covers them).
