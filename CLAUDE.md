@@ -2,8 +2,8 @@
 
 Node-based modding tool for Capcom RE Engine games. First target: **Resident Evil 4 (2023), "RE4R"**.
 Long-term: AI-assisted asset generation plus optional REFramework runtime features.
-**Current scope: M1 is done (polish goes on). M3 route 1 (replacing movies) is done (2026-10-06); route 2 waits
-for its spike. Then M2 (REFramework scripting); see §10. AI texture generation (M4) isn't started.**
+**Current scope: M1 is done (polish goes on). M3 route 1 (replacing movies) is done (2026-10-06), their sound
+packages too (no longer a restriction); route 2 waits for its spike. Then M2 (REFramework scripting); see §10. AI texture generation (M4) isn't started.**
 
 Source labels used below: **[official]** = official/authoritative docs, **[guide]** = community guide,
 **[inferred]** = design decision or assumption from planning, **[TBD-spike]** = must be confirmed by a manual in-game test.
@@ -45,6 +45,8 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
     thread can call it. BC6H / BC7 encode on the GPU (DirectCompute, a D3D11 device per conversion), falling back
     to the CPU when there's no GPU: CPU BC7 took 188 s for one 512x512 in the Debug build, the GPU 0.6 s for a
     1024x1024 (load and save).
+  - **Adopted for game audio (2026-10-06; user: no Wwise dependency):** libopus 1.6.1, libvorbis 1.3.7 (with libogg
+    1.3.6), all BSD, core-private (`core/wwise.*`, §10 Story movies' sound); plus ww2ogg's codebook library (§6).
   - GoogleTest verified but not used.
 - Images (combining preview PNGs): **WIC**, built into Windows, used from core. No image library dependency.
 - Build (Developer PowerShell for VS 2026, which sets `VCPKG_ROOT`):
@@ -742,7 +744,7 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 | fmt_RE_MESH Noesis plugin | **Optional**, with Noesis | Fork checked had **no license file** (all rights reserved by default); original repo not checked | Don't bundle, don't copy from it; the user installs it. Format knowledge is cited from REE-Lib (MIT) instead |
 | REE-Lib (kagenocookie/RE-Engine-Lib) | Reference only: `.tex` and `.mdf2` layouts (`TexFile.cs`, `MdfFile.cs`); later `.mesh` (`MeshFile.cs`) | MIT [official] | Not linked (C#). No code copied; if any ever is, add its MIT notice |
 | ww2ogg's codebooks (`packed_codebooks_aoTuV_603.bin`, hcs64/ww2ogg commit 14ed9b0) | Wwise's Vorbis codebook library: checks libvorbis's setup against the replaced WEM's before writing (§10 story movies' sound) | BSD 3-clause (Xiph.org, Adam Gashlin) [official, its COPYING] | **Shipped (user, 2026-10-06):** `third_party/ww2ogg/`, installed to `data\`, licence in `licenses\ww2ogg.txt`. No ww2ogg code is used |
-| libvorbis / libogg, libopus | Planned: writing Wwise Vorbis / Opus WEMs | BSD [official] | vcpkg, when the writer is built; add to the notices then |
+| libvorbis 1.3.7 / libogg 1.3.6, libopus 1.6.1 | Writing (and decoding) Wwise Vorbis / Opus WEMs (`core/wwise.*`) | BSD 3-clause [official] | **Adopted 2026-10-06:** vcpkg, core-private, static in the release zip; in the notices |
 | REtool | PAK extraction / optional PAK creation | No license found | Don't bundle. Detect path; guide manual install |
 | Fluffy Mod Manager | Install/test mods | No license found | Don't bundle. User selects path |
 | texconv (DirectXTex) | Not needed: the DirectXTex library does the encoding (§2, §4) | MIT [official] | — |
@@ -913,6 +915,10 @@ propose them as next steps before then.
 - [ ] **Replaced movies (§10 M3 route 1).** Example 12 (mva000's test card) and a logo's (mv7001: beeps): does it
   play; is the file's sound played (the logos); does a different length play fully (Same length off); which movie
   plays where.
+- [ ] **Replaced movie sound (§10 Story movies' sound).** Example 12 also replaces mva000's sound packages: is the
+  beep heard each second, and the original's music, dialogue and effects gone; does a WEM one zero byte longer per
+  packet (libvorbis) play cleanly; with Same length off, does a sound of another length play fully without a bank
+  edit.
 
 ## 10. Milestones after M1
 
@@ -1006,8 +1012,8 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       ponytail: no hardware decoding and no frame dropping (a slower decode falls behind the clock); no sound.
       Checked: tests (first frame paused, fitted size, seek, play to the end, the `.x64` name, the stub; the real
       intro with `REMOD_GAME`). **Not checked by eye:** the viewer, its controls, the block button.
-    - Not done: replacing a story movie's sound (in the game's Wwise sound bank, not the file: §10 Future work);
-      other games' movie folders.
+    - **Story movies' sound: built 2026-10-06** (in the game's sound packages, not the file: §10 Future work, "Story
+      movies' sound"). Not done: other games' movie folders.
   - **Route 1 spike (the user's, in game):** build example 12 (or Replace movie on another movie), install the zip
     through Fluffy. Find out: does it play; a different length; a silent movie's sound (its Wwise container); which
     movie plays where (mva000 is likely the intro: 4K, 61 s).
@@ -1067,16 +1073,53 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     channel. Which RE4R textures pack what: §9 (spike 2026-10-02; meanings inferred, layouts observed). **Built
     2026-10-02** (§4 Channel tools).
   - **Mod options:** one mod with variants to choose in Fluffy.
-  - **Story movies' sound (user, 2026-10-06: a future consideration).** 25 of the 29 movies (the story movies, the
-    radio calls, the tutorials) have no sound in the file: the game plays it from its Wwise sound bank
-    (`snd_cont_<id>.user`, named by each movie's prefab). Replace movie changes only the picture, so their sound stays
-    the original's, timed to the original length. Replacing it means reading and rebuilding Wwise banks.
+  - **Story movies' sound. Built 2026-10-06 (user: "do all of it so we can wrap up sound as a restriction"); was a
+    future consideration.** 25 of the 29 movies have no sound in the file. Only 3 have a sound container
+    (`snd_cont_<id>.user`) and packages: mva000 (music, dialogue in 9 languages, effects), mva201 (effects),
+    mva202 (dialogue, effects). The other 22 (radio calls, tutorials, the rest) have none: silent, or their sound
+    comes from elsewhere [game data].
+    - **What's built:** Replace movie's **Replace its sound** (advanced checkbox, on by default) and its list output
+      **sound packages (if any)**, into Package's other file.
+      - The packages are found by the profile's optional `movie_sound` (RE4R: `_chainsaw/sound/wwise/ch_{id}_`):
+        each streaming copy is read (core `read_akpk`), every WEM in it is written again, and both copies are written
+        (`write_akpk`, header-only outside streaming/).
+      - Each new WEM keeps its original's codec, channels, rate and (Same length on) sample count, so the sound bank
+        (`.sbnk`) needs no change: core `encode_wem` (Vorbis: libvorbis at the quality whose setup is the
+        original's, checked against it with the codebook library; Opus: libopus multistream at the original's
+        average bit rate, channels reordered from a WAV's to Vorbis's order). Same length off: the new movie's
+        length (in-game question).
+      - The music (or, with no music, the effects) gets the video's sound (core `read_sound`: Windows decodes it to
+        mono or stereo; more channels get it in front left / right), a test card's a beep each second; every other
+        sound, dialogue in every language too, silence.
+      - Run cache: per package, keyed on the package, the video (or "card" / "silence"), the length rule and
+        "snd1".
+      - Core `decode_wem` (both codecs) for checks and a later audio preview.
+    - **Checked:**
+      - tests:
+        - packages round trip;
+        - Opus 1 / 2 / 3 / 6 channels encoded and decoded;
+        - Wwise's own reference WEMs decode to their WAVs with the channels in place (the spike files, when
+          present);
+        - with REMOD_GAME: the game's packages rewritten byte-identical (and their header-only copies), the music's
+          setup found and a tone through it, the dialogue's 3 channels;
+        - the block on a fake game folder: effects beep, dialogue silent, another movie's package left alone, an
+          unchanged re-run, off;
+      - example 12 on the real mva000: 11 packages (22 files), every WEM read by vgmstream r2117 with the original's
+        id, codec, channels and sample count; the music decodes to a beep each second over 61.5 s.
+    - **Not checked:** in game (§9's list). Banks aren't touched, so a sound of another length or codec isn't
+      possible without the in-game answer first.
     - **The game's side [game data, read-only, 2026-10-06]:** `snd_cont_mva000.user` names three triggers
       (`snd_trgr_mva000_bgm` / `_dialogue` / `_se`) and a package (`snd_pack_mva000`). The audio is in
       `streaming/_chainsaw/sound/wwise/ch_mva000_bgm.spck.1.x64` (AKPK, one WEM: Wwise Vorbis 0xFFFF, stereo 48 kHz,
-      1.4 MB) and `ch_mva000_dialogue.spck.1.x64.<lang>` (11 languages; English: one WEM, Wwise Opus 0x3041, 3
+      1.4 MB) and `ch_mva000_dialogue.spck.1.x64.<lang>` (9 languages; English: one WEM, Wwise Opus 0x3041, 3
       channels, 48 kHz). Every `.sbnk` checked (300) is bank version 140 = Wwise 2021.1; RE4R audio guides on Nexus
       use Wwise 2021.1.14 to make WEMs.
+    - **Package layout [game data, all 1,266 packages]:** "AKPK", u32 header size (from after this field to the
+      data), u32 version 1, u32 sizes of the language map, bank table, stream table and externals table; the language
+      map (u32 count, {u32 offset from the map's start, u32 id}, UTF-16 names); each table a u32 count then entries
+      {id (u32; u64 for externals), u32 block size, u32 size, u32 start block, u32 language id}; then the files.
+      Every RE4R package: block size 1, the files back to back in table order with no gaps; the copy outside
+      `streaming/` is the header alone, the streaming copy header and files.
     - **Survey (2026-10-06; licences and activity from GitHub's API):**
       | Candidate | Covers | Gap | Licence | Maintained |
       |---|---|---|---|---|

@@ -195,7 +195,80 @@ ComPtr<IMFSourceReader> open_reader(const std::filesystem::path& video,
     return reader;
 }
 
+// A 1 kHz beep for the first tenth of each second: a test card's sound.
+std::vector<std::int16_t> beeps(unsigned hz, unsigned channels, std::uint64_t frames) {
+    std::vector<std::int16_t> out(size_t(frames) * channels);
+    for (std::uint64_t n = 0; n < frames; ++n) {
+        const double beep = n % hz < hz / 10 ? 8000 * std::sin(6.283185307 * 1000 * double(n) / hz) : 0;
+        for (unsigned c = 0; c < channels; ++c) out[size_t(n) * channels + c] = std::int16_t(beep);
+    }
+    return out;
+}
+
+// `video`'s first sound track, all of it, as 16-bit samples at `hz`, `channels` interleaved (Windows converts the
+// rate and 1, 2 or 6 channels). Empty if it has no sound track. Needs Media Foundation started.
+// ponytail: whole in memory (11 MB a minute at 48 kHz stereo); stream it if hour-long videos turn up.
+std::vector<std::int16_t> decode_sound(const std::filesystem::path& video, unsigned hz, unsigned channels) {
+    ComPtr<IMFSourceReader> reader;
+    try {
+        reader = open_reader(video, DWORD(MF_SOURCE_READER_FIRST_AUDIO_STREAM));
+    } catch (const std::runtime_error&) {  // no sound track
+        return {};
+    }
+    ComPtr<IMFMediaType> pcm;
+    check(MFCreateMediaType(&pcm), "MFCreateMediaType");
+    pcm->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+    pcm->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+    pcm->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+    pcm->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, hz);
+    pcm->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, channels);
+    pcm->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, channels * 2);
+    pcm->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, hz * channels * 2);
+    constexpr DWORD track = DWORD(MF_SOURCE_READER_FIRST_AUDIO_STREAM);
+    if (FAILED(reader->SetCurrentMediaType(track, nullptr, pcm.Get())))
+        throw std::runtime_error("Windows can't convert " + video.filename().string() + "'s sound to " +
+                                 std::to_string(hz) + " Hz, " + std::to_string(channels) + " channels");
+    std::vector<std::int16_t> out;
+    for (;;) {
+        DWORD flags = 0;
+        LONGLONG at = 0;
+        ComPtr<IMFSample> sample;
+        check(reader->ReadSample(track, 0, nullptr, &flags, &at, &sample), "decoding " + video.filename().string() + "'s sound");
+        if (sample) {
+            ComPtr<IMFMediaBuffer> buffer;
+            check(sample->ConvertToContiguousBuffer(&buffer), "reading sound");
+            BYTE* data = nullptr;
+            DWORD length = 0;
+            check(buffer->Lock(&data, nullptr, &length), "reading sound");
+            const auto* s = reinterpret_cast<const std::int16_t*>(data);
+            out.insert(out.end(), s, s + length / 2);
+            buffer->Unlock();
+        }
+        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) return out;
+    }
+}
+
 }  // namespace
+
+std::vector<std::int16_t> read_sound(const std::filesystem::path& video, unsigned rate, unsigned channels,
+                                     std::uint64_t frames, std::string* what) {
+    if (!channels) throw std::runtime_error("no channels");
+    std::vector<std::int16_t> out(size_t(frames) * channels);  // silence
+    if (video.empty()) {
+        if (what) *what = "a beep each second";
+        const auto beep = beeps(rate, 1, frames);
+        for (size_t n = 0; n < beep.size(); ++n)
+            for (unsigned c = 0; c < std::min(channels, 2u); ++c) out[n * channels + c] = beep[n];
+        return out;
+    }
+    MfScope mf;
+    const unsigned from = std::min(channels, 2u);  // more: the sound in the first two (front left and right)
+    const auto sound = decode_sound(video, rate, from);
+    if (what) *what = sound.empty() ? "silence (your video has no sound)" : "your video's sound";
+    for (size_t n = 0; n < frames && (n + 1) * from <= sound.size(); ++n)
+        for (unsigned c = 0; c < from; ++c) out[n * channels + c] = sound[n * from + c];
+    return out;
+}
 
 std::string encode_movie(const std::filesystem::path& video, const MovieInfo& like, const std::string& title,
                          const std::filesystem::path& out, bool same_length) {
@@ -269,63 +342,14 @@ std::string encode_movie(const std::filesystem::path& video, const MovieInfo& li
               "setting up the AAC encoder for " + std::to_string(hz) + " Hz, " + std::to_string(channels) +
                   " channels");
     }
-    // Where the sound comes from: fills up to `frames` sample frames, returns how many (fewer: it has ended).
-    std::function<size_t(std::int16_t*, size_t)> pcm;
-    ComPtr<IMFSourceReader> sound_reader;
-    std::vector<std::uint8_t> decoded;  // the sound reader's last sample, from `used` on
-    size_t used = 0;
-    bool sound_ended = false;
+    // Where the sound comes from: a test card's beep, or the video's sound (silence after it).
+    std::vector<std::int16_t> source;
     std::string what_sound = sound ? "silence (your video has no sound)" : "";
     if (sound && video.empty()) {
         what_sound = "a beep each second";
-        pcm = [&, n = std::uint64_t(0)](std::int16_t* to, size_t frames) mutable {
-            for (size_t i = 0; i < frames; ++i, ++n) {
-                const double beep = n % hz < hz / 10 ? 8000 * std::sin(6.283185307 * 1000 * double(n) / hz) : 0;
-                for (UINT32 c = 0; c < channels; ++c) to[i * channels + c] = std::int16_t(beep);
-            }
-            return frames;
-        };
-    } else if (sound) {
-        try {
-            sound_reader = open_reader(video, DWORD(MF_SOURCE_READER_FIRST_AUDIO_STREAM));
-        } catch (const std::runtime_error&) {  // no sound track: silence
-        }
-        if (sound_reader) {
-            if (FAILED(sound_reader->SetCurrentMediaType(DWORD(MF_SOURCE_READER_FIRST_AUDIO_STREAM), nullptr,
-                                                         audio_type(MFAudioFormat_PCM).Get())))
-                throw std::runtime_error("Windows can't convert " + video.filename().string() + "'s sound to " +
-                                         std::to_string(hz) + " Hz, " + std::to_string(channels) + " channels");
-            what_sound = "your video's sound";
-            pcm = [&](std::int16_t* to, size_t frames) {
-                const size_t want = frames * channels * 2;
-                size_t got = 0;
-                while (got < want && !sound_ended) {
-                    if (used == decoded.size()) {
-                        DWORD flags = 0;
-                        LONGLONG at = 0;
-                        ComPtr<IMFSample> sample;
-                        check(sound_reader->ReadSample(DWORD(MF_SOURCE_READER_FIRST_AUDIO_STREAM), 0, nullptr, &flags,
-                                                       &at, &sample),
-                              "decoding " + video.filename().string() + "'s sound");
-                        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) sound_ended = true;
-                        if (!sample) continue;
-                        ComPtr<IMFMediaBuffer> buffer;
-                        check(sample->ConvertToContiguousBuffer(&buffer), "reading sound");
-                        BYTE* data = nullptr;
-                        DWORD length = 0;
-                        check(buffer->Lock(&data, nullptr, &length), "reading sound");
-                        decoded.assign(data, data + length);
-                        buffer->Unlock();
-                        used = 0;
-                    }
-                    const size_t take = std::min(want - got, decoded.size() - used);
-                    std::memcpy(reinterpret_cast<std::uint8_t*>(to) + got, decoded.data() + used, take);
-                    got += take;
-                    used += take;
-                }
-                return got / (channels * 2);
-            };
-        }
+        source = beeps(hz, channels, std::uint64_t(std::ceil(double(frames) * den / num * hz)));
+    } else if (sound && !(source = decode_sound(video, hz, channels)).empty()) {
+        what_sound = "your video's sound";
     }
     check(writer->BeginWriting(), "starting to write " + out.string());
 
@@ -341,8 +365,10 @@ std::string encode_movie(const std::filesystem::path& video, const MovieInfo& li
             check(MFCreateMemoryBuffer(bytes, &buffer), "MFCreateMemoryBuffer");
             BYTE* data = nullptr;
             check(buffer->Lock(&data, nullptr, nullptr), "locking sound");
-            const size_t got = pcm ? pcm(reinterpret_cast<std::int16_t*>(data), n) : 0;
-            std::memset(data + got * channels * 2, 0, bytes - got * channels * 2);
+            const size_t at = size_t(sound_written) * channels, want = n * channels;
+            const size_t got = at < source.size() ? std::min(want, source.size() - at) : 0;
+            std::memcpy(data, source.data() + (got ? at : 0), got * 2);
+            std::memset(data + got * 2, 0, bytes - got * 2);
             buffer->Unlock();
             buffer->SetCurrentLength(bytes);
             ComPtr<IMFSample> sample;

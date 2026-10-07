@@ -266,13 +266,15 @@ copy = g.add('CopyFile', 'Back up the build', dest='backups/', if_exists='overwr
 g.link(pkg, 'mod', copy, 'source')
 g.save('11_back_up_each_build.json')
 
-# 12. Movies: a test card in place of a game movie (both its copies), to see where and how the game plays it.
+# 12. Movies: a test card in place of a game movie (both its copies) and its sound (a beep each second in the music,
+# dialogue and effects silent), to see where and how the game plays it.
 g = Graph()
 movie = g.add('ReplaceMovie', 'The movie to replace',
               movie='{game}/streaming/_chainsaw/movie/mv/mva000/mva000.mov.1.x64', video='')
-pkg = package(g, 'Movie test', 'mva000 replaced by a test card showing its name and the seconds')
+pkg = package(g, 'Movie test', 'mva000 replaced by a test card showing its name and the seconds, beeping each second')
 g.link(movie, 'movie', pkg, 'file')
 g.link(movie, 'fhd', pkg, 'file')
+g.link(movie, 'sound', pkg, 'file')
 g.save('12_replace_a_movie.json')
 
 # 13. A movie edited by hand: Export movie copies it out, Edit video waits for your edit, Replace movie encodes it.
@@ -290,6 +292,7 @@ g.link(export, 'video', edit, 'video')
 g.link(edit, 'video', movie, 'video')
 g.link(movie, 'movie', pkg, 'file')
 g.link(movie, 'fhd', pkg, 'file')
+g.link(movie, 'sound', pkg, 'file')  # mva402 has no sound packages: nothing comes, but the link is the pattern
 g.save('13_edit_a_movie_by_hand.json')
 
 

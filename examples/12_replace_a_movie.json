@@ -18,7 +18,7 @@
         "name": "Movie test",
         "out": "mods",
         "version": "1.0",
-        "description": "mva000 replaced by a test card showing its name and the seconds",
+        "description": "mva000 replaced by a test card showing its name and the seconds, beeping each second",
         "replace": "true"
       }
     }
@@ -38,6 +38,16 @@
       "from": [
         1,
         "fhd"
+      ],
+      "to": [
+        2,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        1,
+        "sound"
       ],
       "to": [
         2,

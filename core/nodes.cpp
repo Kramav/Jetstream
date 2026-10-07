@@ -6,6 +6,7 @@
 #include "movie.hpp"
 #include "package.hpp"
 #include "process.hpp"
+#include "wwise.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -1161,6 +1162,7 @@ struct MovieFiles {
     fs::path main, fhd;  // the fhd copy may not exist
     std::string id;
     std::string folder;  // their in-game folder, ending in '/'
+    fs::path natives;    // the natives folder they're in
 };
 
 MovieFiles movie_files(const NodeRun& r, const fs::path& picked) {
@@ -1175,7 +1177,7 @@ MovieFiles movie_files(const NodeRun& r, const fs::path& picked) {
     if (dot == std::string::npos) throw GraphError(name + " isn't a game movie (<id>.mov.1.x64)");
     const std::string id = name.substr(0, low.substr(0, dot).ends_with("_fhd") ? dot - 4 : dot), rest = name.substr(dot);
     const MovieFiles m{picked.parent_path() / (id + rest), picked.parent_path() / (id + "_fhd" + rest), id,
-                       natives->second.substr(0, natives->second.rfind('/') + 1)};
+                       natives->second.substr(0, natives->second.rfind('/') + 1), natives->first};
     if (std::error_code ec; !fs::is_regular_file(long_path(m.main), ec)) throw GraphError("not found: " + m.main.string());
     return m;
 }
@@ -1194,6 +1196,54 @@ InputSpec game_movie_input() {
             .hint = "The movie, from your REtool folder: natives\\STM\\streaming\\_chainsaw\\movie\\...\\<id>.mov.1.x64 "
                     "(the 4K one or its _fhd copy). Use one Value (through a Split) for Export movie and Replace movie.",
             .path = PathKind::OpenFile, .filter = "x64"};
+}
+
+// A movie's sound packages (the profile's movie_sound; RE4R: _chainsaw/sound/wwise/ch_<id>_*.spck.*): the
+// streaming copy holding the sounds, and the header-only copy outside streaming/. Only mva000, mva201 and mva202
+// have any (CLAUDE.md §10).
+struct SoundPackage {
+    fs::path streaming, base;
+    std::string name, folder;  // folder: in-game, under the natives root, ending in '/'
+};
+
+std::vector<SoundPackage> sound_packages(const NodeRun& r, const MovieFiles& m) {
+    std::string pattern = r.profile().movie_sound;
+    if (pattern.empty()) return {};
+    if (const size_t at = pattern.find("{id}"); at != std::string::npos) pattern.replace(at, 4, m.id);
+    auto lower = [](std::string s) {
+        std::ranges::transform(s, s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+    const fs::path rel(pattern);
+    const std::string prefix = lower(rel.filename().string()), folder = rel.parent_path().generic_string() + "/";
+    std::vector<SoundPackage> out;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(long_path(m.natives / "streaming" / rel.parent_path()), ec)) {
+        const std::string name = e.path().filename().string();
+        if (lower(name).starts_with(prefix) && lower(name).find(".spck.") != std::string::npos)
+            out.push_back({m.natives / "streaming" / rel.parent_path() / name, m.natives / rel.parent_path() / name,
+                           name, folder});
+    }
+    std::ranges::sort(out, {}, &SoundPackage::name);
+    return out;
+}
+
+std::string read_bytes(const fs::path& file) {
+    std::ifstream in(long_path(file), std::ios::binary);
+    if (!in) throw GraphError("can't read " + file.string());
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// Written as .part, then renamed, so a cut-off write is never taken for a finished file.
+void write_bytes(const fs::path& file, const std::string& bytes) {
+    fs::path part = file;
+    part += ".part";
+    {
+        std::ofstream out(long_path(part), std::ios::binary | std::ios::trunc);
+        out.write(bytes.data(), std::streamsize(bytes.size()));
+        if (!out) throw GraphError("can't write " + part.string());
+    }
+    fs::rename(long_path(part), long_path(file));
 }
 
 NodeSpec export_movie_node() {
@@ -1287,21 +1337,33 @@ NodeSpec replace_movie_node() {
         .title = "Replace movie",
         .summary = "A new version of one of the game's movies: your video, or with none a test card showing the "
                    "movie's name and the seconds, encoded H.264 at the movie's size, frame rate and bit rate. A "
-                   "movie with a 1080p copy beside it (<id>_fhd) gets both made; connect both to Package for Fluffy.",
+                   "movie with a 1080p copy beside it (<id>_fhd) gets both made, and one whose sound plays from the "
+                   "game's sound packages gets new ones; connect them all to Package for Fluffy.",
         .inputs = {game_movie_input(),
                    {.name = "video", .label = "Your video", .type = Path, .widget = Widget::Path,
                     .hint = "Any video Windows plays (mp4, mov, wmv...), or an Edit video step's edit. Scaled to "
-                            "the movie's size (black bars if its shape differs). Its sound is used where the movie has "
-                            "sound in its file (the logos, mva300 / 301); the story movies' sound is in the game's "
-                            "sound bank. Empty: a test card, to see where and how the game plays the movie.",
+                            "the movie's size (black bars if its shape differs). Its sound goes in the movie file "
+                            "where the movie has sound there (the logos, mva300 / 301), else in its sound packages "
+                            "(Replace its sound). Empty: a test card, to see where and how the game plays the movie.",
                     .path = PathKind::OpenFile, .filter = kVideoFormats},
                    {.name = "same_length", .label = "Same length as the original", .type = Text,
                     .widget = Widget::Checkbox,
                     .hint = "Cut a longer video, and hold the last frame of a shorter one, to the original's length "
-                            "(its sound too: cut, or silence after it). A story movie's sound plays from the game's "
-                            "sound bank, timed to the original. Off: your video's own length (untested in game).",
-                    .initial = "true"}},
-        .outputs = {{"movie", Path, "new movie"}, {"fhd", Path, "1080p copy (if any)"}},
+                            "(its sound too: cut, or silence after it; the sound packages' sounds keep their own "
+                            "lengths, as the game's sound bank expects). Off: your video's own length (untested in "
+                            "game).",
+                    .initial = "true"},
+                   {.name = "sound", .label = "Replace its sound", .type = Text, .widget = Widget::Checkbox,
+                    .hint = "The story movies mva000, mva201 and mva202 play their sound from the game's sound "
+                            "packages, not the movie file. On: new packages, the music (or, with none, the effects) "
+                            "holding your video's sound (a test card's: a beep each second) and every other sound, "
+                            "dialogue in every language too, silent. Each keeps the original's format so the sound "
+                            "bank still fits. Off: the game's own sound plays over your movie. Other movies have no "
+                            "packages: nothing to do.",
+                    .initial = "true", .advanced = true}},
+        .outputs = {{"movie", Path, "new movie"},
+                    {"fhd", Path, "1080p copy (if any)"},
+                    {.name = "sound", .type = Path, .label = "sound packages (if any)", .list = true}},
         .family = Family::Transform,
         .run = [](NodeRun& r) {
             const MovieFiles m = movie_files(r, r.resolve(r.text("movie")));
@@ -1366,8 +1428,63 @@ NodeSpec replace_movie_node() {
                 made.push_back(out);
                 r.output(port, file_value(out, m.folder + file));
             }
+            const fs::path movie = made.front();
+
+            // The sound packages (a story movie's sound): each sound in its original's format, so the game's sound
+            // bank still fits; the music's (or the effects' if there's no music) from the video, the rest silent.
+            std::vector<Value> sound_files;
+            std::vector<ListItem> sound_items;
+            const auto packages = r.text("sound") != "false" ? sound_packages(r, m) : std::vector<SoundPackage>{};
+            const bool has_music = std::ranges::any_of(packages, [](const SoundPackage& p) {
+                return p.name.find("_bgm.") != std::string::npos;
+            });
+            const double seconds = same_length ? 0 : read_mp4_info(movie).seconds;  // own length: the new movie's
+            std::string sound_from;
+            for (const SoundPackage& p : packages) {
+                const bool main = p.name.find(has_music ? "_bgm." : "_se.") != std::string::npos;
+                const std::string key = hash_hex(stamp(p.streaming) + '\0' +
+                                                 (main ? (video.empty() ? "card" : stamp(video)) : "silence") +
+                                                 (same_length ? "|same" : "|own" + std::to_string(seconds)) + "|snd1");
+                const fs::path data = cache.empty() ? r.temp_file("_" + p.name) : cache / (key + ".spck");
+                const fs::path header = cache.empty() ? r.temp_file("_header_" + p.name) : cache / (key + "_h.spck");
+                if (!cache.empty() && fs::is_regular_file(data, ec) && fs::is_regular_file(header, ec)) {
+                    fs::last_write_time(data, fs::file_time_type::clock::now(), ec);
+                    fs::last_write_time(header, fs::file_time_type::clock::now(), ec);
+                } else {
+                    Akpk pack;
+                    try {
+                        pack = read_akpk(read_bytes(p.streaming));
+                        for (AkpkFile& f : pack.streams) {
+                            const WemInfo like = read_wem_info(f.data);
+                            const auto frames = same_length ? std::uint64_t(like.samples)
+                                                            : std::uint64_t(std::llround(seconds * like.rate));
+                            std::string what;
+                            const auto pcm = main ? read_sound(video, like.rate, like.channels, frames, &what)
+                                                  : std::vector<std::int16_t>(size_t(frames) * like.channels);
+                            if (main) sound_from = what;
+                            f.data = encode_wem(f.data, pcm, find_codebooks());
+                        }
+                    } catch (const std::runtime_error& e) {
+                        throw GraphError(p.name + ": " + e.what());
+                    }
+                    if (!cache.empty()) fs::create_directories(cache);
+                    write_bytes(data, write_akpk(pack, true));
+                    write_bytes(header, write_akpk(pack, false));
+                }
+                made.push_back(data), made.push_back(header);
+                sound_files.push_back(file_value(data, "streaming/" + p.folder + p.name));
+                sound_items.push_back({p.name + " (streaming)", "streaming/" + p.folder + p.name});
+                sound_files.push_back(file_value(header, p.folder + p.name));
+                sound_items.push_back({p.name, p.folder + p.name});
+            }
+            r.output_list("sound", std::move(sound_files), std::move(sound_items));
+            if (!packages.empty())
+                message += "; " + std::to_string(packages.size()) + " sound packages" +
+                           (sound_from.empty() ? " unchanged"
+                                               : std::string(has_music ? " (music: " : " (effects: ") + sound_from +
+                                                     ", the rest silent)");
             if (!cache.empty()) prune_cache(cache, made);
-            r.done(message + (video.empty() ? " (test card)" : ""), made.front());
+            r.done(message + (video.empty() ? " (test card)" : ""), movie);
         },
     };
 }
@@ -2284,10 +2401,12 @@ const char* ai_note(std::string_view type) {
         {"PackageMod", "End of a mod graph: textures (any number, or every item of a list) and other files (Replace "
                        "movie's) into a Fluffy Mod Manager .zip. Needs a mod name and output folder; Replace existing "
                        "to rebuild."},
-        {"ReplaceMovie", "Replaces a pre-rendered game movie (streaming/_chainsaw/movie/...). Link both outputs into "
-                         "Package's 'other file'. Leave Your video empty for a test card naming the movie, to find out "
-                         "where it plays. Keep 'Same length' on: the movie's sound is timed to the original. Encoding "
-                         "a 4K movie takes a while; an unchanged run reuses it."},
+        {"ReplaceMovie", "Replaces a pre-rendered game movie (streaming/_chainsaw/movie/...). Link all three outputs "
+                         "(movie, 1080p copy, sound packages) into Package's 'other file'. Leave Your video empty for a "
+                         "test card naming the movie, to find out where it plays. Keep 'Same length' on: the game's "
+                         "sound bank is timed to the original. mva000 / 201 / 202 get new sound packages (the video's "
+                         "sound, the rest silent) unless 'Replace its sound' is off. Encoding a 4K movie takes a "
+                         "while; an unchanged run reuses it."},
         {"ExportMovie", "Start of a hand-edited movie: Export movie -> Edit video -> Replace movie's Your video. Feed "
                         "its Game movie and Replace movie's from one Value through a Split."},
         {"EditVideo", "The user's manual step for a movie: a run pauses here. Never mark it done yourself: tell the user "

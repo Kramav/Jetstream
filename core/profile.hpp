@@ -21,6 +21,9 @@ struct Profile {
     std::string noesis_export;  // optional (Noesis is): its ?cmode export options for this game
     std::string file_list;
     std::string noesis_game;  // optional: the RE Engine plugin's name for the game, e.g. "RE4" (its <game>NativesPath.txt)
+    // optional: where a movie's sound packages are, under the natives root (and its streaming/), as a file name
+    // prefix with {id} for the movie's, e.g. "_chainsaw/sound/wwise/ch_{id}_". Empty: movies' sound isn't replaced.
+    std::string movie_sound;
 
     // Names of fields still set to "TBD" (awaiting the §9 spike).
     std::vector<std::string> unresolved() const;

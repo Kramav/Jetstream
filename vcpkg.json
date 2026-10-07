@@ -12,7 +12,9 @@
     },
     "imgui-node-editor",
     "nativefiledialog-extended",
-    { "name": "directxtex", "default-features": false, "features": ["dx11"] }
+    { "name": "directxtex", "default-features": false, "features": ["dx11"] },
+    "opus",
+    "libvorbis"
   ],
   "overrides": [
     { "name": "imgui", "version": "1.92.9" },

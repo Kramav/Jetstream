@@ -107,7 +107,7 @@ Undo / redo: **Ctrl+Z** / **Ctrl+Y**. Save: **Ctrl+S**. A `*` in the title means
 | Preview | Shows a picture on the graph. |
 | Export movie | Copies a game movie to a file for you to edit (below). |
 | Edit video | **Your step:** edit the movie and render your edit; the run waits until you click Done editing. |
-| Replace movie | A new version of one of the game's movies: your video, or a test card (below). |
+| Replace movie | A new version of one of the game's movies: your video, or a test card (below), and its sound packages. |
 | Package for Fluffy | Builds the mod and its zip. |
 | Copy / Move / Rename / Delete file, Make folder | File housekeeping. Delete uses the Recycle Bin. |
 | Run program | Runs a program or script as a step (below). |
@@ -183,18 +183,24 @@ The game's pre-rendered movies are video files under `natives\STM\streaming\_cha
    its shape differs, and retimed to the movie's frame rate. **Leave it empty for a test card:** the movie's name
    and the seconds counting, as long as the original. Use that to find out where the game plays a movie.
 3. **Same length as the original** (on by default): a longer video is cut, a shorter one holds its last frame, so
-   the movie lasts as long as the original. Most movies' sound isn't in the file: the game plays it from its sound
-   bank, timed to the original, so a different length would put picture and sound out of step.
-4. **Sound:** a movie with sound in its file (the logos `mv7000` / `mv7001`, and `mva300` / `mva301`) gets your
-   video's sound, re-encoded to match (AAC, 48 kHz stereo), cut or padded with silence to the picture's length.
-   Your video has none: silence. A test card for one of them beeps each second, so you can hear whether the game
-   plays the file's sound. The other movies have no sound track, like their originals.
-5. Link both outputs into Package's **other file** inputs.
+   the movie lasts as long as the original. Some movies' sound isn't in the file: the game plays it from its sound
+   packages, timed to the original, so a different length would put picture and sound out of step.
+4. **Sound in the file:** a movie with sound in its file (the logos `mv7000` / `mv7001`, and `mva300` / `mva301`)
+   gets your video's sound, re-encoded to match (AAC, 48 kHz stereo), cut or padded with silence to the picture's
+   length. Your video has none: silence. A test card for one of them beeps each second, so you can hear whether the
+   game plays the file's sound.
+5. **Sound in the game's sound packages** (the story movies `mva000`, `mva201`, `mva202`): **Replace its sound** (on
+   by default; it shows under "settings at their defaults") makes new packages. The music, or for a movie without
+   music its effects, gets your video's sound (a test card's: a beep each second); every other sound, the dialogue
+   in every language too, becomes silence, so the original's sound doesn't play over your movie. Each new sound keeps
+   its original's format and length, so the game's sound bank still fits. Turn it off to keep the game's own sound.
+   The other movies have no sound packages (and no sound track): nothing to do.
+6. Link all three outputs (**new movie**, **1080p copy**, **sound packages**) into Package's **other file** inputs.
 
 Encoding takes a while for a 4K movie (about 20 s for the 61 s intro on a PC with a hardware encoder). A run with
 nothing changed reuses it. After a run, a movie block's **Preview movie** button (Use layout) plays its movie in the
 viewer: Replace movie's new movie, Export movie's copy, Edit video's edit. Example `12_replace_a_movie` is the test
-card for `mva000`, ready to run.
+card for `mva000`, with its sound packages beeping, ready to run.
 
 ### Editing a movie by hand
 
@@ -208,7 +214,8 @@ runs; picking another movie exports again and the edit step waits again. Example
 whole chain, for `mva402`.
 
 Not known yet (needs a test in game): whether a movie of another length plays fully (turn off **Same length** to
-try); whether the game plays a replaced file's sound (the logos); which movie plays where.
+try); whether the game plays a replaced file's sound (the logos) and a replaced sound package's (example 12's
+beep); which movie plays where.
 
 ## Built from blocks
 

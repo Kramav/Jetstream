@@ -37,6 +37,14 @@ MovieInfo read_mp4_info(const std::filesystem::path& file);
 std::string encode_movie(const std::filesystem::path& video, const MovieInfo& like, const std::string& title,
                   const std::filesystem::path& out, bool same_length = false);
 
+// `video`'s sound (its first sound track) as 16-bit samples at `rate`, `channels` interleaved in a WAV's order,
+// exactly `frames` long: cut, or silence after it. Windows converts the rate and mixes to mono or stereo; with more
+// channels the sound is in the first two (front left and right), the rest silent. A video without sound: silence.
+// No `video`: a test card's beep (1 kHz, the first tenth of each second) in the first two. *what says which, as
+// encode_movie's. Throws std::runtime_error.
+std::vector<std::int16_t> read_sound(const std::filesystem::path& video, unsigned rate, unsigned channels,
+                                     std::uint64_t frames, std::string* what = nullptr);
+
 // Plays a video for a preview (any file Windows plays; game movies named .mov.1.x64 too): frames are decoded on a
 // thread of its own (Windows' Media Foundation), scaled to fit `max_side` (keeping the shape), as 32-bit BGRA. It
 // opens paused on the first frame. Front ends call take() each frame and draw what it gives.
