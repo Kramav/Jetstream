@@ -21,8 +21,10 @@ struct Profile {
     std::string noesis_export;  // optional (Noesis is): its ?cmode export options for this game
     std::string file_list;
     std::string noesis_game;  // optional: the RE Engine plugin's name for the game, e.g. "RE4" (its <game>NativesPath.txt)
-    // optional: where a movie's sound packages are, under the natives root (and its streaming/), as a file name
-    // prefix with {id} for the movie's, e.g. "_chainsaw/sound/wwise/ch_{id}_". Empty: movies' sound isn't replaced.
+    // optional: the game's Wwise sound files (banks .sbnk, packages .spck) under the natives root and its streaming/,
+    // e.g. "_chainsaw/sound/wwise". Empty: sounds can't be replaced.
+    std::string sound_dir;
+    // optional: a movie's sound packages there, a file name prefix with {id} for the movie's, e.g. "ch_{id}_".
     std::string movie_sound;
 
     // Names of fields still set to "TBD" (awaiting the §9 spike).

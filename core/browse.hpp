@@ -16,6 +16,7 @@ namespace remod {
 struct AssetIndex {
     std::vector<std::string> textures;  // *.tex.*
     std::vector<std::string> meshes;    // *.mesh.*
+    std::vector<std::string> sounds;    // Wwise banks *.sbnk.* and packages *.spck.* (the latter header-only here)
 };
 
 // Walks the folder once. Skips streaming/: it holds high-resolution copies of textures listed elsewhere.
@@ -43,8 +44,8 @@ std::string file_name(const std::string& path);
 // ---- Browsing any folder (the Browser goes anywhere, not only the indexed game files) ----
 
 // What a file is, by its name: an RE Engine texture (.tex, .tex.<version>), mesh (.mesh.<version>), an image the
-// edit step reads (png, tga, jpg), anything else.
-enum class FileKind { Folder, Texture, Mesh, Image, Movie, Other };
+// edit step reads (png, tga, jpg), a movie, a Wwise sound bank or package (.sbnk.*, .spck.*), anything else.
+enum class FileKind { Folder, Texture, Mesh, Image, Movie, Sound, Other };
 FileKind file_kind(const std::string& name);
 
 struct DirEntry {

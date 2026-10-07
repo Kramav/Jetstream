@@ -5,6 +5,7 @@
 #include "mesh_view.hpp"
 #include "movie_view.hpp"
 #include "profile.hpp"
+#include "sound.hpp"
 #include "zoom_view.hpp"
 
 #include <d3d11.h>
@@ -43,10 +44,12 @@ public:
     void show_in_viewer(std::function<void()> draw_view) {
         external_ = std::move(draw_view);
         close_movie();
+        close_sounds();
     }
     // A movie (a game movie or any video) playing in the viewer, until something else is picked or it's closed.
     void show_movie(const std::string& abs) {
         external_ = nullptr;
+        close_sounds();
         movie_ = abs;
         movie_open_ = true;
     }
@@ -100,6 +103,13 @@ private:
         movie_open_ = false;
         movie_view_.close();
     }
+    void show_sounds(const std::string& abs);  // a bank's or package's sounds in the viewer
+    void close_sounds();                        // stops playing too
+    void draw_sounds();
+    // Game files shown: everything indexed, or (sounds_only_) only the sound banks and packages, of one language.
+    void update_filter();
+    const std::vector<std::string>& game_files() const { return sounds_only_ ? shown_files_ : index_->files; }
+    const remod::FolderTree& game_tree() const { return sounds_only_ ? shown_tree_ : index_->tree; }
 
     ID3D11Device* device_;
     ID3D11BlendState* opaque_ = nullptr;
@@ -113,6 +123,7 @@ private:
     // Where the Browser is: a folder of the game files' index, or any folder on disk.
     bool in_index_ = true;
     size_t folder_ = 0;               // the index folder
+    std::string folder_rel_;          // its path, so a filter's other tree finds it again
     std::filesystem::path place_;     // the disk folder
     std::string address_;             // the address bar's text
     std::vector<remod::DirEntry> listing_;  // place_'s entries, read when going there or on Refresh
@@ -137,6 +148,27 @@ private:
     MovieView movie_view_;
     std::string movie_;        // the movie in the viewer while movie_open_
     bool movie_open_ = false;
+    // A sound bank or package in the viewer (CLAUDE.md §10 Game sounds): its sounds, one playing.
+    std::string sounds_;
+    bool sounds_open_ = false;
+    std::future<std::vector<remod::SoundEntry>> sounds_loading_;
+    // Listings replaced while still running: a std::async future waits for its task when destroyed, so they're
+    // kept until done instead of freezing the window.
+    std::vector<std::future<std::vector<remod::SoundEntry>>> retired_lists_;
+    std::vector<remod::SoundEntry> sound_list_;
+    std::string sounds_error_;
+    std::future<std::string> decoding_;  // a sound's WAV bytes, for playing
+    std::future<std::string> saving_;    // Save as WAV: "" when written, else why not
+    std::uint32_t saving_id_ = 0;
+    std::string playing_wav_;            // what PlaySound plays (it reads it while playing)
+    std::uint32_t playing_id_ = 0;
+    // The Game files filter (user, 2026-10-07: folders without sound banks, and other languages' files, filled the
+    // Browser). ponytail: for this session only, not saved in the settings.
+    bool sounds_only_ = false;
+    std::string sound_language_;  // "" = every language; else files without a language and this one's
+    std::vector<std::string> shown_files_, sound_languages_;
+    remod::FolderTree shown_tree_;
+    std::string filter_for_ = "\x01";
     std::future<remod::MeshModel> mesh_loading_;
     std::string loading_mesh_, shown_mesh_;  // being converted; in the view (or failed)
     std::string model_error_;

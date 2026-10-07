@@ -6,7 +6,7 @@
 #include "movie.hpp"
 #include "package.hpp"
 #include "process.hpp"
-#include "wwise.hpp"
+#include "sound.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -1113,6 +1113,8 @@ NodeSpec package_mod() {
             }
             const size_t textures = spec.files.size();
             for (const auto& file : r.values("file")) {
+                if (file.game_path.starts_with("sound:"))
+                    throw GraphError("a Game sound goes into Replace sounds, which makes the files to package");
                 if (file.game_path.empty())
                     throw GraphError("in-game path unknown for " + file.path.filename().string() +
                                      ": 'other file' takes files from blocks that know it, such as Replace movie");
@@ -1198,34 +1200,37 @@ InputSpec game_movie_input() {
             .path = PathKind::OpenFile, .filter = "x64"};
 }
 
-// A movie's sound packages (the profile's movie_sound; RE4R: _chainsaw/sound/wwise/ch_<id>_*.spck.*): the
-// streaming copy holding the sounds, and the header-only copy outside streaming/. Only mva000, mva201 and mva202
-// have any (CLAUDE.md §10).
+// A movie's sound packages (the profile's sound_dir and movie_sound; RE4R: _chainsaw/sound/wwise/ch_<id>_*.spck.*):
+// their header-only copies outside streaming/. Only mva000, mva201 and mva202 have any (CLAUDE.md §10).
 struct SoundPackage {
-    fs::path streaming, base;
-    std::string name, folder;  // folder: in-game, under the natives root, ending in '/'
+    fs::path base;
+    std::string name;
 };
 
 std::vector<SoundPackage> sound_packages(const NodeRun& r, const MovieFiles& m) {
-    std::string pattern = r.profile().movie_sound;
-    if (pattern.empty()) return {};
-    if (const size_t at = pattern.find("{id}"); at != std::string::npos) pattern.replace(at, 4, m.id);
+    std::string prefix = r.profile().movie_sound;
+    if (prefix.empty() || r.profile().sound_dir.empty()) return {};
+    if (const size_t at = prefix.find("{id}"); at != std::string::npos) prefix.replace(at, 4, m.id);
     auto lower = [](std::string s) {
         std::ranges::transform(s, s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return s;
     };
-    const fs::path rel(pattern);
-    const std::string prefix = lower(rel.filename().string()), folder = rel.parent_path().generic_string() + "/";
     std::vector<SoundPackage> out;
     std::error_code ec;
-    for (const auto& e : fs::directory_iterator(long_path(m.natives / "streaming" / rel.parent_path()), ec)) {
+    for (const auto& e : fs::directory_iterator(long_path(m.natives / r.profile().sound_dir), ec)) {
         const std::string name = e.path().filename().string();
-        if (lower(name).starts_with(prefix) && lower(name).find(".spck.") != std::string::npos)
-            out.push_back({m.natives / "streaming" / rel.parent_path() / name, m.natives / rel.parent_path() / name,
-                           name, folder});
+        if (lower(name).starts_with(lower(prefix)) && lower(name).find(".spck.") != std::string::npos)
+            out.push_back({e.path(), name});
     }
     std::ranges::sort(out, {}, &SoundPackage::name);
     return out;
+}
+
+// What a cached result is made from: a file's path, size and write time.
+// ponytail: not its bytes (hundreds of MB); a file changed within the same second at the same size is missed.
+std::string stamp(const fs::path& f) {
+    return f.string() + '|' + std::to_string(fs::file_size(long_path(f))) + '|' +
+           std::to_string(fs::last_write_time(long_path(f)).time_since_epoch().count());
 }
 
 std::string read_bytes(const fs::path& file) {
@@ -1244,6 +1249,66 @@ void write_bytes(const fs::path& file, const std::string& bytes) {
         if (!out) throw GraphError("can't write " + part.string());
     }
     fs::rename(long_path(part), long_path(file));
+}
+
+// Sound files (banks, packages) a block makes, kept in the run cache under one key: <key>_<n>.wwise and the list
+// <key>.sounds of their game paths. An unchanged run reuses them (*reused). `made` gets every file, for prune_cache.
+std::vector<Value> cached_sound_files(NodeRun& r, const std::string& key,
+                                      const std::function<std::vector<SoundFile>()>& make,
+                                      std::vector<fs::path>& made, bool* reused) {
+    const fs::path& cache = r.run.options.cache_dir;
+    std::error_code ec;
+    std::vector<Value> out;
+    if (const fs::path list = cache / (key + ".sounds"); !cache.empty() && fs::is_regular_file(list, ec)) {
+        std::ifstream in(list);
+        bool whole = true;
+        for (std::string line; std::getline(in, line);) {
+            const size_t tab = line.find('\t');
+            const fs::path file = cache / line.substr(0, tab);
+            whole = whole && tab != std::string::npos && fs::is_regular_file(file, ec);
+            out.push_back(file_value(file, line.substr(tab + 1)));
+        }
+        if (whole && !out.empty()) {
+            for (const Value& v : out) fs::last_write_time(v.path, fs::file_time_type::clock::now(), ec), made.push_back(v.path);
+            fs::last_write_time(list, fs::file_time_type::clock::now(), ec);
+            made.push_back(list);
+            *reused = true;
+            return out;
+        }
+        out.clear();
+    }
+    *reused = false;
+    std::vector<SoundFile> files;
+    try {
+        files = make();
+    } catch (const std::runtime_error& e) {
+        throw GraphError(e.what());
+    }
+    std::string listing;
+    if (!cache.empty()) fs::create_directories(cache);
+    for (size_t i = 0; i < files.size(); ++i) {
+        const fs::path file = cache.empty() ? r.temp_file("_" + std::to_string(i) + ".wwise")
+                                            : cache / (key + "_" + std::to_string(i) + ".wwise");
+        write_bytes(file, files[i].bytes);
+        made.push_back(file);
+        out.push_back(file_value(file, files[i].game_path));
+        listing += file.filename().string() + "\t" + files[i].game_path + "\n";
+    }
+    if (!cache.empty()) {
+        write_bytes(cache / (key + ".sounds"), listing);
+        made.push_back(cache / (key + ".sounds"));
+    }
+    return out;
+}
+
+// A list output's items for sound files: each by its file name and game path.
+std::vector<ListItem> sound_items(const std::vector<Value>& files) {
+    std::vector<ListItem> items;
+    for (const Value& v : files)
+        items.push_back({v.game_path.substr(v.game_path.rfind('/') + 1) +
+                             (v.game_path.starts_with("streaming/") ? " (streaming)" : ""),
+                         v.game_path});
+    return items;
 }
 
 NodeSpec export_movie_node() {
@@ -1373,12 +1438,6 @@ NodeSpec replace_movie_node() {
             std::error_code ec;
             if (!video.empty() && !fs::is_regular_file(long_path(video), ec))
                 throw GraphError("video not found: " + video.string());
-            // What the encode is made from, for the run cache. ponytail: files by name, size and write time, not
-            // their bytes (hundreds of MB); a video edited within the same second with the same size is missed.
-            auto stamp = [&](const fs::path& f) {
-                return f.string() + '|' + std::to_string(fs::file_size(long_path(f))) + '|' +
-                       std::to_string(fs::last_write_time(long_path(f)).time_since_epoch().count());
-            };
             const fs::path& cache = r.run.options.cache_dir;
             std::vector<fs::path> made;
             std::string message;
@@ -1430,61 +1489,168 @@ NodeSpec replace_movie_node() {
             }
             const fs::path movie = made.front();
 
-            // The sound packages (a story movie's sound): each sound in its original's format, so the game's sound
-            // bank still fits; the music's (or the effects' if there's no music) from the video, the rest silent.
-            std::vector<Value> sound_files;
-            std::vector<ListItem> sound_items;
+            // A story movie's sound (its packages, and the banks holding their first parts and sizes): each sound
+            // in its original's form, so the game's banks still fit; the music's (or the effects' if there's no
+            // music) from the video, the rest silent.
             const auto packages = r.text("sound") != "false" ? sound_packages(r, m) : std::vector<SoundPackage>{};
-            const bool has_music = std::ranges::any_of(packages, [](const SoundPackage& p) {
-                return p.name.find("_bgm.") != std::string::npos;
-            });
-            const double seconds = same_length ? 0 : read_mp4_info(movie).seconds;  // own length: the new movie's
-            std::string sound_from;
-            for (const SoundPackage& p : packages) {
-                const bool main = p.name.find(has_music ? "_bgm." : "_se.") != std::string::npos;
-                const std::string key = hash_hex(stamp(p.streaming) + '\0' +
-                                                 (main ? (video.empty() ? "card" : stamp(video)) : "silence") +
-                                                 (same_length ? "|same" : "|own" + std::to_string(seconds)) + "|snd1");
-                const fs::path data = cache.empty() ? r.temp_file("_" + p.name) : cache / (key + ".spck");
-                const fs::path header = cache.empty() ? r.temp_file("_header_" + p.name) : cache / (key + "_h.spck");
-                if (!cache.empty() && fs::is_regular_file(data, ec) && fs::is_regular_file(header, ec)) {
-                    fs::last_write_time(data, fs::file_time_type::clock::now(), ec);
-                    fs::last_write_time(header, fs::file_time_type::clock::now(), ec);
-                } else {
-                    Akpk pack;
+            std::vector<Value> sounds;
+            if (!packages.empty()) {
+                const bool has_music = std::ranges::any_of(packages, [](const SoundPackage& p) {
+                    return p.name.find("_bgm.") != std::string::npos;
+                });
+                const double seconds = same_length ? 0 : read_mp4_info(movie).seconds;  // own length: the new movie's
+                std::set<std::uint32_t> ids, main_ids;
+                std::string key = (video.empty() ? std::string("card") : stamp(video)) +
+                                  (same_length ? "|same" : "|own" + std::to_string(seconds)) + "|snd2";
+                for (const SoundPackage& p : packages) {
+                    key += '\0' + stamp(p.base);
+                    const bool main = p.name.find(has_music ? "_bgm." : "_se.") != std::string::npos;
                     try {
-                        pack = read_akpk(read_bytes(p.streaming));
-                        for (AkpkFile& f : pack.streams) {
-                            const WemInfo like = read_wem_info(f.data);
-                            const auto frames = same_length ? std::uint64_t(like.samples)
-                                                            : std::uint64_t(std::llround(seconds * like.rate));
-                            std::string what;
-                            const auto pcm = main ? read_sound(video, like.rate, like.channels, frames, &what)
-                                                  : std::vector<std::int16_t>(size_t(frames) * like.channels);
-                            if (main) sound_from = what;
-                            f.data = encode_wem(f.data, pcm, find_codebooks());
+                        for (const AkpkFile& f : read_akpk(read_bytes(p.base)).streams) {
+                            ids.insert(std::uint32_t(f.id));
+                            if (main) main_ids.insert(std::uint32_t(f.id));
                         }
                     } catch (const std::runtime_error& e) {
                         throw GraphError(p.name + ": " + e.what());
                     }
-                    if (!cache.empty()) fs::create_directories(cache);
-                    write_bytes(data, write_akpk(pack, true));
-                    write_bytes(header, write_akpk(pack, false));
                 }
-                made.push_back(data), made.push_back(header);
-                sound_files.push_back(file_value(data, "streaming/" + p.folder + p.name));
-                sound_items.push_back({p.name + " (streaming)", "streaming/" + p.folder + p.name});
-                sound_files.push_back(file_value(header, p.folder + p.name));
-                sound_items.push_back({p.name, p.folder + p.name});
+                std::string sound_from;
+                bool reused = false;
+                sounds = cached_sound_files(r, hash_hex(key), [&] {
+                    return replace_sounds(m.natives, r.profile().sound_dir, ids,
+                                          [&](std::uint32_t id, const WemInfo& like, bool music) {
+                                              const auto frames = same_length || music
+                                                                      ? std::uint64_t(like.samples)
+                                                                      : std::uint64_t(std::llround(seconds * like.rate));
+                                              if (!main_ids.contains(id))
+                                                  return std::vector<std::int16_t>(size_t(frames) * like.channels);
+                                              return read_sound(video, like.rate, like.channels, frames, &sound_from);
+                                          },
+                                          find_codebooks())
+                        .files;
+                }, made, &reused);
+                message += "; " + std::to_string(packages.size()) + " sound packages and their banks" +
+                           (reused ? " unchanged"
+                                   : std::string(has_music ? " (music: " : " (effects: ") + sound_from +
+                                         ", the rest silent)");
             }
-            r.output_list("sound", std::move(sound_files), std::move(sound_items));
-            if (!packages.empty())
-                message += "; " + std::to_string(packages.size()) + " sound packages" +
-                           (sound_from.empty() ? " unchanged"
-                                               : std::string(has_music ? " (music: " : " (effects: ") + sound_from +
-                                                     ", the rest silent)");
+            r.output_list("sound", sounds, sound_items(sounds));
             if (!cache.empty()) prune_cache(cache, made);
             r.done(message + (video.empty() ? " (test card)" : ""), movie);
+        },
+    };
+}
+
+// ---- Game sounds (CLAUDE.md §10, "Game sounds") ----
+
+constexpr const char* kAudioFormats = "wav,mp3,m4a,aac,wma,flac,mp4,m4v,mov,wmv,avi,mkv";
+
+NodeSpec game_sound_node() {
+    return {
+        .type = "GameSound",
+        .title = "Game sound",
+        .summary = "One of the game's sounds and your audio to put in its place. Drag a sound from a bank's or "
+                   "package's list in the Browser onto the graph (or onto this field). Link it into Replace sounds.",
+        .inputs = {{.name = "sound", .label = "Game sound", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "The sound: the bank or package it's in and its id, e.g. "
+                            "{game}\\_chainsaw\\sound\\wwise\\ch_mva000_dialogue.sbnk.1.x64.en#880852580. Drag one "
+                            "from the Sounds list (click a bank or package in the Browser).",
+                    .path = PathKind::GameSound},
+                   {.name = "audio", .label = "Your audio", .type = Path, .widget = Widget::Path,
+                    .hint = "Any audio Windows plays (wav, mp3, m4a, wma, flac, or a video's sound). Empty: "
+                            "silence, as long as the original.",
+                    .path = PathKind::OpenFile, .filter = kAudioFormats}},
+        .outputs = {{"sound", Path, "sound"}},
+        .family = Family::Source,
+        .pure = true,
+        .run = [](NodeRun& r) {
+            std::string file;
+            std::uint32_t id = 0;
+            if (!parse_game_sound(r.text("sound"), file, id))
+                throw GraphError("'" + r.text("sound") + "' isn't a game sound (<bank or package>#<id>): drag one "
+                                 "from the Sounds list");
+            const std::string typed = r.text("audio");
+            const fs::path audio = typed.empty() ? fs::path() : r.resolve(typed);
+            std::error_code ec;
+            if (!audio.empty() && !fs::is_regular_file(long_path(audio), ec))
+                throw GraphError("not found: " + audio.string());
+            // A sound, not a file to package: Replace sounds reads the id from "sound:<id>".
+            r.output("sound", {audio.string(), audio, "sound:" + std::to_string(id)});
+            r.done("sound " + std::to_string(id) + ": " + (audio.empty() ? "silence" : audio.filename().string()));
+        },
+    };
+}
+
+NodeSpec replace_sounds_node() {
+    return {
+        .type = "ReplaceSounds",
+        .title = "Replace sounds",
+        .summary = "Puts your audio in place of game sounds: from Game sound blocks (drag a sound from the "
+                   "Browser onto the graph), or audio files named by the sound's id. Every bank and package holding "
+                   "or naming a sound is rewritten to match; connect the sound files to Package for Fluffy.",
+        .inputs = {{.name = "sounds", .label = "sound", .type = Path, .required = true, .multiple = true,
+                    .hint = "Game sound blocks, or audio files (wav, mp3, m4a, wma, flac, or a video's sound) whose "
+                            "names hold the game sound's id: their last run of 4 or more digits (a Files in folder "
+                            "gives many at once)."},
+                   {.name = "same_length", .label = "Same length as the original", .type = Text,
+                    .widget = Widget::Checkbox,
+                    .hint = "Cut each sound, or pad it with silence, to its original's length. Off: your audio's own "
+                            "length (a sound in one of the game's music tracks always keeps its own: a music track "
+                            "records its length).",
+                    .initial = "false"},
+                   {.name = "game", .label = "Game files", .type = Folder, .widget = Widget::Path,
+                    .hint = "Your Game files folder (the extracted natives\\STM), where the game's sounds are read "
+                            "from.",
+                    .path = PathKind::Folder, .initial = "{game}", .advanced = true}},
+        .outputs = {{.name = "files", .type = Path, .label = "sound files", .list = true}},
+        .family = Family::Transform,
+        .run = [](NodeRun& r) {
+            if (r.profile().sound_dir.empty()) throw GraphError("this game's sound folder isn't known (no sound_dir)");
+            const fs::path natives = r.resolve(r.text("game"));
+            const bool same_length = r.text("same_length") == "true";
+            std::map<std::uint32_t, fs::path> audio;  // an empty path: silence
+            std::string key = natives.string() + (same_length ? "|same" : "|own") + "|sounds2";
+            std::error_code ec;
+            for (const Value& v : r.values("sounds")) {
+                const std::string name = v.path.filename().string();
+                // A Game sound block's names its id; a file's name holds it.
+                const bool block = v.game_path.starts_with("sound:");
+                const std::uint32_t id = block ? std::uint32_t(std::stoul(v.game_path.substr(6))) : sound_id_in(name);
+                if (!id) throw GraphError(name + " has no sound id in its name (a run of 4 or more digits)");
+                if (!(block && v.path.empty()) && !fs::is_regular_file(long_path(v.path), ec))
+                    throw GraphError("not found: " + v.path.string());
+                if (const auto [it, added] = audio.emplace(id, v.path); !added)
+                    throw GraphError("two sounds for game sound " + std::to_string(id) + ": " +
+                                     (it->second.empty() ? std::string("silence") : it->second.filename().string()) +
+                                     " and " + (v.path.empty() ? std::string("silence") : name));
+                key += '\0' + std::to_string(id) + (v.path.empty() ? std::string("silence") : stamp(v.path));
+            }
+            std::set<std::uint32_t> ids;
+            for (const auto& [id, file] : audio) ids.insert(id);
+            std::vector<fs::path> made;
+            bool reused = false;
+            const auto files = cached_sound_files(r, hash_hex(key), [&] {
+                SoundReplacement got = replace_sounds(natives, r.profile().sound_dir, ids,
+                                                      [&](std::uint32_t id, const WemInfo& like, bool music) {
+                                                          if (audio.at(id).empty())  // silence, the original's length
+                                                              return std::vector<std::int16_t>(size_t(like.samples) *
+                                                                                               like.channels);
+                                                          return read_sound(audio.at(id), like.rate, like.channels,
+                                                                            same_length || music ? like.samples : 0);
+                                                      },
+                                                      find_codebooks());
+                if (!got.missing.empty()) {
+                    std::string list;
+                    for (const std::uint32_t id : got.missing) list += (list.empty() ? "" : ", ") + std::to_string(id);
+                    throw GraphError("not in the game's sound files: " + list +
+                                     " (a sound's id is in the Browser's list of a bank's or package's sounds)");
+                }
+                return std::move(got.files);
+            }, made, &reused);
+            r.output_list("files", files, sound_items(files));
+            if (!r.run.options.cache_dir.empty()) prune_cache(r.run.options.cache_dir, made);
+            r.done(std::to_string(ids.size()) + " sound(s) " + (reused ? "unchanged" : "replaced") + ": " +
+                   std::to_string(files.size()) + " sound files");
         },
     };
 }
@@ -2351,7 +2517,7 @@ const std::vector<NodeSpec>& node_specs() {
         resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), part_texture_node(),
         mesh_mask_node(),
         mask_blend_node(), replace_photo_node(),
-        preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), package_mod(),
+        preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), game_sound_node(), replace_sounds_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), if_node(), first_of_node(), file_exists_node(), text_matches_node(), not_node(),
@@ -2407,6 +2573,13 @@ const char* ai_note(std::string_view type) {
                          "sound bank is timed to the original. mva000 / 201 / 202 get new sound packages (the video's "
                          "sound, the rest silent) unless 'Replace its sound' is off. Encoding a 4K movie takes a "
                          "while; an unchanged run reuses it."},
+        {"GameSound", "One game sound to replace: 'sound' is <bank or package path>#<id> (ids: `remod sounds --file "
+                      "<bank>`, or the Browser's Sounds list); 'audio' the replacement (empty: silence). Link its "
+                      "output into Replace sounds' 'sound', never into Package."},
+        {"ReplaceSounds", "Replaces game sounds by id: link Game sound blocks, or audio files whose names hold the "
+                          "sound's id (their last run of 4+ digits, e.g. 880852580.wav). Link all of 'sound files' "
+                          "into Package's 'other file'. Leave 'Same length' off for voices and effects; music tracks "
+                          "keep their length anyway. An id in no bank or package fails the run, naming it."},
         {"ExportMovie", "Start of a hand-edited movie: Export movie -> Edit video -> Replace movie's Your video. Feed "
                         "its Game movie and Replace movie's from one Value through a Split."},
         {"EditVideo", "The user's manual step for a movie: a run pauses here. Never mark it done yourself: tell the user "

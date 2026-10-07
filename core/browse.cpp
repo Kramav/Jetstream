@@ -113,10 +113,13 @@ AssetIndex index_assets(const fs::path& natives_root) {
             index.textures.push_back(it->path().generic_string().substr(skip));
         else if (is_kind(name, ".mesh."))
             index.meshes.push_back(it->path().generic_string().substr(skip));
+        else if (name.find(".sbnk.") != std::string::npos || name.find(".spck.") != std::string::npos)
+            index.sounds.push_back(it->path().generic_string().substr(skip));
     }
     if (ec) throw std::runtime_error("can't read " + natives_root.string() + ": " + ec.message());
     std::ranges::sort(index.textures, less_nocase);
     std::ranges::sort(index.meshes, less_nocase);
+    std::ranges::sort(index.sounds, less_nocase);
     return index;
 }
 
@@ -174,6 +177,7 @@ FileKind file_kind(const std::string& name) {
         if (n.ends_with(ext)) return FileKind::Image;
     // A game movie: <id>.mov.1.x64 (not digits only after ".mov.", unlike .tex.<n> and .mesh.<n>).
     if (n.find(".mov.") != std::string::npos) return FileKind::Movie;
+    if (n.find(".sbnk.") != std::string::npos || n.find(".spck.") != std::string::npos) return FileKind::Sound;
     for (const char* ext : {".mp4", ".m4v", ".mov", ".wmv", ".avi", ".mkv"})
         if (n.ends_with(ext)) return FileKind::Movie;
     return FileKind::Other;

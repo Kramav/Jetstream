@@ -168,8 +168,9 @@ ComPtr<IMFSourceReader> open_reader(const std::filesystem::path& video,
                                     DWORD track = DWORD(MF_SOURCE_READER_FIRST_VIDEO_STREAM)) {
     std::string ext = video.extension().string();
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    const bool known =
-        ext == ".mp4" || ext == ".m4v" || ext == ".mov" || ext == ".wmv" || ext == ".avi" || ext == ".mkv";
+    const bool known = ext == ".mp4" || ext == ".m4v" || ext == ".mov" || ext == ".wmv" || ext == ".avi" ||
+                       ext == ".mkv" || ext == ".wav" || ext == ".mp3" || ext == ".m4a" || ext == ".aac" ||
+                       ext == ".wma" || ext == ".flac";
     if (!known) try {
             read_mp4_info(video);
         } catch (const std::exception& e) {
@@ -253,6 +254,7 @@ std::vector<std::int16_t> decode_sound(const std::filesystem::path& video, unsig
 std::vector<std::int16_t> read_sound(const std::filesystem::path& video, unsigned rate, unsigned channels,
                                      std::uint64_t frames, std::string* what) {
     if (!channels) throw std::runtime_error("no channels");
+    if (video.empty() && !frames) throw std::runtime_error("a test card's sound needs a length");
     std::vector<std::int16_t> out(size_t(frames) * channels);  // silence
     if (video.empty()) {
         if (what) *what = "a beep each second";
@@ -265,6 +267,11 @@ std::vector<std::int16_t> read_sound(const std::filesystem::path& video, unsigne
     const unsigned from = std::min(channels, 2u);  // more: the sound in the first two (front left and right)
     const auto sound = decode_sound(video, rate, from);
     if (what) *what = sound.empty() ? "silence (your video has no sound)" : "your video's sound";
+    if (!frames) {  // its own length
+        frames = sound.size() / from;
+        if (!frames) throw std::runtime_error(video.filename().string() + " has no sound");
+        out.assign(size_t(frames) * channels, 0);
+    }
     for (size_t n = 0; n < frames && (n + 1) * from <= sound.size(); ++n)
         for (unsigned c = 0; c < from; ++c) out[n * channels + c] = sound[n * from + c];
     return out;

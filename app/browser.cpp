@@ -6,10 +6,13 @@
 
 #include <imgui_impl_dx11.h>
 #include <imgui_stdlib.h>
+#include <mmsystem.h>
+#include <nfd.h>
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <fstream>
 #include <functional>
 
 namespace fs = std::filesystem;
@@ -98,6 +101,7 @@ void Browser::go(const fs::path& folder) {
 void Browser::go_index(size_t folder, const std::string& rel) {
     in_index_ = true;
     folder_ = folder;
+    folder_rel_ = rel;
     address_ = rel.empty() ? root_.string() : abs_of(rel);
     mesh_focus_ = false;
 }
@@ -111,12 +115,12 @@ void Browser::update_entries() {
     entries_for_ = key;
     entries_.clear();
     if (searching && game_scope && index_) {  // the whole game files, nicknames included
-        for (const size_t i : remod::search(index_->files, query_, &names_))
-            entries_.push_back({abs_of(index_->files[i]), i < index_->assets.meshes.size() ? FileKind::Mesh : FileKind::Texture});
+        for (const size_t i : remod::search(game_files(), query_, &names_))
+            entries_.push_back({abs_of(game_files()[i]), remod::file_kind(game_files()[i])});
     } else if (in_index_) {
-        if (index_ && folder_ < index_->tree.folders.size())
-            for (const size_t i : index_->tree.folders[folder_].files)
-                entries_.push_back({abs_of(index_->files[i]), i < index_->assets.meshes.size() ? FileKind::Mesh : FileKind::Texture});
+        if (index_ && folder_ < game_tree().folders.size())
+            for (const size_t i : game_tree().folders[folder_].files)
+                entries_.push_back({abs_of(game_files()[i]), remod::file_kind(game_files()[i])});
     } else {  // this folder, filtered by name when searching
         std::vector<std::string> names;
         for (const auto& e : listing_) names.push_back(e.name);
@@ -358,9 +362,10 @@ void Browser::draw_tree(const remod::FolderTree& tree, size_t folder, const std:
                                    ImGuiTreeNodeFlags_SpanAvailWidth;
         if (f.children.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
         if (in_index_ && folder_ == c) flags |= ImGuiTreeNodeFlags_Selected;
-        const bool open = f.files.empty() ? ImGui::TreeNodeEx(reinterpret_cast<void*>(c), flags, "%s", f.name.c_str())
-                                          : ImGui::TreeNodeEx(reinterpret_cast<void*>(c), flags, "%s  (%zu)",
-                                                              f.name.c_str(), f.files.size());
+        // Keyed by path, not number: the filter's trees number folders differently, and open folders stay open.
+        const bool open = f.files.empty() ? ImGui::TreeNodeEx(child.c_str(), flags, "%s", f.name.c_str())
+                                          : ImGui::TreeNodeEx(child.c_str(), flags, "%s  (%zu)", f.name.c_str(),
+                                                              f.files.size());
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) go_index(c, child);
         drag_source(abs, true);
         item_menu(abs, true);
@@ -412,10 +417,11 @@ void Browser::draw_places(const std::string& natives_root) {
                                         : "Set the Game files folder (your REtool folder) in the Pipeline panel.");
     if (indexed) drag_source(root_.string(), true);
     if (open) {
-        if (indexed) draw_tree(index_->tree, 0, "");
+        if (indexed) draw_tree(game_tree(), 0, "");
         // The index leaves out streaming\ (the high-resolution copies, the movies): browsed on disk, read when opened.
         // ponytail: not searchable from Game files; indexing it would double the index's time and every hit.
-        if (std::error_code ec; indexed && fs::is_directory(root_ / "streaming", ec))
+        // Not with the sound filter: a package's sounds are listed from its copy outside streaming\.
+        if (std::error_code ec; indexed && !sounds_only_ && fs::is_directory(root_ / "streaming", ec))
             draw_disk_folder(root_ / "streaming", "streaming");
         ImGui::TreePop();
     }
@@ -433,6 +439,7 @@ void Browser::draw_places(const std::string& natives_root) {
 void Browser::select_texture(const std::string& abs, const std::vector<remod::Profile>& profiles) {
     external_ = nullptr;  // the viewer shows the texture again
     close_movie();
+    close_sounds();
     texture_ = abs;
     info_.clear();
     if (kind_of(abs) != FileKind::Texture) return;  // an image: the viewer shows it
@@ -458,6 +465,7 @@ void Browser::select_texture(const std::string& abs, const std::vector<remod::Pr
 void Browser::select_mesh(const std::string& abs) {
     external_ = nullptr;
     close_movie();
+    close_sounds();
     mesh_focus_ = view_open_ = true;
     if (abs == mesh_) return;  // picked again: shows it again
     mesh_ = abs;
@@ -533,6 +541,7 @@ std::string Browser::draw(const std::string& natives_root, const std::string& no
             i.assets = remod::index_assets(root);
             i.files = i.assets.meshes;
             i.files.insert(i.files.end(), i.assets.textures.begin(), i.assets.textures.end());
+            i.files.insert(i.files.end(), i.assets.sounds.begin(), i.assets.sounds.end());
             i.tree = remod::folder_tree(i.files);
             return i;
         });
@@ -557,6 +566,7 @@ std::string Browser::draw(const std::string& natives_root, const std::string& no
     draw_popouts();  // both layouts
     if (browser_only) {
         movie_view_.close();  // no viewer in this layout: shown again, from the start, when it's back
+        close_sounds();
         return chosen;
     }
     draw_textures(profiles, chosen);
@@ -597,6 +607,38 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
                                                     : "Filter this folder by name",
                              &query_);
     const bool searching = query_.find_first_not_of(' ') != std::string::npos;
+
+    // What Game files shows: everything indexed, or only the sound banks and packages (one language's, if picked).
+    update_filter();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Show");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8);
+    if (ImGui::BeginCombo("##show", sounds_only_ ? "Sound files" : "Everything")) {
+        for (const bool sounds : {false, true})
+            if (ImGui::Selectable(sounds ? "Sound files" : "Everything", sounds == sounds_only_) && sounds != sounds_only_) {
+                sounds_only_ = sounds;
+                update_filter();
+            }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Sound files: only the folders with sound banks (.sbnk) and packages (.spck) in Game files.");
+    if (sounds_only_) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("Language");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6);
+        if (ImGui::BeginCombo("##language", sound_language_.empty() ? "All" : sound_language_.c_str())) {
+            if (ImGui::Selectable("All", sound_language_.empty())) sound_language_.clear();
+            for (const std::string& language : sound_languages_)
+                if (ImGui::Selectable(language.c_str(), language == sound_language_)) sound_language_ = language;
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Hides the other languages' banks and packages (dialogue); files without a language stay.");
+    }
+
     if (!searching) {
         // A share of the panel, not ImGui's ResizeY: that keeps the first frame's height, taken before the dock
         // layout gives the panel its size, so the tree started as a sliver.
@@ -626,7 +668,10 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
             const bool folder = e.kind == FileKind::Folder;
             const std::string label = full_paths ? rel_in_game(e.path) : display_name(e.path) + (folder ? "\\" : "");
             ImGui::PushID(i);
-            const std::string& shown = e.kind == FileKind::Mesh ? mesh_ : e.kind == FileKind::Movie ? movie_ : texture_;
+            const std::string& shown = e.kind == FileKind::Mesh    ? mesh_
+                                       : e.kind == FileKind::Movie ? movie_
+                                       : e.kind == FileKind::Sound ? sounds_
+                                                                   : texture_;
             if (ImGui::Selectable(label.c_str(), e.path == shown,
                                   ImGuiSelectableFlags_AllowDoubleClick)) {
                 const bool twice = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
@@ -636,6 +681,8 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
                     select_mesh(e.path);
                 } else if (e.kind == FileKind::Movie) {
                     show_movie(e.path);
+                } else if (e.kind == FileKind::Sound) {
+                    show_sounds(e.path);
                 } else if (e.kind == FileKind::Texture || e.kind == FileKind::Image) {
                     mesh_focus_ = false;  // the 3D view keeps the last mesh
                     select_texture(e.path, profiles);
@@ -762,6 +809,10 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
         ImGui::End();
         return;
     }
+    if (sounds_open_) {
+        draw_sounds();
+        return;
+    }
     if (movie_open_) {
         ImGui::Begin("Movie###viewer", &movie_open_);
         ImGui::TextUnformatted(display_name(movie_).c_str());
@@ -866,4 +917,198 @@ void Browser::draw_viewer(const std::string& noesis_exe) {
         }
     }
     ImGui::End();
+}
+
+void Browser::update_filter() {
+    const std::string key = index_ ? std::to_string(sounds_only_) + sound_language_ + "\n" + indexed_root_ + "\n" +
+                                         std::to_string(index_->files.size())
+                                   : std::string();
+    if (key == filter_for_) return;
+    filter_for_ = key;
+    shown_files_.clear();
+    shown_tree_ = {};
+    sound_languages_.clear();
+    ++version_;  // the file list again
+    if (!index_) return;
+    if (sounds_only_) {
+        // A file's language: what follows ".x64." ("ch_x.sbnk.1.x64.en" -> "en"), "" for none.
+        auto language = [](const std::string& path) {
+            std::string low = path;
+            std::ranges::transform(low, low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const size_t at = low.rfind(".x64.");
+            return at == std::string::npos ? std::string() : low.substr(at + 5);
+        };
+        std::set<std::string> languages;
+        for (const std::string& f : index_->assets.sounds) {
+            const std::string l = language(f);
+            if (!l.empty()) languages.insert(l);
+            if (sound_language_.empty() || l.empty() || l == sound_language_) shown_files_.push_back(f);
+        }
+        sound_languages_.assign(languages.begin(), languages.end());
+        shown_tree_ = remod::folder_tree(shown_files_);
+    }
+    // Stay on the folder being looked at (user, 2026-10-07): in the new tree, it or its nearest folder still shown.
+    if (!in_index_) return;
+    const remod::FolderTree& tree = game_tree();
+    size_t at = 0;
+    std::string rel;
+    for (size_t from = 0; !folder_rel_.empty() && from <= folder_rel_.size();) {
+        const size_t slash = std::min(folder_rel_.find('/', from), folder_rel_.size());
+        const std::string name = folder_rel_.substr(from, slash - from);
+        const auto& kids = tree.folders[at].children;
+        const auto hit = std::ranges::find_if(kids, [&](size_t c) { return tree.folders[c].name == name; });
+        if (hit == kids.end()) break;
+        at = *hit;
+        rel = folder_rel_.substr(0, slash);
+        from = slash + 1;
+    }
+    folder_ = at;  // folder_rel_ stays: switching back finds the folder itself again
+    address_ = rel.empty() ? root_.string() : abs_of(rel);
+}
+
+// ---- Sounds (CLAUDE.md §10 Game sounds): a bank's or package's sounds, played by Windows (PlaySound), saved as WAV ----
+
+void Browser::show_sounds(const std::string& abs) {
+    close_sounds();
+    external_ = nullptr;
+    close_movie();
+    sounds_ = abs;
+    sounds_open_ = true;
+    sound_list_.clear();
+    sounds_error_.clear();
+    if (sounds_loading_.valid()) retired_lists_.push_back(std::move(sounds_loading_));
+    sounds_loading_ = std::async(std::launch::async, [file = fs::path(abs)] { return remod::list_sounds(file); });
+}
+
+void Browser::close_sounds() {
+    if (!playing_wav_.empty() || playing_id_) PlaySoundW(nullptr, nullptr, 0);
+    playing_wav_.clear();
+    playing_id_ = 0;
+    sounds_open_ = false;
+}
+
+namespace {
+
+// One sound's WAV bytes (decoded from its WEM; a bank's first part of a streamed one: its whole, from its package).
+std::string sound_as_wav(const fs::path& file, std::uint32_t id) {
+    const std::string wem = remod::sound_wem(file, id);
+    const remod::WemInfo info = remod::read_wem_info(wem);
+    return remod::wav_bytes(remod::decode_wem(wem, remod::find_codebooks()), info.channels, info.rate);
+}
+
+}  // namespace
+
+void Browser::draw_sounds() {
+    ImGui::Begin("Sounds###viewer", &sounds_open_);
+    if (sounds_loading_.valid() && sounds_loading_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        try {
+            sound_list_ = sounds_loading_.get();
+        } catch (const std::exception& e) {
+            sounds_error_ = e.what();
+        }
+    }
+    std::erase_if(retired_lists_, [](auto& f) { return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready; });
+    if (saving_.valid() && saving_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        if (std::string why = saving_.get(); !why.empty()) sounds_error_ = why;
+        saving_id_ = 0;
+    }
+    if (decoding_.valid() && decoding_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        try {
+            playing_wav_ = decoding_.get();
+            if (playing_id_)  // not stopped or closed meanwhile
+                PlaySoundW(reinterpret_cast<LPCWSTR>(playing_wav_.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+        } catch (const std::exception& e) {
+            sounds_error_ = e.what();
+            playing_id_ = 0;
+        }
+    }
+    ImGui::TextUnformatted(display_name(sounds_).c_str());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sounds_.c_str());
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("To replace a sound, drag its line onto the graph: a Game sound block, linked into Replace "
+                        "sounds, where you pick your audio.");
+    if (sounds_loading_.valid()) ImGui::TextDisabled("Reading...");
+    if (!sounds_error_.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "%s", sounds_error_.c_str());
+    ImGui::PopTextWrapPos();
+    if (playing_id_ && ImGui::Button("Stop")) {
+        PlaySoundW(nullptr, nullptr, 0);
+        playing_id_ = 0;
+    }
+    constexpr ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV;
+    if (!sound_list_.empty() && ImGui::BeginTable("sounds", 4, flags)) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Id");
+        ImGui::TableSetupColumn("Sound");
+        ImGui::TableSetupColumn("Where");
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clip;
+        clip.Begin(int(sound_list_.size()));
+        while (clip.Step())
+            for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                const remod::SoundEntry& e = sound_list_[size_t(row)];
+                ImGui::PushID(row);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                const std::string id = std::to_string(e.id);
+                ImGui::Selectable(id.c_str(), false,
+                                  ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
+                if (ImGui::IsItemClicked()) ImGui::SetClipboardText(id.c_str());
+                // Dragged onto the graph: a Game sound block holding it (or onto a Game sound block's field).
+                if (e.info.channels && ImGui::BeginDragDropSource()) {
+                    const std::string sound = remod::game_sound_text(sounds_, e.id);
+                    ImGui::SetDragDropPayload("remod_sound", sound.c_str(), sound.size() + 1);
+                    ImGui::Text("Sound %u", e.id);
+                    ImGui::TextDisabled("Drop it on the graph to replace it");
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::IsItemHovered() && !ImGui::GetDragDropPayload())
+                    ImGui::SetTooltip(e.info.channels ? "Drag onto the graph to replace this sound. Click to copy its id."
+                                                      : "Click to copy its id.");
+                ImGui::TableNextColumn();
+                if (e.info.channels)
+                    ImGui::Text("%.1f s, %u ch, %s", e.info.rate ? double(e.info.samples) / e.info.rate : 0.0,
+                                e.info.channels, e.info.codec == remod::kWemOpus ? "Opus" : "Vorbis");
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", e.where.c_str());
+                ImGui::TableNextColumn();
+                if (e.info.channels) {
+                    const bool busy = decoding_.valid() && playing_id_ == e.id;
+                    if (ImGui::SmallButton(busy ? "..." : playing_id_ == e.id ? "Again" : "Play") && !decoding_.valid()) {
+                        PlaySoundW(nullptr, nullptr, 0);
+                        playing_id_ = e.id;
+                        sounds_error_.clear();
+                        decoding_ = std::async(std::launch::async,
+                                               [file = fs::path(sounds_), id = e.id] { return sound_as_wav(file, id); });
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(saving_id_ == e.id ? "Saving..." : "Save as WAV") && !saving_.valid()) {
+                        nfdu8char_t* out = nullptr;
+                        const nfdu8filteritem_t filter{"WAV", "wav"};
+                        const std::string name = std::to_string(e.id) + ".wav";
+                        if (NFD_SaveDialogU8(&out, &filter, 1, nullptr, name.c_str()) == NFD_OKAY) {
+                            // Decoded and written in the background: a music track takes seconds.
+                            saving_id_ = e.id;
+                            sounds_error_.clear();
+                            saving_ = std::async(std::launch::async, [file = fs::path(sounds_), id = e.id,
+                                                                      to = fs::path(reinterpret_cast<const char8_t*>(out))] {
+                                try {
+                                    const std::string wav = sound_as_wav(file, id);
+                                    std::ofstream w(to, std::ios::binary);
+                                    w.write(wav.data(), std::streamsize(wav.size()));
+                                    return w ? std::string() : "couldn't write " + to.string();
+                                } catch (const std::exception& ex) {
+                                    return std::string(ex.what());
+                                }
+                            });
+                            NFD_FreePathU8(out);
+                        }
+                    }
+                }
+                ImGui::PopID();
+            }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+    if (!sounds_open_) close_sounds();
 }

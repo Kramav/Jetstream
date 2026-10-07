@@ -1,0 +1,53 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "GameSound",
+      "params": {
+        "sound": "{game}/_chainsaw/sound/wwise/ch_mva000_dialogue.sbnk.1.x64.en#880852580",
+        "audio": "beep.wav",
+        "title": "The intro narration (English)"
+      }
+    },
+    {
+      "id": 2,
+      "type": "ReplaceSounds",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "PackageMod",
+      "params": {
+        "name": "Sound test",
+        "out": "mods",
+        "version": "1.0",
+        "description": "The intro narration (English) replaced by beeps",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "sound"
+      ],
+      "to": [
+        2,
+        "sounds"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "files"
+      ],
+      "to": [
+        3,
+        "file"
+      ]
+    }
+  ]
+}

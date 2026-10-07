@@ -85,6 +85,8 @@ std::string extension_list(const char* filter) {
 
 std::string path_fit(PathKind kind, const char* filter, const std::string& path, bool is_folder) {
     if (kind == PathKind::None) return "This field takes text, not a path.";
+    if (kind == PathKind::GameSound)
+        return "This field takes a game sound: click a bank or package in the Browser and drag a sound from its list.";
     if (kind == PathKind::Folder) return is_folder ? "" : "This field needs a folder.";
     if (is_folder) return "This field needs a file.";
     if (filter && *filter && !has_extension(path, filter)) return "This field needs a " + extension_list(filter) + " file.";

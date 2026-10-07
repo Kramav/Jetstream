@@ -38,7 +38,7 @@ std::string encode_movie(const std::filesystem::path& video, const MovieInfo& li
                   const std::filesystem::path& out, bool same_length = false);
 
 // `video`'s sound (its first sound track) as 16-bit samples at `rate`, `channels` interleaved in a WAV's order,
-// exactly `frames` long: cut, or silence after it. Windows converts the rate and mixes to mono or stereo; with more
+// exactly `frames` long: cut, or silence after it; 0: its own length (none: an error). Windows converts the rate and mixes to mono or stereo; with more
 // channels the sound is in the first two (front left and right), the rest silent. A video without sound: silence.
 // No `video`: a test card's beep (1 kHz, the first tenth of each second) in the first two. *what says which, as
 // encode_movie's. Throws std::runtime_error.

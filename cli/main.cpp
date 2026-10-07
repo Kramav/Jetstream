@@ -8,6 +8,7 @@
 #include "profile.hpp"
 #include "settings.hpp"
 #include "setup.hpp"
+#include "sound.hpp"
 #include "texture_converter.hpp"
 
 #define WIN32_LEAN_AND_MEAN
@@ -15,6 +16,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
@@ -37,6 +39,9 @@ constexpr const char* kUsage =
     "                [--replace true]\n"
     "  remod movie-info --file <file.mp4|.mov.1.x64>: an MP4's size, length, frame rate, codecs (the game's movies\n"
     "                are MP4s named .mov.1.x64; --tex in package takes one, with --game-path streaming/...)\n"
+    "  remod sounds  --file <bank.sbnk.*|package.spck.*>: its sounds (id, length, channels, codec, where), the\n"
+    "                ids a Replace sounds block's file names hold\n"
+    "  remod sound-wav --file <bank|package> --id <sound id> --out <file.wav>: one sound, decoded\n"
     "  remod api     graph editing for programs: one JSON request per line on stdin, one JSON reply per line\n"
     "                (requests: core/api.hpp)\n"
     "  remod mcp     an MCP server on stdin/stdout for an AI (Claude Code, Claude Desktop): the same graph editing,\n"
@@ -55,6 +60,8 @@ const std::map<std::string, Command> kCommands{
     {"png2tex", {{"profile", "png", "original", "out"}, {"noesis"}}},
     {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot", "replace"}}},
     {"movie-info", {{"file"}, {}}},
+    {"sounds", {{"file"}, {}}},
+    {"sound-wav", {{"file", "id", "out"}, {}}},
 };
 
 void print_meta(const remod::TexMeta& m) {
@@ -140,6 +147,25 @@ int run(int argc, char** argv) {
                           ? " " + std::to_string(m.audio_rate) + " Hz " + std::to_string(m.audio_channels) + " ch"
                           : "")
                   << "\n";
+        return 0;
+    }
+    if (cmd->first == "sounds") {
+        for (const remod::SoundEntry& e : remod::list_sounds(args["file"])) {
+            std::cout << e.id;
+            if (e.info.channels)
+                std::cout << "  " << double(e.info.samples) / e.info.rate << " s, " << e.info.channels << " ch, "
+                          << (e.info.codec == remod::kWemOpus ? "Opus" : "Vorbis");
+            std::cout << "  (" << e.where << ")\n";
+        }
+        return 0;
+    }
+    if (cmd->first == "sound-wav") {
+        const std::string wem = remod::sound_wem(args["file"], std::uint32_t(std::stoul(args["id"])));
+        const remod::WemInfo info = remod::read_wem_info(wem);
+        const std::string wav =
+            remod::wav_bytes(remod::decode_wem(wem, remod::find_codebooks()), info.channels, info.rate);
+        std::ofstream(args["out"], std::ios::binary).write(wav.data(), std::streamsize(wav.size()));
+        std::cout << info.samples << " samples, " << info.channels << " ch, " << info.rate << " Hz\n";
         return 0;
     }
     if (cmd->first == "run") {

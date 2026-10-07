@@ -8,4 +8,4 @@ target_link_libraries(remod-app PRIVATE
     imgui::imgui
     unofficial::imgui-node-editor::imgui-node-editor
     nfd::nfd
-    d3d11 d3dcompiler)
+    d3d11 d3dcompiler winmm)

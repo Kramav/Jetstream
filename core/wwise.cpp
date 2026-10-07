@@ -53,8 +53,11 @@ Riff chunks(Bytes w) {
     Riff r;
     for (size_t at = 12; at + 8 <= end;) {
         const Bytes tag = w.substr(at, 4);
-        const size_t size = get<std::uint32_t>(w, at + 4);
-        if (size > end - at - 8) fail("a WEM chunk runs past the file's end");
+        size_t size = get<std::uint32_t>(w, at + 4);
+        if (size > end - at - 8) {
+            if (tag != "data") fail("a WEM chunk runs past the file's end");
+            size = end - at - 8;  // a streamed sound's first part (a bank's prefetch): its header is whole
+        }
         const Bytes body = w.substr(at + 8, size);
         if (tag == "fmt ") r.fmt = body;
         if (tag == "seek") r.seek = body;
@@ -540,13 +543,19 @@ using OpusEncoderPtr = std::unique_ptr<OpusMSEncoder, decltype(&opus_multistream
 
 struct OpusLayout {
     int family = 0, streams = 0, coupled = 0;
-    unsigned char mapping[8] = {};
+    unsigned char mapping[255] = {};
+    // Which of a WAV's channels goes in libopus's position c: family 1 is in Vorbis's order; 0 and 255 (every
+    // channel a stream of its own) as they are. [inferred for 255: no Wwise reference file has it]
+    unsigned wav_channel(unsigned channels, unsigned c) const {
+        return family == 1 ? unsigned(kVorbisOrder[channels][c]) : c;
+    }
 };
 
-// libopus's encoder for `channels` in `family` (0: mono or stereo, 1: up to 8 in Vorbis's order), as Wwise's
-// files use them; `layout` gets its streams.
+// libopus's encoder for `channels` in `family` (0: mono or stereo, 1: up to 8 in Vorbis's order, 255: any number,
+// each its own stream), as Wwise's files use them; `layout` gets its streams.
 OpusEncoderPtr opus_encoder(unsigned channels, int family, OpusLayout& layout) {
-    if (channels == 0 || channels > 8 || family > 1 || (family == 0 && channels > 2))
+    if (channels == 0 || (family == 0 && channels > 2) || (family == 1 && channels > 8) ||
+        (family != 0 && family != 1 && family != 255))
         fail("an Opus layout the tool can't write yet (" + std::to_string(channels) + " channels, mapping family " +
              std::to_string(family) + ")");
     int error = 0;
@@ -567,14 +576,13 @@ std::string encode_opus(const Riff& r, const WemInfo& info, const std::vector<st
     OpusLayout layout;
     const OpusEncoderPtr encoder = opus_encoder(channels, std::uint8_t(extra[17]), layout);
     // The original's average bit rate, within libopus's sensible range (a silent original's is tiny).
-    const auto bitrate = std::clamp<std::uint64_t>(std::uint64_t(get<std::uint32_t>(r.fmt, 8)) * 8, 24'000 * channels,
+    const auto bitrate = std::clamp<std::uint64_t>(std::uint64_t(get<std::uint32_t>(r.fmt, 8)) * 8, 32'000 * channels,
                                                    128'000 * channels);
     opus_multistream_encoder_ctl(encoder.get(), OPUS_SET_BITRATE(opus_int32(bitrate)));
     opus_int32 skip = 0;
     opus_multistream_encoder_ctl(encoder.get(), OPUS_GET_LOOKAHEAD(&skip));
     const std::uint64_t frames = pcm.size() / channels;
     const std::uint64_t count = (frames + std::uint64_t(skip) + 959) / 960;  // 20 ms each, the start delay included
-    const int* order = kVorbisOrder[channels];
     std::vector<std::int16_t> frame(960 * channels);
     std::vector<unsigned char> buffer(1500 * size_t(layout.streams) + 16);
     std::string seek, data;
@@ -582,7 +590,7 @@ std::string encode_opus(const Riff& r, const WemInfo& info, const std::vector<st
         for (std::uint64_t i = 0; i < 960; ++i)
             for (unsigned c = 0; c < channels; ++c) {
                 const std::uint64_t n = k * 960 + i;
-                frame[i * channels + c] = n < frames ? pcm[n * channels + unsigned(order[c])] : 0;
+                frame[i * channels + c] = n < frames ? pcm[n * channels + layout.wav_channel(channels, c)] : 0;
             }
         const opus_int32 bytes =
             opus_multistream_encode(encoder.get(), frame.data(), 960, buffer.data(), opus_int32(buffer.size()));
@@ -630,9 +638,9 @@ std::vector<std::int16_t> decode_opus(const Riff& r, const WemInfo& info) {
     }
     const size_t skip = get<std::uint16_t>(extra, 14);
     std::vector<std::int16_t> out(size_t(info.samples) * channels);
-    const int* order = kVorbisOrder[channels];
     for (size_t n = 0; n < info.samples && (skip + n + 1) * channels <= decoded.size(); ++n)
-        for (unsigned c = 0; c < channels; ++c) out[n * channels + unsigned(order[c])] = decoded[(skip + n) * channels + c];
+        for (unsigned c = 0; c < channels; ++c)
+            out[n * channels + layout.wav_channel(channels, c)] = decoded[(skip + n) * channels + c];
     return out;
 }
 
@@ -707,6 +715,115 @@ std::string write_akpk(const Akpk& p, bool with_data) {
         }
     }
     return with_data ? out + data : out;
+}
+
+// ---- Banks ----
+
+Bank read_bank(std::string_view b) {
+    if (b.substr(0, 4) != "BKHD") fail("not a sound bank (BKHD)");
+    Bank bank;
+    Bytes index, data;
+    for (size_t at = 0; at + 8 <= b.size();) {
+        const std::string tag(b.substr(at, 4));
+        const size_t size = get<std::uint32_t>(b, at + 4);
+        if (size > b.size() - at - 8) fail("a sound bank's chunk runs past its end");
+        const Bytes body = b.substr(at + 8, size);
+        if (tag == "DIDX") index = body;
+        if (tag == "DATA") data = body;
+        bank.chunks.emplace_back(tag, tag == "DIDX" || tag == "DATA" ? std::string() : std::string(body));
+        at += 8 + size;
+    }
+    for (size_t i = 0; i + 12 <= index.size(); i += 12) {
+        const auto id = get<std::uint32_t>(index, i), offset = get<std::uint32_t>(index, i + 4),
+                   size = get<std::uint32_t>(index, i + 8);
+        if (offset > data.size() || size > data.size() - offset) fail("a sound bank's media runs past its end");
+        bank.media.push_back({id, std::string(data.substr(offset, size))});
+    }
+    return bank;
+}
+
+std::string write_bank(const Bank& bank) {
+    std::string index, data;
+    for (const BankMedia& m : bank.media) {
+        data.resize((data.size() + 15) / 16 * 16, '\0');
+        put(index, m.id);
+        put(index, std::uint32_t(data.size()));
+        put(index, std::uint32_t(m.data.size()));
+        data += m.data;
+    }
+    std::string out;
+    for (const auto& [tag, body] : bank.chunks) {
+        const std::string& bytes = tag == "DIDX" ? index : tag == "DATA" ? data : body;
+        out += tag;
+        put(out, std::uint32_t(bytes.size()));
+        out += bytes;
+    }
+    return out;
+}
+
+// HIRC (bank version 140): u32 count, then objects {u8 type, u32 size, body}. A Sound (type 2) is u32 id then its
+// source; a music track (11) u32 id, u8 flags, u32 count, then its sources. A source (AkBankSourceData): u32 plugin,
+// u8 stream type, u32 media id, u32 in-memory size, u8 bits. [Checked on every RE4R bank: the sizes match the media.]
+std::vector<BankSource> bank_sources(const Bank& bank) {
+    std::vector<BankSource> out;
+    for (const auto& [tag, body] : bank.chunks) {
+        if (tag != "HIRC") continue;
+        const Bytes h = body;
+        const auto count = get<std::uint32_t>(h, 0);
+        auto source = [&](size_t s, bool music) {
+            out.push_back({get<std::uint32_t>(h, s + 5), std::uint8_t(h[s + 4]), get<std::uint32_t>(h, s + 9), s + 9, music});
+        };
+        for (std::uint32_t i = 0, at = 4; i < count && at + 5 <= h.size(); ++i) {
+            const std::uint8_t type = std::uint8_t(h[at]);
+            const std::uint32_t size = get<std::uint32_t>(h, at + 1), o = at + 5;
+            if (size > h.size() - o) fail("a sound bank's event data runs past its end");
+            if (type == 2 && size >= 18) source(o + 4, false);
+            if (type == 11 && size >= 9)
+                if (const auto n = get<std::uint32_t>(h, o + 5); n <= (size - 9) / 14)
+                    for (std::uint32_t k = 0; k < n; ++k) source(o + 9 + k * 14, true);
+            at = o + size;
+        }
+    }
+    return out;
+}
+
+void set_source_memory(Bank& bank, const BankSource& source, std::uint32_t memory) {
+    for (auto& [tag, body] : bank.chunks)
+        if (tag == "HIRC") put_at(body, source.at, memory);
+}
+
+namespace {
+
+// Where a WEM's header ends, then where each packet ends (file offsets).
+std::vector<size_t> packet_ends(Bytes wem) {
+    const Riff r = chunks(wem);
+    const size_t data = size_t(r.data.data() - wem.data());
+    std::vector<size_t> ends;
+    if (get<std::uint16_t>(r.fmt, 0) == kWemOpus) {
+        ends.push_back(data);
+        for (size_t i = 0; i + 2 <= r.seek.size(); i += 2) ends.push_back(ends.back() + get<std::uint16_t>(r.seek, i));
+    } else if (get<std::uint16_t>(r.fmt, 0) == kWemVorbis) {
+        const VorbisWem v = vorbis_parts(r);
+        ends.push_back(data + get<std::uint32_t>(v.extra, 26));
+        for (const Bytes p : v.packets) ends.push_back(ends.back() + 2 + p.size());
+    } else {
+        fail("a WEM codec the tool can't read");
+    }
+    return ends;
+}
+
+}  // namespace
+
+size_t wem_prefix(std::string_view wem, size_t packets) {
+    const auto ends = packet_ends(wem);
+    return std::min(ends[std::min(packets, ends.size() - 1)], wem.size());
+}
+
+size_t wem_packets_within(std::string_view wem, size_t bytes) {
+    const auto ends = packet_ends(wem);
+    size_t k = 0;
+    while (k + 1 < ends.size() && ends[k + 1] <= bytes) ++k;
+    return k;
 }
 
 // ---- WEMs ----

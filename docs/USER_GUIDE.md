@@ -108,6 +108,7 @@ Undo / redo: **Ctrl+Z** / **Ctrl+Y**. Save: **Ctrl+S**. A `*` in the title means
 | Export movie | Copies a game movie to a file for you to edit (below). |
 | Edit video | **Your step:** edit the movie and render your edit; the run waits until you click Done editing. |
 | Replace movie | A new version of one of the game's movies: your video, or a test card (below), and its sound packages. |
+| Replace sounds | Your audio in place of game sounds, each found by the sound id in its file's name (below). |
 | Package for Fluffy | Builds the mod and its zip. |
 | Copy / Move / Rename / Delete file, Make folder | File housekeeping. Delete uses the Recycle Bin. |
 | Run program | Runs a program or script as a step (below). |
@@ -216,6 +217,37 @@ whole chain, for `mva402`.
 Not known yet (needs a test in game): whether a movie of another length plays fully (turn off **Same length** to
 try); whether the game plays a replaced file's sound (the logos) and a replaced sound package's (example 12's
 beep); which movie plays where.
+
+## Sounds
+
+The game's sounds are in Wwise sound banks (`.sbnk`) and sound packages (`.spck`) under
+`natives\STM\_chainsaw\sound\wwise\`. Each sound has a number, its **id**.
+
+1. **Find it.** Click a bank or package in the Browser (they're in Game files; **Show: Sound files** under the
+   search box hides every other folder, and **Language** the other languages' files). The viewer lists its sounds:
+   id, length, channels. **Play** plays one. A line that says *streamed: its first part* is a longer sound kept in a
+   package; Play plays all of it. Click an id to copy it.
+2. **Drag its line onto the graph.** That adds a **Game sound** block holding it, linked into your Replace sounds
+   block if the graph has one (this works in Use layout too). Dropped on a Game sound block's field instead, it
+   changes which sound that block replaces.
+3. On the Game sound block, pick **Your audio**: any audio Windows plays (wav, mp3, m4a, wma, flac, even a video's
+   sound). It's converted to the original's format, channels and sample rate. Leave it empty to silence the sound.
+4. Link **Replace sounds**' **sound files** into Package's **other file**. Use one Replace sounds block for all your
+   sounds.
+
+For many sounds at once, Replace sounds also takes audio files named by the sound's id (**Save as WAV** names them
+so; `leon_line_880852580.wav` is fine: the last run of 4 or more digits is the id), e.g. from **Files in folder**.
+
+Everything that holds or describes a sound is rewritten to match: its package (both copies), its bank, the first
+part of a streamed sound that a bank keeps so it starts at once, and the sizes the bank records. A sound can be
+longer or shorter than the original (**Same length as the original** off, the default). A sound in one of the game's
+music tracks always keeps the original's length, because the track records it.
+
+Example `14_replace_a_sound` replaces the intro's English narration with `beep.wav`. From the command line,
+`remod sounds --file <bank or package>` lists the ids and `remod sound-wav --file <...> --id <id> --out x.wav` saves
+one.
+
+Not known yet (needs a test in game): whether a sound of another length plays fully.
 
 ## Built from blocks
 

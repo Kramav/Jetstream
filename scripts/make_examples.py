@@ -295,6 +295,17 @@ g.link(movie, 'fhd', pkg, 'file')
 g.link(movie, 'sound', pkg, 'file')  # mva402 has no sound packages: nothing comes, but the link is the pattern
 g.save('13_edit_a_movie_by_hand.json')
 
+# 14. Game sounds: a Game sound block (a sound dragged from a bank's list in the Browser) with your audio in its place.
+# This one: the intro's English narration, replaced by beeps.
+g = Graph()
+sound = g.add('GameSound', 'The intro narration (English)',
+              sound='{game}/_chainsaw/sound/wwise/ch_mva000_dialogue.sbnk.1.x64.en#880852580', audio='beep.wav')
+replace = g.add('ReplaceSounds')
+pkg = package(g, 'Sound test', 'The intro narration (English) replaced by beeps')
+g.link(sound, 'sound', replace, 'sounds')
+g.link(replace, 'files', pkg, 'file')
+g.save('14_replace_a_sound.json')
+
 
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):
@@ -331,3 +342,18 @@ def logo(x, y):  # a red ring with a bar, transparent around it
 os.makedirs(OUT, exist_ok=True)
 png('picture.png', 480, 360, sky)
 png('logo.png', 128, 128, logo)
+
+
+# Sample sound: three short beeps (48 kHz mono).
+def wav(name, seconds):
+    import math
+    rate = 48000
+    samples = [int(12000 * math.sin(2 * math.pi * 880 * n / rate)) if (n % (rate // 3)) < rate // 10 else 0
+               for n in range(int(seconds * rate))]
+    data = struct.pack('<%dh' % len(samples), *samples)
+    head = b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16, 1, 1, rate, rate * 2, 2, 16)
+    open(os.path.join(OUT, name), 'wb').write(head + b'data' + struct.pack('<I', len(data)) + data)
+    print('wrote', name)
+
+
+wav('beep.wav', 1)

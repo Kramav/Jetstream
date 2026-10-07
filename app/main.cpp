@@ -9,6 +9,7 @@
 #include "route.hpp"
 #include "settings.hpp"
 #include "setup.hpp"
+#include "sound.hpp"
 #include "texture_converter.hpp"
 #include "zoom_view.hpp"
 
@@ -348,7 +349,8 @@ bool browse(remod::PathKind kind, const char* filter, std::string& value, const 
     case remod::PathKind::OpenTexture: r = NFD_OpenDialogU8(&out, filters, count, start); break;
     case remod::PathKind::SaveFile: r = NFD_SaveDialogU8(&out, filters, count, start, name.c_str()); break;
     case remod::PathKind::Folder: r = NFD_PickFolderU8(&out, start); break;
-    case remod::PathKind::None: return false;
+    case remod::PathKind::None:
+    case remod::PathKind::GameSound: return false;
     }
     if (r != NFD_OKAY) return false;
     value = out;
@@ -495,6 +497,7 @@ struct State {
     std::map<std::uintptr_t, bool> pin_top;  // an input pin on its block's top edge (a linked field, Across)
     std::array<int, 2> ports_now{};
     std::string add_type;  // from the Nodes panel: a block to add next frame, at `add_at` (graph) or mid-view
+    std::string add_sound;  // from the Browser's Sounds list: a Game sound block to add next frame, at `add_at`
     std::optional<ImVec2> add_at;
     std::optional<ImVec2> ghost_at;  // where a block dragged from the Nodes panel would land (graph), while over it
     BlockLook look;
@@ -572,12 +575,26 @@ void detect_game(State& s, const std::string& field) {
     }
 }
 
+// A sound from the Browser's Sounds list (payload "remod_sound": "<absolute file>#<id>") as a field holds it: the
+// file inside the Game files folder as {game}\..., so the graph moves between PCs.
+std::string game_sound_field(const std::string& dragged) {
+    std::string file;
+    std::uint32_t id = 0;
+    return remod::parse_game_sound(dragged, file, id) ? remod::game_sound_text(remod::with_game_token(file), id) : dragged;
+}
+
 // A path dragged from the Browser (payload "remod_path") over the last item, a block's field. Core decides whether it
 // fits (`kind`, `filter`: the field's picker); if so, dropping fills the field (a texture also picks the game, as the
-// "..." picker does), else `hint` says why and nothing happens.
+// "..." picker does), else `hint` says why and nothing happens. A sound from the Sounds list ("remod_sound") fills a
+// Game sound field.
 void accept_path(State& s, std::string& value, remod::PathKind kind, const char* filter, std::string& hint) {
     if (!ImGui::BeginDragDropTarget()) return;
-    if (const ImGuiPayload* peek = ImGui::GetDragDropPayload(); peek && peek->IsDataType("remod_path")) {
+    if (const ImGuiPayload* peek = ImGui::GetDragDropPayload(); peek && peek->IsDataType("remod_sound")) {
+        if (kind != remod::PathKind::GameSound)
+            hint = "Drop a sound on empty graph space (a new Game sound block), or on a Game sound block's field.";
+        else if (const ImGuiPayload* dropped = ImGui::AcceptDragDropPayload("remod_sound"))
+            value = game_sound_field(static_cast<const char*>(dropped->Data));
+    } else if (peek && peek->IsDataType("remod_path")) {
         const std::string path = static_cast<const char*>(peek->Data);
         std::error_code ec;
         const std::string problem = remod::path_fit(kind, filter, path, std::filesystem::is_directory(path, ec));
@@ -3179,7 +3196,9 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     s.mini_view_min = view_lo;
     s.mini_view_max = view_hi;
     const remod::NodeSpec* dragged_spec =
-        drag && drag->IsDataType("remod_block") ? remod::find_spec(static_cast<const char*>(drag->Data)) : nullptr;
+        drag && drag->IsDataType("remod_block")   ? remod::find_spec(static_cast<const char*>(drag->Data))
+        : drag && drag->IsDataType("remod_sound") ? remod::find_spec("GameSound")
+                                                  : nullptr;
     if (const remod::NodeSpec* spec = dragged_spec;
         spec && mouse.x > view_lo.x && mouse.x < view_hi.x && mouse.y > view_lo.y && mouse.y < view_hi.y) {
         const ImVec2 size = draw_block_preview(nullptr, {}, *spec, s.look, 1, 1);
@@ -3456,6 +3475,25 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.add_type.clear();
     }
 
+    // A sound from the Browser's Sounds list: a Game sound block holding it, where it was dropped, linked into the
+    // layout's Replace sounds block if it has exactly one. In Use layout too (user, 2026-10-07: drag a sound line
+    // into the graph): the Sounds list is only there; this is the one block Use layout adds.
+    if (!s.add_sound.empty()) {
+        const int id = s.graph.add_node("GameSound").id;
+        s.graph.find(id)->params["sound"] = game_sound_field(s.add_sound);
+        ed::SetNodePosition(id, s.add_at.value_or(ed::ScreenToCanvas(view_center)));
+        s.place_new = id;
+        std::vector<int> targets;
+        for (const auto& n : s.graph.nodes)
+            if (n.type == "ReplaceSounds") targets.push_back(n.id);
+        if (targets.size() == 1 && s.graph.connect({id, "sound", targets[0], "sounds"}).empty())
+            s.status = "Game sound added and linked into Replace sounds: pick Your audio on it (empty: silence).";
+        else
+            s.status = targets.empty() ? "Game sound added: link it into a Replace sounds block (Build layout)."
+                                       : "Game sound added: link it into one of the Replace sounds blocks (Build layout).";
+        s.add_sound.clear();
+    }
+
     // A texture from the Browser goes into the selected Original texture block, else the only one; in Build layout
     // a new block is added if there's none.
     if (!s.pending_texture.empty()) {
@@ -3503,6 +3541,10 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     if (ImGui::BeginDragDropTargetCustom(ImRect(view_min, view_min + view_size), ImGui::GetID("graph_drop"))) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("remod_block")) {
             s.add_type = static_cast<const char*>(payload->Data);
+            s.add_at = s.ghost_at;
+        }
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("remod_sound")) {
+            s.add_sound = static_cast<const char*>(payload->Data);
             s.add_at = s.ghost_at;
         }
         ImGui::EndDragDropTarget();

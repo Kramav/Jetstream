@@ -22,8 +22,9 @@ class NodeRun;  // node_run.hpp: one node's view of a run (core only)
 enum class PortType { Tex, Image, Text, Path, Folder, Bool, Any };
 
 // Which picker a front end should offer for a path field. OpenTexture: an RE Engine texture of any known game
-// (front ends build the filter from the profiles' tex suffixes).
-enum class PathKind { None, OpenFile, OpenTexture, SaveFile, Folder };
+// (front ends build the filter from the profiles' tex suffixes). GameSound: no picker; a sound dragged from a bank's
+// or package's list of sounds (game_sound_text).
+enum class PathKind { None, OpenFile, OpenTexture, SaveFile, Folder, GameSound };
 
 // How an input can be typed in. None = link-only. Choice: one of InputSpec::options. Number: from InputSpec::min to
 // max, stored as text (front ends offer a drag field).

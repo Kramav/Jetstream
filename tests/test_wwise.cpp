@@ -1,6 +1,8 @@
 #include "graph.hpp"
+#include "nodes.hpp"
 #include "movie.hpp"
 #include "profile.hpp"
+#include "sound.hpp"
 #include "wwise.hpp"
 
 #include "helpers.hpp"
@@ -8,7 +10,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <map>
+#include <set>
+#include <tuple>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -114,12 +121,14 @@ TEST_CASE("sound packages: written and read back, header-only copies, ids of bot
     CHECK_THROWS(remod::read_akpk(full.substr(0, 30)));
 }
 
-TEST_CASE("Opus WEMs: libopus at the original's channels and length, back again; 3 and 6 channels in a WAV's order") {
+TEST_CASE("Opus WEMs: libopus at the original's channels and length, back again; 3 and 6 channels in a WAV's order, 12 each its own") {
     for (const auto& [channels, config, family] : {std::tuple{1, 0x4101u, 0}, {2, 0x3102u, 0}, {3, 0x7103u, 1},
-                                                   {6, 0x3F106u, 1}}) {
+                                                   {6, 0x3F106u, 1}, {12, 0u, 255}, {1, 0x4101u, 255}}) {
         CAPTURE(channels);
         std::vector<double> freqs{440, 660, 880, 1100, 1320, 1540};
         freqs.resize(size_t(channels));
+        if (channels == 12)  // each a mono stream: kept low, where Opus keeps a tone's waveform at this bit rate
+            for (int c = 0; c < 12; ++c) freqs[size_t(c)] = 400 + 60 * c;
         const auto pcm = tones(30000, freqs);
         const std::string wem = remod::encode_wem(opus_like(std::uint16_t(channels), 1, config, std::uint8_t(family)),
                                                   pcm, {});
@@ -130,10 +139,14 @@ TEST_CASE("Opus WEMs: libopus at the original's channels and length, back again;
         const auto back = remod::decode_wem(wem, {});
         REQUIRE(back.size() == pcm.size());
         for (int c = 0; c < channels; ++c)  // each tone where it was (6: not the LFE, which Opus low-passes)
-            if (channels != 6 || c != 3) CHECK(snr(pcm, c, back, c, channels) > 10);
+            if (channels != 6 || c != 3) {
+                CAPTURE(c);
+                CHECK(snr(pcm, c, back, c, channels) > 10);
+            }
+        CHECK(std::uint8_t(wem[20 + 18 + 17]) == family);  // the mapping family, as the original's
     }
-    CHECK_THROWS_WITH(remod::encode_wem(opus_like(12, 1, 0, 255), std::vector<std::int16_t>(12), {}),
-                      ContainsSubstring("can't write yet"));
+    CHECK_THROWS_WITH(remod::encode_wem(opus_like(4, 1, 0, 2), std::vector<std::int16_t>(4), {}),
+                      ContainsSubstring("can't write yet"));  // family 2 (ambisonics): not in RE4R
 }
 
 TEST_CASE("Wwise's own WEMs decode to their WAVs, channel order too (the local spike files; skipped without them)") {
@@ -223,7 +236,7 @@ TEST_CASE("Replace movie: new sound packages for a movie whose sound is in them,
     const remod::RunOptions opt{.profile = profile, .converter = conv, .base_dir = dir.path,
                                 .cache_dir = dir.path / "cache"};
     const auto result = remod::run_graph(g, opt);
-    CHECK_THAT(result.nodes.at(1).message, ContainsSubstring("2 sound packages (effects: a beep each second"));
+    CHECK_THAT(result.nodes.at(1).message, ContainsSubstring("2 sound packages and their banks (effects: a beep each second"));
     CHECK_THAT(result.nodes.at(2).message, ContainsSubstring("5 other file"));  // the movie, 2 packages x 2 copies
     const fs::path mod = dir.path / "mods/SoundTest/natives/STM";
     const auto se = remod::read_akpk(test::read_file(mod / "streaming/_chainsaw/sound/wwise/ch_mva201_se.spck.1.x64"));
@@ -244,9 +257,309 @@ TEST_CASE("Replace movie: new sound packages for a movie whose sound is in them,
     CHECK(silent.size() == 24000);
     CHECK(loudest(silent, 0, silent.size()) < 200);
     CHECK_FALSE(fs::exists(mod / "streaming/_chainsaw/sound/wwise/ch_mva999_se.spck.1.x64"));
-    CHECK_THAT(remod::run_graph(g, opt).nodes.at(1).message, ContainsSubstring("sound packages unchanged"));
+    CHECK_THAT(remod::run_graph(g, opt).nodes.at(1).message, ContainsSubstring("their banks unchanged"));
 
     // Off: no packages.
     g.find(1)->params["sound"] = "false";
     CHECK_THAT(remod::run_graph(g, opt).nodes.at(2).message, ContainsSubstring("1 other file"));
+}
+
+namespace {
+
+// Event data (HIRC) with one Sound (type 2) or music track (11) per entry: {type, media id, stream type, size}.
+std::string events(const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint8_t, std::uint32_t>>& objects) {
+    std::string out;
+    put(out, std::uint32_t(objects.size()));
+    std::uint32_t object = 1000;
+    for (const auto& [type, media, stream, memory] : objects) {
+        std::string body;
+        put(body, object++);
+        if (type == 11) body += char(0), put(body, std::uint32_t(1));  // flags, one source
+        put(body, std::uint32_t(0x00040001)), body += char(stream), put(body, media), put(body, memory), body += char(0);
+        body += std::string(10, '\x7f');  // the rest of the object, untouched
+        out += char(type);
+        put(out, std::uint32_t(body.size()));
+        out += body;
+    }
+    return out;
+}
+
+remod::Bank bank_of(std::vector<remod::BankMedia> media, const std::string& hirc) {
+    remod::Bank b;
+    b.chunks = {{"BKHD", std::string(12, '\x8c')}, {"DIDX", ""}, {"DATA", ""}, {"HIRC", hirc}};
+    b.media = std::move(media);
+    return b;
+}
+
+// A small game sound folder: bank a (sounds 7100, and 7300 in a music track, whole), package p (streamed sound 7200,
+// stereo) with its first part in bank b (English), and bank c (an unrelated sound).
+struct SoundTree {
+    TempDir dir;
+    fs::path natives = dir.path / "natives/STM";
+    std::string o100 = remod::encode_wem(opus_like(1, 1, 0x4101, 0), tones(24000, {440}), {});
+    std::string o200 = remod::encode_wem(opus_like(2, 1, 0x3102, 0), tones(48000, {440, 660}), {});
+    std::string o300 = remod::encode_wem(opus_like(1, 1, 0x4101, 0), tones(24000, {880}), {});
+    SoundTree() {
+        const fs::path wwise = natives / "_chainsaw/sound/wwise";
+        test::write_file(wwise / "a.sbnk.1.x64",
+                         remod::write_bank(bank_of({{7100, o100}, {7300, o300}},
+                                                   events({{2, 7100, 0, std::uint32_t(o100.size())},
+                                                           {11, 7300, 0, std::uint32_t(o300.size())}}))));
+        const size_t first = remod::wem_prefix(o200, 3);
+        test::write_file(wwise / "b.sbnk.1.x64.en",
+                         remod::write_bank(bank_of({{7200, o200.substr(0, first)}},
+                                                   events({{2, 7200, 1, std::uint32_t(first)}}))));
+        test::write_file(wwise / "c.sbnk.1.x64", remod::write_bank(bank_of({{7999, o100}}, events({}))));
+        remod::Akpk p;
+        p.streams = {{.id = 7200, .data = o200}};
+        test::write_file(wwise / "p.spck.1.x64", remod::write_akpk(p, false));
+        test::write_file(natives / "streaming/_chainsaw/sound/wwise/p.spck.1.x64", remod::write_akpk(p, true));
+    }
+};
+
+const remod::SoundFile* file_at(const std::vector<remod::SoundFile>& files, const std::string& game_path) {
+    for (const auto& f : files)
+        if (f.game_path == game_path) return &f;
+    return nullptr;
+}
+
+struct NoTextures : remod::ITextureConverter {
+    remod::TexMeta load_tex(const fs::path&, const fs::path&, const remod::Profile&) override { return {}; }
+    remod::TexMeta save_tex(const fs::path&, const fs::path&, const fs::path&, const remod::Profile&) override {
+        return {};
+    }
+};
+
+}  // namespace
+
+TEST_CASE("sound banks: media and event data read and written back; the sizes the event data records") {
+    const std::string wem = remod::encode_wem(opus_like(1, 1, 0x4101, 0), tones(9600, {440}), {});
+    const std::string bytes = remod::write_bank(
+        bank_of({{5, wem}, {6, "odd"}, {7, ""}}, events({{2, 5, 0, std::uint32_t(wem.size())}, {11, 6, 1, 3}})));
+    remod::Bank b = remod::read_bank(bytes);
+    REQUIRE(b.media.size() == 3);
+    CHECK(b.media[0].data == wem);
+    CHECK(b.media[1].data == "odd");
+    CHECK(remod::write_bank(b) == bytes);
+    const auto sources = remod::bank_sources(b);
+    REQUIRE(sources.size() == 2);
+    CHECK((sources[0].media == 5 && sources[0].stream == 0 && sources[0].memory == wem.size() && !sources[0].music));
+    CHECK((sources[1].media == 6 && sources[1].stream == 1 && sources[1].music));
+    remod::set_source_memory(b, sources[1], 1234);
+    CHECK(remod::bank_sources(remod::read_bank(remod::write_bank(b)))[1].memory == 1234);
+    // Prefetch arithmetic: the header and the first packets, and back.
+    const size_t three = remod::wem_prefix(wem, 3);
+    CHECK(remod::wem_packets_within(wem, three) == 3);
+    CHECK(remod::wem_packets_within(wem, three - 1) == 2);
+    CHECK(remod::wem_prefix(wem, 100000) == wem.size());
+    CHECK_THROWS_WITH(remod::read_bank("RIFF1234"), ContainsSubstring("not a sound bank"));
+}
+
+TEST_CASE("replace_sounds: banks, packages, a streamed sound's first part and every recorded size, in step") {
+    SoundTree t;
+    std::map<std::uint32_t, bool> music;
+    const auto got = remod::replace_sounds(
+        t.natives, "_chainsaw/sound/wwise", {7100, 7200, 7300},
+        [&](std::uint32_t id, const remod::WemInfo& like, bool is_music) {
+            music[id] = is_music;
+            return tones(is_music ? like.samples : 36000, std::vector<double>(like.channels, 1000));
+        },
+        {});
+    CHECK(got.missing.empty());
+    CHECK(music == std::map<std::uint32_t, bool>{{7100, false}, {7200, false}, {7300, true}});
+    REQUIRE(got.files.size() == 4);  // a, b, and both copies of p; c untouched
+    const auto* a = file_at(got.files, "_chainsaw/sound/wwise/a.sbnk.1.x64");
+    const auto* b = file_at(got.files, "_chainsaw/sound/wwise/b.sbnk.1.x64.en");
+    const auto* p = file_at(got.files, "streaming/_chainsaw/sound/wwise/p.spck.1.x64");
+    REQUIRE((a && b && p && file_at(got.files, "_chainsaw/sound/wwise/p.spck.1.x64")));
+
+    const remod::Bank bank_a = remod::read_bank(a->bytes);
+    CHECK(remod::read_wem_info(bank_a.media[0].data).samples == 36000);  // its own length
+    CHECK(remod::read_wem_info(bank_a.media[1].data).samples == 24000);  // a music track's: the original's
+    for (const auto& s : remod::bank_sources(bank_a))
+        CHECK(s.memory == (s.media == 7100 ? bank_a.media[0] : bank_a.media[1]).data.size());
+
+    const std::string streamed = remod::read_akpk(p->bytes).streams.at(0).data;
+    CHECK(remod::decode_wem(streamed, {}).size() == 36000 * 2);
+    const remod::Bank bank_b = remod::read_bank(b->bytes);
+    const std::string first = bank_b.media.at(0).data;
+    CHECK(first == streamed.substr(0, remod::wem_prefix(streamed, 3)));  // as many packets as the original's
+    CHECK(remod::bank_sources(bank_b).at(0).memory == first.size());
+
+    CHECK(remod::replace_sounds(t.natives, "_chainsaw/sound/wwise", {7100, 4242}, {}, {}).missing ==
+          std::set<std::uint32_t>{4242});
+}
+
+TEST_CASE("list_sounds and sound_wem: a bank's and a package's sounds, a streamed one's whole from its package") {
+    SoundTree t;
+    const fs::path wwise = t.natives / "_chainsaw/sound/wwise";
+    const auto in_b = remod::list_sounds(wwise / "b.sbnk.1.x64.en");
+    REQUIRE(in_b.size() == 1);
+    CHECK(in_b[0].id == 7200);
+    CHECK(in_b[0].where == "streamed: its first part");
+    CHECK(in_b[0].info.channels == 2);
+    const auto in_p = remod::list_sounds(wwise / "p.spck.1.x64");  // the header-only copy: the streaming one's
+    REQUIRE(in_p.size() == 1);
+    CHECK(in_p[0].where == "in this package");
+    CHECK(in_p[0].info.samples == 48000);
+    CHECK(remod::sound_wem(wwise / "b.sbnk.1.x64.en", 7200) == t.o200);
+    CHECK(remod::sound_wem(wwise / "a.sbnk.1.x64", 7300) == t.o300);
+    CHECK(remod::list_sounds(wwise / "a.sbnk.1.x64").at(0).where == "in this bank");
+    CHECK(remod::sound_id_in("vo_leon_880852580.wav") == 880852580);
+    CHECK(remod::sound_id_in("take2_123.wav") == 0);
+    CHECK(remod::wav_bytes(tones(10, {1, 2}), 2, 48000).size() == 44 + 10 * 2 * 2);
+}
+
+TEST_CASE("Replace sounds: your files by the ids in their names, into Package; an unknown id named") {
+    SoundTree t;
+    const fs::path voice = t.dir.path / "audio/voice_7100.wav", effect = t.dir.path / "audio/hit 7200.wav";
+    test::write_file(voice, remod::wav_bytes(tones(24000, {500}), 1, 48000));
+    test::write_file(effect, remod::wav_bytes(tones(12000, {700, 900}), 2, 48000));
+    remod::Graph g;
+    g.add_node("Value").params["value"] = voice.string();   // 1
+    g.add_node("Value").params["value"] = effect.string();  // 2
+    g.add_node("ReplaceSounds").params["game"] = t.natives.string();  // 3
+    auto& pack = g.add_node("PackageMod").params;                     // 4
+    pack["name"] = "Sounds";
+    pack["out"] = "mods";
+    pack["replace"] = "true";
+    REQUIRE(g.connect({1, "value", 3, "sounds"}) == "");
+    REQUIRE(g.connect({2, "value", 3, "sounds"}) == "");
+    REQUIRE(g.connect({3, "files", 4, "file"}) == "");
+    REQUIRE(g.validate().empty());
+    NoTextures conv;
+    const remod::Profile profile = remod::load_profile(REMOD_PROFILES_DIR "/re4r.toml");
+    const remod::RunOptions opt{.profile = profile, .converter = conv, .base_dir = t.dir.path,
+                                .cache_dir = t.dir.path / "cache"};
+    const auto result = remod::run_graph(g, opt);
+    CHECK_THAT(result.nodes.at(3).message, ContainsSubstring("2 sound(s) replaced: 4 sound files"));
+    CHECK_THAT(result.nodes.at(4).message, ContainsSubstring("4 other file"));
+    const fs::path mod = t.dir.path / "mods/Sounds/natives/STM";
+    const auto bank = remod::read_bank(test::read_file(mod / "_chainsaw/sound/wwise/a.sbnk.1.x64"));
+    CHECK(remod::read_wem_info(bank.media.at(0).data).samples == 24000);  // voice_7100.wav's own length
+    CHECK(fs::exists(mod / "streaming/_chainsaw/sound/wwise/p.spck.1.x64"));
+    CHECK_THAT(remod::run_graph(g, opt).nodes.at(3).message, ContainsSubstring("unchanged"));
+
+    test::write_file(t.dir.path / "audio/no id.wav", remod::wav_bytes(tones(100, {500}), 1, 48000));
+    g.find(1)->params["value"] = (t.dir.path / "audio/no id.wav").string();
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("has no sound id"));
+    test::write_file(t.dir.path / "audio/x_4242.wav", remod::wav_bytes(tones(100, {500}), 1, 48000));
+    g.find(1)->params["value"] = (t.dir.path / "audio/x_4242.wav").string();
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("not in the game's sound files: 4242"));
+}
+
+TEST_CASE("listing the castle's music reads headers, not its 837 MB (set REMOD_GAME)") {
+    const std::string game = game_dir();
+    if (game.empty()) SKIP("set REMOD_GAME to run");
+    const fs::path file = fs::path(game) / "_chainsaw/sound/wwise/ch_bgm_castle.spck.1.x64";
+    if (!fs::exists(file)) SKIP("needs ch_bgm_castle.spck");
+    const auto start = std::chrono::steady_clock::now();
+    const auto sounds = remod::list_sounds(file);
+    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    CHECK(took < 2.0);
+    const auto table = remod::read_akpk(test::read_file(file)).streams;  // the header-only copy: ids only
+    REQUIRE(sounds.size() == table.size());
+    CHECK(std::ranges::all_of(sounds, [](const remod::SoundEntry& s) { return s.info.channels > 0; }));
+    const std::string last = remod::sound_wem(file, sounds.back().id);  // a whole WEM: its RIFF size is its own
+    REQUIRE(last.size() >= 8);
+    std::uint32_t riff = 0;
+    std::memcpy(&riff, last.data() + 4, 4);
+    CHECK(riff + 8 == last.size());
+    CHECK(remod::read_wem_info(last).samples == sounds.back().info.samples);
+    // Byte for byte against reading the whole package (a small one).
+    const fs::path small = fs::path(game) / "_chainsaw/sound/wwise/ch_mva000_bgm.spck.1.x64";
+    const auto whole = remod::read_akpk(test::read_file(fs::path(game) / "streaming/_chainsaw/sound/wwise/ch_mva000_bgm.spck.1.x64"));
+    CHECK(remod::sound_wem(small, std::uint32_t(whole.streams.at(0).id)) == whole.streams.at(0).data);
+}
+
+TEST_CASE("the game's banks, and a streamed dialogue line replaced in step (set REMOD_GAME)") {
+    const std::string game = game_dir();
+    if (game.empty()) SKIP("set REMOD_GAME to run");
+    const fs::path wwise = fs::path(game) / "_chainsaw/sound/wwise";
+    if (!fs::exists(wwise / "ch_mva000_bgm.sbnk.1.x64")) SKIP("needs _chainsaw/sound/wwise");
+    for (const char* name : {"ch_mva000_bgm.sbnk.1.x64", "ch_mva000_dialogue.sbnk.1.x64.en",
+                             "ao_cha8_voice_emo_media.sbnk.1.x64.en", "ch_bgm_castle.sbnk.1.x64"}) {
+        CAPTURE(name);
+        const std::string bytes = test::read_file(wwise / name);
+        CHECK(remod::write_bank(remod::read_bank(bytes)) == bytes);
+    }
+    // The intro's English dialogue: streamed, its first part (header and some packets) in its bank.
+    const std::uint32_t id = 880852580;
+    const auto got = remod::replace_sounds(fs::path(game), "_chainsaw/sound/wwise", {id},
+                                           [](std::uint32_t, const remod::WemInfo& like, bool) {
+                                               return tones(48000, std::vector<double>(like.channels, 500));
+                                           },
+                                           remod::find_codebooks());
+    REQUIRE(got.missing.empty());
+    const auto* bank = file_at(got.files, "_chainsaw/sound/wwise/ch_mva000_dialogue.sbnk.1.x64.en");
+    const auto* package = file_at(got.files, "streaming/_chainsaw/sound/wwise/ch_mva000_dialogue.spck.1.x64.en");
+    REQUIRE((bank && package));
+    const std::string original =
+        remod::read_akpk(test::read_file(fs::path(game) / "streaming/_chainsaw/sound/wwise/ch_mva000_dialogue.spck.1.x64.en"))
+            .streams.at(0)
+            .data;
+    const std::string streamed = remod::read_akpk(package->bytes).streams.at(0).data;
+    const remod::Bank now = remod::read_bank(bank->bytes);
+    const remod::Bank was = remod::read_bank(test::read_file(wwise / "ch_mva000_dialogue.sbnk.1.x64.en"));
+    const std::string first = std::ranges::find(now.media, id, &remod::BankMedia::id)->data;
+    const std::string first_was = std::ranges::find(was.media, id, &remod::BankMedia::id)->data;
+    CHECK(streamed.starts_with(first));
+    CHECK(remod::wem_packets_within(streamed, first.size()) == remod::wem_packets_within(original, first_was.size()));
+    for (const auto& s : remod::bank_sources(now))
+        if (s.media == id) CHECK(s.memory == first.size());
+    CHECK(remod::decode_wem(streamed, {}).size() == 48000 * 3);
+}
+
+TEST_CASE("Game sound blocks: a sound picked by its file and id, your audio or silence, into Replace sounds") {
+    SoundTree t;
+    std::string file;
+    std::uint32_t id = 0;
+    CHECK(remod::parse_game_sound(remod::game_sound_text("{game}/x.sbnk.1.x64.en", 7100), file, id));
+    CHECK((file == "{game}/x.sbnk.1.x64.en" && id == 7100));
+    CHECK_FALSE(remod::parse_game_sound("x.sbnk.1.x64", file, id));
+    CHECK_FALSE(remod::parse_game_sound("x.sbnk.1.x64#12a", file, id));
+    CHECK_THAT(remod::path_fit(remod::PathKind::GameSound, nullptr, "x.wav", false), ContainsSubstring("game sound"));
+
+    const fs::path wwise = t.natives / "_chainsaw/sound/wwise";
+    const fs::path mine = t.dir.path / "audio/anything.wav";  // no id in its name
+    test::write_file(mine, remod::wav_bytes(tones(30000, {500}), 1, 48000));
+    remod::Graph g;
+    auto& voice = g.add_node("GameSound").params;  // 1
+    voice["sound"] = remod::game_sound_text((wwise / "a.sbnk.1.x64").string(), 7100);
+    voice["audio"] = mine.string();
+    g.add_node("GameSound").params["sound"] = remod::game_sound_text((wwise / "b.sbnk.1.x64.en").string(), 7200);  // 2: silence
+    g.add_node("ReplaceSounds").params["game"] = t.natives.string();  // 3
+    auto& pack = g.add_node("PackageMod").params;                     // 4
+    pack["name"] = "Picked";
+    pack["out"] = "mods";
+    pack["replace"] = "true";
+    REQUIRE(g.connect({1, "sound", 3, "sounds"}) == "");
+    REQUIRE(g.connect({2, "sound", 3, "sounds"}) == "");
+    REQUIRE(g.connect({3, "files", 4, "file"}) == "");
+    REQUIRE(g.validate().empty());
+    NoTextures conv;
+    const remod::Profile profile = remod::load_profile(REMOD_PROFILES_DIR "/re4r.toml");
+    const remod::RunOptions opt{.profile = profile, .converter = conv, .base_dir = t.dir.path,
+                                .cache_dir = t.dir.path / "cache"};
+    const auto result = remod::run_graph(g, opt);
+    CHECK_THAT(result.nodes.at(1).message, ContainsSubstring("sound 7100: anything.wav"));
+    CHECK_THAT(result.nodes.at(2).message, ContainsSubstring("silence"));
+    CHECK_THAT(result.nodes.at(3).message, ContainsSubstring("2 sound(s) replaced"));
+    const fs::path mod = t.dir.path / "mods/Picked/natives/STM";
+    const auto a = remod::read_bank(test::read_file(mod / "_chainsaw/sound/wwise/a.sbnk.1.x64"));
+    CHECK(remod::read_wem_info(a.media.at(0).data).samples == 30000);
+    const auto p = remod::read_akpk(test::read_file(mod / "streaming/_chainsaw/sound/wwise/p.spck.1.x64"));
+    const auto silent = remod::decode_wem(p.streams.at(0).data, {});
+    CHECK(silent.size() == 48000 * 2);  // the original's length
+    CHECK(std::ranges::all_of(silent, [](std::int16_t v) { return std::abs(int(v)) < 200; }));
+
+    // Straight into Package: refused, pointing to Replace sounds.
+    remod::Graph wrong;
+    wrong.add_node("GameSound").params = g.find(1)->params;
+    wrong.add_node("PackageMod").params = pack;
+    REQUIRE(wrong.connect({1, "sound", 2, "file"}) == "");
+    CHECK_THROWS_WITH(remod::run_graph(wrong, opt), ContainsSubstring("goes into Replace sounds"));
+    // Two picks of one sound.
+    g.find(2)->params["sound"] = g.find(1)->params["sound"];
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("two sounds for game sound 7100"));
 }

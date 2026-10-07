@@ -28,6 +28,36 @@ Akpk read_akpk(std::string_view bytes);  // throws std::runtime_error
 // Every file needs its data either way: its size and offset go in the header.
 std::string write_akpk(const Akpk& pack, bool with_data);
 
+// A sound bank (.sbnk, Wwise's .bnk): chunks in file order. Its media index and data (DIDX, DATA) are kept as files
+// by id, rebuilt on writing (16-byte aligned, zero padding, as Wwise writes them); every other chunk as it is.
+struct BankMedia {
+    std::uint32_t id = 0;
+    std::string data;  // a whole WEM, or a streamed one's first part (its prefetch)
+};
+struct Bank {
+    std::vector<std::pair<std::string, std::string>> chunks;  // tag and body; DIDX's and DATA's come from `media`
+    std::vector<BankMedia> media;
+};
+Bank read_bank(std::string_view bytes);  // throws std::runtime_error
+std::string write_bank(const Bank& bank);
+
+// Where a bank's event data (HIRC: Sounds and music tracks) records a media file's in-memory size. Stream 0: the
+// media is in a bank (size = its size); 1: streamed, its prefetch in a bank; 2: streamed only. For 1 and 2 the size
+// is the WEM's header and first packets (Wwise's prefetch amount, wem_prefix).
+struct BankSource {
+    std::uint32_t media = 0;
+    std::uint8_t stream = 0;
+    std::uint32_t memory = 0;
+    size_t at = 0;       // the size's offset in the HIRC chunk's body
+    bool music = false;  // a music track's (it also records the sound's length)
+};
+std::vector<BankSource> bank_sources(const Bank& bank);
+void set_source_memory(Bank& bank, const BankSource& source, std::uint32_t memory);
+
+// A WEM's header and first `packets` packets: how many bytes, and how many packets end within its first `bytes`.
+size_t wem_prefix(std::string_view wem, size_t packets);
+size_t wem_packets_within(std::string_view wem, size_t bytes);
+
 constexpr std::uint16_t kWemVorbis = 0xFFFF, kWemOpus = 0x3041;
 struct WemInfo {
     std::uint16_t codec = 0;  // kWemVorbis, kWemOpus, ...

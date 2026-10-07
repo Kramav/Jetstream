@@ -8,4 +8,5 @@ pak_script      = "Create-PAK-2023.bat"       # [guide] REtool script for 2023-o
 noesis_export   = "-b"                        # optional (Noesis is): ?cmode export options (-b = no dialog, CLAUDE.md §9)
 file_list       = "TBD"                       # [TBD-spike] PAK file list source/version
 noesis_game     = "RE4"                       # optional: the RE plugin's name for RE4R (its RE4NativesPath.txt)
-movie_sound     = "_chainsaw/sound/wwise/ch_{id}_"  # [game data] optional: a movie's sound packages (.spck), CLAUDE.md §10
+sound_dir       = "_chainsaw/sound/wwise"     # [game data] optional: Wwise banks (.sbnk) and packages (.spck), CLAUDE.md §10
+movie_sound     = "ch_{id}_"                  # [game data] optional: a movie's sound packages there

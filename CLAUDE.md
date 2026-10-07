@@ -3,7 +3,7 @@
 Node-based modding tool for Capcom RE Engine games. First target: **Resident Evil 4 (2023), "RE4R"**.
 Long-term: AI-assisted asset generation plus optional REFramework runtime features.
 **Current scope: M1 is done (polish goes on). M3 route 1 (replacing movies) is done (2026-10-06), their sound
-packages too (no longer a restriction); route 2 waits for its spike. Then M2 (REFramework scripting); see §10. AI texture generation (M4) isn't started.**
+packages too, and any game sound by id (Replace sounds; no longer a restriction); route 2 waits for its spike. Then M2 (REFramework scripting); see §10. AI texture generation (M4) isn't started.**
 
 Source labels used below: **[official]** = official/authoritative docs, **[guide]** = community guide,
 **[inferred]** = design decision or assumption from planning, **[TBD-spike]** = must be confirmed by a manual in-game test.
@@ -915,6 +915,9 @@ propose them as next steps before then.
 - [ ] **Replaced movies (§10 M3 route 1).** Example 12 (mva000's test card) and a logo's (mv7001: beeps): does it
   play; is the file's sound played (the logos); does a different length play fully (Same length off); which movie
   plays where.
+- [ ] **Replaced game sounds (§10 Game sounds).** Example 14: is the intro's English narration three beeps (a
+  bank's first part and a package together); does a sound of another length play fully (Same length off); and a
+  sound embedded in a bank (no package).
 - [ ] **Replaced movie sound (§10 Story movies' sound).** Example 12 also replaces mva000's sound packages: is the
   beep heard each second, and the original's music, dialogue and effects gone; does a WEM one zero byte longer per
   packet (libvorbis) play cleanly; with Same length off, does a sound of another length play fully without a bank
@@ -1080,20 +1083,23 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     comes from elsewhere [game data].
     - **What's built:** Replace movie's **Replace its sound** (advanced checkbox, on by default) and its list output
       **sound packages (if any)**, into Package's other file.
-      - The packages are found by the profile's optional `movie_sound` (RE4R: `_chainsaw/sound/wwise/ch_{id}_`):
-        each streaming copy is read (core `read_akpk`), every WEM in it is written again, and both copies are written
-        (`write_akpk`, header-only outside streaming/).
-      - Each new WEM keeps its original's codec, channels, rate and (Same length on) sample count, so the sound bank
-        (`.sbnk`) needs no change: core `encode_wem` (Vorbis: libvorbis at the quality whose setup is the
-        original's, checked against it with the codebook library; Opus: libopus multistream at the original's
-        average bit rate, channels reordered from a WAV's to Vorbis's order). Same length off: the new movie's
-        length (in-game question).
+      - The packages are found by the profile's optional `sound_dir` and `movie_sound` (RE4R:
+        `_chainsaw/sound/wwise`, `ch_{id}_`); every sound in them is replaced through core `replace_sounds` (§10
+        "Game sounds" below): the packages' both copies, and the banks holding their first parts and sizes.
+      - **Fixed the same day:** the first version rewrote the packages only. Every movie sound also has its first
+        part (prefetch) in a bank (`ch_mva000_bgm.sbnk` etc.), and a bank records its size: the game would have read
+        the old sound's header and opening before the new stream. Now replaced in step (checked on example 12: each
+        bank's first part is a prefix of the new streamed sound, every recorded size matches).
+      - Each new WEM keeps its original's codec, channels, rate and (Same length on, or a music track) sample count:
+        core `encode_wem` (Vorbis: libvorbis at the quality whose setup is the original's, checked against it with the
+        codebook library; Opus: libopus multistream at the original's average bit rate, channels reordered from a
+        WAV's to Vorbis's order). Same length off: the new movie's length (in-game question).
       - The music (or, with no music, the effects) gets the video's sound (core `read_sound`: Windows decodes it to
         mono or stereo; more channels get it in front left / right), a test card's a beep each second; every other
         sound, dialogue in every language too, silence.
-      - Run cache: per package, keyed on the package, the video (or "card" / "silence"), the length rule and
-        "snd1".
-      - Core `decode_wem` (both codecs) for checks and a later audio preview.
+      - Run cache: one set per movie (`cached_sound_files`: `<key>_<n>.wwise` and a `<key>.sounds` list of game
+        paths), keyed on the packages, the video (or "card"), the length rule and "snd2".
+      - Core `decode_wem` (both codecs) for checks and the Browser's playback.
     - **Checked:**
       - tests:
         - packages round trip;
@@ -1104,10 +1110,10 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
           setup found and a tone through it, the dialogue's 3 channels;
         - the block on a fake game folder: effects beep, dialogue silent, another movie's package left alone, an
           unchanged re-run, off;
-      - example 12 on the real mva000: 11 packages (22 files), every WEM read by vgmstream r2117 with the original's
-        id, codec, channels and sample count; the music decodes to a beep each second over 61.5 s.
-    - **Not checked:** in game (§9's list). Banks aren't touched, so a sound of another length or codec isn't
-      possible without the in-game answer first.
+      - example 12 on the real mva000: 11 packages (22 files) and 10 banks (mva000's effects sound has no bank entry
+        anywhere); every WEM read by vgmstream r2117 with the original's id, codec, channels and sample count; the
+        music decodes to a beep each second over 61.5 s.
+    - **Not checked:** in game (§9's list).
     - **The game's side [game data, read-only, 2026-10-06]:** `snd_cont_mva000.user` names three triggers
       (`snd_trgr_mva000_bgm` / `_dialogue` / `_se`) and a package (`snd_pack_mva000`). The audio is in
       `streaming/_chainsaw/sound/wwise/ch_mva000_bgm.spck.1.x64` (AKPK, one WEM: Wwise Vorbis 0xFFFF, stereo 48 kHz,
@@ -1120,6 +1126,82 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       {id (u32; u64 for externals), u32 block size, u32 size, u32 start block, u32 language id}; then the files.
       Every RE4R package: block size 1, the files back to back in table order with no gaps; the copy outside
       `streaming/` is the header alone, the streaming copy header and files.
+  - **Game sounds: any sound replaced. Built 2026-10-06 (user: "I would like to be able to replace any game
+    sound").** Core `sound.*` over `wwise.*`; block **Replace sounds**; the Browser lists, plays and saves sounds.
+    - **Where RE4R's sounds are [game data, every file read 2026-10-06]:**
+      - 3,367 banks (`.sbnk`, outside streaming/ only) and 1,266 packages. 111,554 WEMs sit in banks' media
+        (`DIDX` + `DATA`), 41,565 in packages; 491 bank media aren't sounds (counted 2026-10-07; first estimate ~700) (start `00 04 02 00`, 80-740 KB;
+        inferred: reverb impulse responses), 8 are empty.
+      - Codecs: Opus 1-12 channels (mapping family 0 for 1-2, 1 for 3-8, 255 for some 1, 4, 7 and 12-channel
+        ones; 417 sounds), Vorbis 1-12 channels. The writer does all three (255: each channel its own stream, in a WAV's
+        order: real 1- and 4-channel ones decode as vgmstream r2117 does, within 1, channels in place; vgmstream
+        refuses the 12-channel ones, so those aren't cross-checked).
+      - **Banks:** chunks BKHD, DIDX (12-byte entries: id, offset in DATA, size), DATA (each media 16-byte aligned,
+        zero padding, nothing after the last), HIRC; some have only BKHD and HIRC, or BKHD with media. Every bank
+        rewritten unchanged is byte-identical (tested on 4, by REMOD_GAME).
+      - **Streamed sounds have a first part in a bank (Wwise's prefetch):** 13,493 bank media are exact byte
+        prefixes of a package's WEM, 804 whole copies (a short sound fits). 14,273 of 40,214 package ids.
+      - **The event data records sizes:** HIRC objects (u8 type, u32 size, body), a Sound (type 2: u32 id, then a
+        source) or a music track (11: u32 id, u8 flags, u32 count, sources); a source is u32 plugin, u8 stream type
+        (0 in a bank, 1 prefetched, 2 streamed only), u32 media id, u32 in-memory size, u8 bits. For 0 the size is
+        the media's (137,749 of 137,749); for 1 the prefetch's (15,073 of 15,073); for 1 and 2 it always ends on a
+        packet boundary: the WEM's header and its first k packets (k under 20 mostly; 66,000 checked), recorded even
+        when no prefetch is kept. Music tracks also record their sounds' lengths (not read).
+    - **The replacement (`replace_sounds`):** every package whose table names the id (both copies written), every
+      bank whose media or event data does. The original comes from its package (streamed) or a bank (whole); each
+      language's file its own. The new WEM: `encode_wem` from the `SoundSource`. A bank's first part is the new
+      WEM's header and as many packets as the original's first part had (`wem_prefix`, `wem_packets_within`); each
+      recorded size becomes the new media size (0) or that prefix size (1, 2). A music track's sound keeps its
+      original's length (its track records it). Scanning reads banks' DIDX and HIRC only (seeking past DATA): 1.4 s
+      for example 14 on the whole folder.
+    - **Game sound block (2026-10-07; user: "dragging individual lines from a sound bank into the graph"; the
+      example "should not require exporting to wav outside the window"):** `GameSound`, Source, pure. Fields: Game
+      sound (`PathKind::GameSound`: `<bank or package>#<id>`, `game_sound_text` / `parse_game_sound`; no picker,
+      filled by a drop) and Your audio (empty: silence, the original's length). Its output is the audio with the
+      game path `sound:<id>`; Package refuses one ("goes into Replace sounds").
+    - **Replace sounds block:** `sounds` (multiple: Game sound blocks, or audio files whose names hold the id,
+      `sound_id_in`: the last run of 4-10 digits), Same length (off: the audio's own length), Game files (advanced,
+      `{game}`); list output `sound files` into Package. One Replace sounds per graph's sounds: two would each write
+      their own copy of a shared bank. An id in no file fails the run naming it; two sounds for one id too. Run cache
+      as Replace movie's. Audio: anything Media Foundation decodes (wav, mp3, m4a, aac, wma, flac, videos).
+    - **Drag and drop (app):** a line of the Sounds list is a drag source (payload `remod_sound`, "<absolute
+      file>#<id>"). Over the graph it shows a Game sound block's see-through copy (as the Nodes panel's blocks);
+      dropped there it adds a Game sound block holding it (the file as `{game}\...`) and links it into the layout's
+      Replace sounds block if there's exactly one (else the status line says to link it). **This works in Use layout
+      too, the one block Use layout adds** (the Sounds list is only shown there). Dropped on a Game sound field it
+      replaces that block's sound; other fields say where it goes.
+    - **Browser filter (user, 2026-10-07: folders without sound banks and other languages' files filled the
+      Browser):** "Show: Everything / Sound files" under the search box. Sound files: Game files lists only the banks
+      and packages (a tree of `AssetIndex::sounds`), search too, and hides the `streaming` folder (a package's sounds
+      list from its copy outside it); Language: All, or one (`en`, `de`, ...: files without a language stay).
+      **Changing it keeps your place (user, 2026-10-07):** the folder you're on stays selected (or its nearest
+      folder the filter still shows; switching back finds the folder itself), and tree folders are keyed by path, so
+      open ones stay open.
+      ponytail: for the session, not saved in the settings.
+    - **Browser:** banks and packages are in the Game files index (`AssetIndex::sounds`, `FileKind::Sound`).
+      Clicking one shows **Sounds###viewer**: id (click copies it), length, channels, codec, where ("in this bank",
+      "streamed: its first part", "in this package", "not a sound"); **Play** (decoded in the background, a
+      streamed sound's whole from its package, `sound_wem`; Windows' `PlaySound`, winmm) / Stop; **Save as WAV**
+      (named `<id>.wav`, decoded and written in the background).
+      **No lag on big files (user, 2026-10-07: clicking the music froze the app):** listing and `sound_wem` seek to
+      each sound and read only its first 4 KB (the whole sound only when an Opus packet table is longer), never the
+      whole file. `ch_bgm_castle.spck` (837 MB): `remod sounds` 51 s -> 0.18 s. All 4,633 banks and packages list
+      the same 153,119 entries, 499 "not a sound" (491 non-RIFF media, 8 empty). A listing replaced while it runs is
+      kept until done (`retired_lists_`): a `std::async` future waits for its task when destroyed. CLI: `remod sounds --file <bank|package>` prints the same list, `remod sound-wav --file
+      <...> --id <id> --out <wav>` saves one.
+    - Example `14_replace_a_sound`: a Game sound block (the intro's English narration, 880852580) with `beep.wav`
+      (made by `make_examples.py`), into Replace sounds.
+    - **Checked:** tests (bank and event data round trip, prefetch arithmetic, a fake folder with an embedded, a
+      music track's and a streamed sound with its first part: every file and size in step; the block, its cache,
+      no id, an unknown id; listing and finding a streamed sound's whole; with REMOD_GAME: 4 real banks byte-identical,
+      the intro's English line replaced with its bank's first part a prefix of the new sound and every size
+      matching); example 14 from the CLI.
+    - Checked (2026-10-07): a test of Game sound blocks (your audio, silence, into Package refused, two picks of one
+      sound), example 14 in its new form through the every-example test.
+    - **Not checked:** in game (§9); **by eye:** the Sounds viewer, Play / Save as WAV, dragging a line onto the graph
+      or a field, the Show / Language filter.
+    - **Not done:** bank media that aren't sounds; changing a music track's recorded
+      length (so its sounds keep theirs); audio for 3 or more channels goes in front left / right only.
     - **Survey (2026-10-06; licences and activity from GitHub's API):**
       | Candidate | Covers | Gap | Licence | Maintained |
       |---|---|---|---|---|
