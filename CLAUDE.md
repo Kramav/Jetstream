@@ -776,7 +776,12 @@ in a txt file next to the plugin — the tool must set/verify this.
 
 ## 9. Open questions / spike results  [TBD-spike]
 
-Fill these in from the manual spike before implementing the affected code:
+Fill these in from the manual spike before implementing the affected code.
+
+**Every spike gets a step-by-step guide (user, 2026-10-07: "whenever we have a spike, make a guide for doing it in the
+spikes folder"):** `spikes/<name>.md`, written for the user (what it answers, time, what's needed, numbered steps in
+remod and the game, taking it out, where the result lands, what to do if something goes wrong), listed in
+`spikes/README.md` with its status.
 
 - [x] Does fmt_RE_MESH's RE4R tex export work under Noesis `?cmode`? Exact options? **Yes, `-b`**
       (now `noesis_export = "-b"` in `profiles/re4r.toml`). Implemented as `NoesisConverter` in
@@ -934,8 +939,11 @@ propose them as next steps before then.
 **Order (user, 2026-10-03):** M2 REFramework scripting, M3 movies and cutscenes, M4 AI (was M2), M5 the REFramework
 runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 
-- **NEXT (2026-10-07, user: "m3 route 3"): M3 route 3, scripted real-time cutscenes** (M3 "Route 3" below):
-  format, runtime and probe built; next the Cutscene block (packaging, Test in game, reading a recording). M2's step 5
+- **NEXT (2026-10-07): the user runs the route 2 movie probe (`spikes/movie_probe.md`); AFTER that, finishing the
+  cutscene (M3 route 3) is the next step (user: "finishing the cutscene is the next step AFTER I do this spike").**
+  Route 3 so far (M3 "Route 3" below): format, runtime, probe and the Cutscene block built (2026-10-07); still to do:
+  what the cutscene probe (`spikes/cutscene_probe.md`) decides (the camera hook, then trying a recorded cutscene in
+  game), freezing the player and hiding the HUD, more actors, triggers (M5), sound. M2's step 5
   (settings-window preview) is skipped for now. M2 steps 1-4 are built; step 2
   waits for a real RE4R dump from the user to be checked on. The survey is done (M2 "Survey"). Before it: M3 routes 1 and 2, below: replace a game movie, then play a movie when we choose.
   **Route 1 done (user, 2026-10-06: "then we can consider route 1 done", once sound was re-encoded).** Its in-game
@@ -1181,8 +1189,35 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
   - **Route 1 spike (the user's, in game):** build example 12 (or Replace movie on another movie), install the zip
     through Fluffy. Find out: does it play; a different length; a silent movie's sound (its Wwise container); which
     movie plays where (mva000 is likely the intro: 4K, 61 s).
-  - **Route 2 spike:** REFramework installed, `spikes/movie_probe.lua` in `reframework/autorun`, play a movie, send
-    the log. It decides whether Lua can start the game's movie player on a new `.mov`, or a C++ plugin is needed.
+  - **Route 2 spike:** guide `spikes/movie_probe.md` (a Lua script block on `spikes/movie_probe.lua`, Test in game,
+    a movie played, Remove from game; optionally the SDK dump last). WATCH_CALLS is on by default since 2026-10-07
+    (one run gives both parts). Result: `<game>\reframework\data\remod_movie_probe.txt`, read from the Game folder.
+    It decides whether Lua can start the game's movie player on a new `.mov`, or a C++ plugin is needed. The SDK dump
+    alone gives its first part (the movie types' methods and fields).
+    **Run 2026-10-07 (user), then the game crashed on New Game.** Results in the game's
+    `reframework\data\remod_movie_probe.txt` [game data]:
+    - `via.movie.Movie` (a Component) has `set_ResourceURL` / `get_ResourceURL`, `set_ResourceHandle`, `prepare`,
+      `play`, `pause`, `stop`, `reset`, `seek(position_usec)`, `jumpToTime`, `get_Ready`, `get_DurationTime`,
+      `get_CurrentVideoTime`, `get_MovieTextureResource` / `set_MovieTextureResource` (a render target), `fillTexture`.
+      `via.movie.MovieResource` and `MovieEntry` don't exist in RE4R.
+    - `chainsaw.FullScreenMovieGui` (a GUI behaviour): `setup`, `changeStep(next)`, `CurrStep`, `_OpenParam`
+      (`CallbackOnReady`), `_CloseParam` (`CallbackOnClosed`), `_IsReady`, `setAlpha`.
+    - While the startup logos played, the game called `MovieManager.update` / `draw`, `Movie.play`, `reset`,
+      `fillTexture`, the state and size getters, `FullScreenMovieGui...get_Valid`.
+    - So a Movie component can be pointed at a resource and played from Lua [inferred: methods exist]; still open:
+      where its picture is shown (a GUI or render target), and making one for our own `.mov`.
+    - **The crash [inferred, strong]:** the user's REFramework was **v1.5.9 + 7 (built 2025-03-05)** on a game exe
+      of 2026-04-08; its log: `[IntegrityCheckBypass]: Could not find sussy_constant usage!` (and 6 more patterns not
+      found), so the game's anti-tamper check stays on, and code hooks (WATCH_CALLS hooked ~60 methods, 5 failed with
+      "unknown exception") can trip it. No crash entry or dump; the log just stops. **The user stays on REFramework's
+      latest release, v1.5.9 (user, 2026-10-07: "I dont want a nightly, just use the most recent release for re4"),
+      so our scripts and spikes don't hook game methods (`sdk.hook`) unless a feature can't work without it;
+      REFramework's own callbacks (`re.on_frame`, `re.on_pre_application_entry`, which ran fine that session) are the
+      way in.** Write with Claude's instructions say so too. WATCH_CALLS is off by default again (not needed again).
+      Not yet confirmed: New Game without the probe on v1.5.9 (if that crashes too, REFramework itself is the cause).
+      **Later the same day the user updated REFramework anyway** (dinput8.dll 2026-10-07 13:27, 23 MB vs v1.5.9's
+      12.8 MB: a newer build; its version and integrity bypass show in the log at the next game start). Our scripts
+      stay hook-free all the same: players of the user's mods may be on v1.5.9.
   - **Route 3: scripted real-time cutscenes (started 2026-10-07; user: "long term id like this to extend to re9").**
     - **Survey (2026-10-07):**
       | Candidate | Covers | Gap | Licence | Maintained |
@@ -1215,10 +1250,28 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       UpdateMotion, PrepareRendering, BeforeLockSceneRendering, LockScene, BeginRendering; 3 s each, shown on screen)
       and reads back after BeginRendering how often something moved it; F7 = "this one held still"; F8 restarts the
       player's current animation through changeMotion. Results: `reframework\data\remod_cutscene_probe.json` (remod
-      can read it from the Game folder). Install: a Lua script block on it, Test in game, Reset Scripts.
+      can read it from the Game folder). Guide: `spikes/cutscene_probe.md`.
     - Checked: tests (the runtime loaded in Lua 5.4 with stand-in REFramework tables: `camera_at` before / between
       (linear, smooth, cut) / after keys, missing FOV, no keys; both scripts' syntax; the example's shape). **Not
       checked: anything in game** (all four probe questions are open).
+    - **Cutscene block (built 2026-10-07; core `cutscene.*`):** `Cutscene` (Source): Cutscene file (.json; needn't exist
+      yet), advanced Open with; list output "cutscene files" = `cutscene_files`: `runtime_dir()` (`<tool>/runtime`,
+      beside profiles; installed into the zip) `/remod_cutscene.lua` at `reframework/autorun/remod_cutscene.lua`, then
+      the file at `reframework/data/remod_cutscenes/<name>.json`. Its run checks the file (`check_cutscene`: every
+      problem named, e.g. "camera key 3: t 9 is past the length (5)"; schema 0, length, start key not F10, letterbox,
+      keys in time order, position 3 / rotation 4 numbers and a unit quaternion, fov, ease, spans' until after t,
+      fades 0-1, motions' whole-number bank / motion, actor "player") and fails on any. Preview lists the files only.
+      `build_package` now packages the same file listed twice at one game path once (each cutscene brings the
+      runtime); two different files there are still refused. Test in game with no file yet installs the runtime
+      alone (`cutscene_runtime`), to record with. App (Use layout): **Use recording** (`use_recording`:
+      the game's `reframework\data\remod_cutscenes\recording.json` camera keys into the file, length at least the
+      last key + 1 s, the rest kept, the old file as `.bak`; a new file named after its stem if none), **Open in
+      editor**, and the Lua script block's **Test in game** / **Remove from game** / **Game errors** (errors of
+      `remod_cutscene.lua`; no Fix with Claude: a cutscene is data). The AI note says: camera positions come from a
+      recording, never invented. Checked: tests (files and refusals, every check message, Use recording new / merge /
+      broken file, two cutscenes into one package with the runtime once, a bad file failing the run, a conflicting
+      duplicate refused). **Not checked by eye or in game.** Not done: Write with Claude for cutscene files, an example
+      graph (needs recorded positions), a timeline view.
   - **Research (2026-10-03, read-only look at the extracted game files).**
     - **Pre-rendered movies are plain MP4s [game data].** `natives/STM/streaming/_chainsaw/movie/<group>/<id>/<id>.mov.1.x64`
       is an MP4 (`ftyp mp42`, H.264 `avc1`); the non-streaming `.mov.1.x64` beside it is 38 bytes (`REMV`, names

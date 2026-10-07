@@ -27,7 +27,7 @@ set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP ON)
 include(InstallRequiredSystemLibraries)
 list(FILTER CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS INCLUDE REGEX "vcomp")
 install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION .)
-install(DIRECTORY profiles blocks DESTINATION .)
+install(DIRECTORY profiles blocks runtime DESTINATION .)
 install(DIRECTORY examples DESTINATION .)
 install(FILES docs/USER_GUIDE.md DESTINATION . RENAME README.md)
 # Wwise's Vorbis codebooks (CLAUDE.md §10, story movies' sound), and every shipped component's licence.

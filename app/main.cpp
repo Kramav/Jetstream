@@ -4,6 +4,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS  // required by the node editor's internal header; before any imgui.h
 #include "browser.hpp"
 #include "custom.hpp"
+#include "cutscene.hpp"
 #include "game_code.hpp"
 #include "graph.hpp"
 #include "package.hpp"
@@ -899,11 +900,30 @@ std::string open_in_editor(const std::filesystem::path& file, const std::filesys
     return "";
 }
 
-// A Lua script block's script file (typed, or from a linked Value), from the graph's folder; empty if none.
-std::filesystem::path script_of(const State& s, int node) {
-    std::filesystem::path script(remod::fill_game(unquote(remod::known_value(s.graph, node, "script"))));
-    if (!script.empty() && !script.is_absolute()) script = std::filesystem::absolute(s.graph_path).parent_path() / script;
-    return script;
+// A block's file field (typed, or from a linked Value), from the graph's folder; empty if none.
+std::filesystem::path path_field(const State& s, int node, const char* input) {
+    std::filesystem::path file(remod::fill_game(unquote(remod::known_value(s.graph, node, input))));
+    if (!file.empty() && !file.is_absolute()) file = std::filesystem::absolute(s.graph_path).parent_path() / file;
+    return file;
+}
+
+// A Lua script block's script file.
+std::filesystem::path script_of(const State& s, int node) { return path_field(s, node, "script"); }
+
+// What a Lua script or Cutscene block puts in the game (core script_files / cutscene_files): the script whose errors
+// count first (the .lua, or the cutscene runtime).
+std::vector<remod::PackageFile> game_files_of(const State& s, int node) {
+    const remod::Node* n = s.graph.find(node);
+    if (n && n->type == "Cutscene") {
+        const std::filesystem::path cutscene = path_field(s, node, "cutscene");
+        std::error_code ec;
+        // No file yet: the runtime alone, to record camera keys with (F10) for Use recording.
+        if (cutscene.empty() || !std::filesystem::exists(cutscene, ec)) return {remod::cutscene_runtime()};
+        return remod::cutscene_files(cutscene);
+    }
+    const std::filesystem::path script = script_of(s, node);
+    if (script.empty()) throw remod::PackageError("pick the block's script first");
+    return remod::script_files(script);
 }
 
 // A Lua script block's Test in game (or, `remove`, Remove from game): its script and modules into (out of) the game's
@@ -911,21 +931,20 @@ std::filesystem::path script_of(const State& s, int node) {
 void script_in_game(State& s, int node, bool remove) {
     try {
         if (s.game_dir.empty()) throw remod::PackageError("set the Game folder first (in the Pipeline panel)");
-        const std::filesystem::path script = script_of(s, node);
-        if (script.empty()) throw remod::PackageError("pick the block's script first");
-        const auto files = remod::script_files(script);
+        const auto files = game_files_of(s, node);
+        const std::filesystem::path script = files.back().source;  // the .lua's last module, or the cutscene file
         const std::filesystem::path game(unquote(s.game_dir));
         if (remove) {
             remod::remove_from_game(files, game);
-            s.status = "Removed " + script.filename().string() + " from the game. Press Reset Scripts in REFramework's "
-                       "menu (or restart the game) to unload it.";
+            s.status = "Removed " + script.filename().string() + " (and what came with it) from the game. Press "
+                       "Reset Scripts in REFramework's menu (or restart the game) to unload it.";
         } else {
             remod::install_in_game(files, game);
             std::error_code ec;
             const std::uintmax_t size = std::filesystem::file_size(remod::framework_log(game), ec);
             s.log_from[node] = ec ? 0 : size;  // Game errors reads what REFramework logs after this
             s.game_errors.erase(node);
-            s.status = "Copied " + std::to_string(files.size()) + " file(s) into the game's reframework\\autorun. In "
+            s.status = "Copied " + std::to_string(files.size()) + " file(s) into the game's reframework folder. In "
                        "game, press Reset Scripts in REFramework's menu (Insert) to load it.";
             if (!remod::lua_errors_logged(game))
                 s.status += " To see its errors here, turn on Log Lua Errors to Disk in REFramework's ScriptRunner menu "
@@ -989,7 +1008,14 @@ void read_game_errors(State& s, int node) {
         s.status = "Set the Game folder first (in the Pipeline panel).";
         return;
     }
-    const std::filesystem::path game(unquote(s.game_dir)), script = script_of(s, node);
+    const std::filesystem::path game(unquote(s.game_dir));
+    std::filesystem::path script;
+    try {
+        script = game_files_of(s, node).front().source;  // the .lua, or the cutscene runtime
+    } catch (const std::exception& e) {
+        s.status = e.what();
+        return;
+    }
     const auto from = s.log_from.find(node);
     const auto errors =
         remod::script_errors_in_log(remod::framework_log(game), from == s.log_from.end() ? 0 : from->second, script);
@@ -2952,6 +2978,36 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 if (ImGui::IsItemHovered())
                     hovered_hint = "Play " + status->file.filename().string() + " in the viewer, bottom left.";
             }
+            if (!s.build_mode && n.type == "Cutscene") {
+                // A cutscene file: recorded in game, then the user's to edit (CLAUDE.md §10 M3 route 3).
+                const std::filesystem::path file = path_field(s, n.id, "cutscene");
+                std::error_code ec;
+                const bool exists = !file.empty() && std::filesystem::is_regular_file(file, ec);
+                if (ImGui::Button("Use recording")) {
+                    try {
+                        if (s.game_dir.empty()) throw remod::PackageError("set the Game folder first (in the Pipeline panel)");
+                        if (file.empty()) throw remod::PackageError("type the cutscene's file name first, e.g. cutscenes\\door.json");
+                        remod::use_recording(file, std::filesystem::path(unquote(s.game_dir)) / "reframework" / "data" /
+                                                       "remod_cutscenes" / "recording.json");
+                        s.status = "The recorded camera keys are in " + file.filename().string() +
+                                   (exists ? " (the previous version is " + file.filename().string() + ".bak)." : ".");
+                    } catch (const std::exception& e) {
+                        s.status = std::string("Couldn't use the recording: ") + e.what();
+                    }
+                }
+                if (ImGui::IsItemHovered())
+                    hovered_hint = "Put the camera keys you recorded in game (F10 at each shot) into this cutscene file; "
+                                   "its subtitles, fades and the rest stay.";
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!exists);
+                if (ImGui::Button("Open in editor")) {
+                    const std::filesystem::path program(unquote(remod::known_value(s.graph, n.id, "editor")));
+                    if (const std::string problem = open_in_editor(file, program); !problem.empty()) s.status = problem;
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    hovered_hint = exists ? "Open the cutscene file to change it yourself." : "No cutscene file yet.";
+            }
             if (!s.build_mode && n.type == "LuaScript") {
                 // Write with AI; the file stays the user's to open and edit (user, 2026-10-07).
                 const std::filesystem::path script = script_of(s, n.id);
@@ -2987,6 +3043,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     hovered_hint = exists ? "Open the script to read or change it yourself." : "No script file yet.";
                 if (const auto said = n.params.find("ai_notes"); said != n.params.end() && !said->second.empty())
                     wrapped_text(said->second.c_str(), node_width, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+            }
+            if (!s.build_mode && (n.type == "LuaScript" || n.type == "Cutscene")) {
                 if (ImGui::Button("Test in game")) script_in_game(s, n.id, false);
                 if (ImGui::IsItemHovered())
                     hovered_hint = "Copy the script (and its modules) into your game's reframework\\autorun, without "
@@ -2999,16 +3057,18 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     hovered_hint = "Read this script's errors from REFramework's log: since Test in game, or since the "
                                    "game started.";
                 if (const auto found = s.game_errors.find(n.id); found != s.game_errors.end() && !found->second.empty()) {
-                    ImGui::SameLine();
-                    ImGui::BeginDisabled(s.ai.valid());
-                    if (ImGui::Button("Fix with Claude")) {
-                        n.params["ai_request"] = "Fix these errors REFramework logged in game:\n\n" + found->second;
-                        ask_ai(s, n.id);
+                    if (n.type == "LuaScript") {
+                        ImGui::SameLine();
+                        ImGui::BeginDisabled(s.ai.valid());
+                        if (ImGui::Button("Fix with Claude")) {
+                            n.params["ai_request"] = "Fix these errors REFramework logged in game:\n\n" + found->second;
+                            ask_ai(s, n.id);
+                        }
+                        ImGui::EndDisabled();
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                            hovered_hint = "Put these errors in the box above and ask Claude to fix them (or fix them "
+                                           "yourself: Open in editor).";
                     }
-                    ImGui::EndDisabled();
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        hovered_hint = "Put these errors in the box above and ask Claude to fix them (or fix them "
-                                       "yourself: Open in editor).";
                     wrapped_text(found->second.c_str(), node_width, ImGui::GetColorU32(kAmber));
                 }
             }

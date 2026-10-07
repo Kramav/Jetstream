@@ -288,6 +288,27 @@ From the command line: `remod check-lua --file my_mod.lua`.
 
 Not known yet (needs a test): whether Fluffy installs a mod's `reframework` files into the game's folder.
 
+## Cutscenes (REFramework)
+
+A **Cutscene** block makes a real-time cutscene: the game itself renders it, while remod's cutscene script moves the
+camera, plays Leon's animations, and draws subtitles, letterbox bars and fades. A cutscene is a small JSON file you can
+edit by hand (the format: `schemas\cutscene.v0.example.json`). Players need REFramework.
+
+1. Add a **Cutscene** block and type a file name for it, e.g. `cutscenes\door.json` (it needn't exist yet).
+2. **Record the camera shots in game:** click the block's **Test in game** (with no cutscene file yet, it installs
+   just the cutscene script, which is all recording needs), then in game frame each shot with REFramework's free
+   camera and press **F10** at each one. The time between presses becomes the time between shots.
+3. Click **Use recording**: the shots go into your cutscene file (anything else in it stays; the previous version is
+   kept as `.bak`). **Open in editor** to add subtitles, fades, a start key and so on.
+4. **Test in game**, then in REFramework's menu: Script Generated UI > remod cutscenes > **Play** (or the cutscene's
+   start key). **Game errors** shows the cutscene script's errors.
+5. Link **cutscene files** into Package's **other file**. Several cutscenes can go in one mod.
+
+A Run checks the cutscene file and names every problem in it.
+
+Not known yet (the cutscene probe, `spikes\cutscene_probe.md`): whether the camera holds still during playback in
+RE4R, and whether Leon's animations play. Freezing the player and hiding the HUD aren't done yet.
+
 ## Built from blocks
 
 Some blocks are made of other blocks, such as **Convert with streaming copy**. They're listed in the Nodes panel under

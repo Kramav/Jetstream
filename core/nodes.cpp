@@ -2,6 +2,7 @@
 #include "custom.hpp"
 
 #include "browse.hpp"
+#include "cutscene.hpp"
 #include "game_code.hpp"
 #include "image.hpp"
 #include "movie.hpp"
@@ -1224,6 +1225,56 @@ NodeSpec lua_script_node() {
                    files[0].source);
         },
         .preview = [](NodeRun& r) { script_list(r); },
+    };
+}
+
+// A Cutscene block's files (cutscene_files: the runtime, then the cutscene) as its list output.
+std::vector<PackageFile> cutscene_list(NodeRun& r) {
+    std::vector<PackageFile> files;
+    try {
+        files = cutscene_files(r.resolve(r.text("cutscene")));
+    } catch (const PackageError& e) {
+        throw GraphError(e.what());
+    }
+    std::vector<Value> out;
+    std::vector<ListItem> items;
+    for (const auto& f : files) {
+        out.push_back(file_value(f.source, f.game_path.generic_string()));
+        items.push_back({f.source.filename().string(), f.game_path.generic_string()});
+    }
+    r.output_list("files", std::move(out), std::move(items));
+    return files;
+}
+
+NodeSpec cutscene_node() {
+    return {
+        .type = "Cutscene",
+        .title = "Cutscene",
+        .summary = "A real-time cutscene the game plays: camera shots, subtitles, letterbox, fades and Leon's animations, "
+                   "from a cutscene file (.json). Connect to Package's 'other file': the mod gets remod's cutscene "
+                   "script too, and needs REFramework. Record camera shots in game with F10, then Use recording.",
+        .inputs = {{.name = "cutscene", .label = "Cutscene file", .type = Path, .widget = Widget::Path, .required = true,
+                    .hint = "Your cutscene, e.g. cutscenes\\door.json (the format: remod's "
+                            "schemas\\cutscene.v0.example.json). It needn't exist yet: Use recording makes it.",
+                    .path = PathKind::OpenFile, .filter = "json"},
+                   {.name = "editor", .label = "Open with", .type = Path, .widget = Widget::Path,
+                    .hint = "The program Open in editor uses, e.g. VS Code's Code.exe. Empty: Windows' program for "
+                            ".json files.",
+                    .path = PathKind::OpenFile, .filter = "exe", .advanced = true}},
+        .outputs = {{.name = "files", .type = Path, .label = "cutscene files", .list = true}},
+        .family = Family::Source,
+        .run = [](NodeRun& r) {
+            const auto files = cutscene_list(r);
+            std::ifstream in(long_path(files[1].source), std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+            if (const auto problems = check_cutscene(text); !problems.empty()) {
+                std::string all;
+                for (const auto& p : problems) all += (all.empty() ? "" : "; ") + p;
+                throw GraphError(files[1].source.filename().string() + ": " + all);
+            }
+            r.done(files[1].source.filename().string() + " checked", files[1].source);
+        },
+        .preview = [](NodeRun& r) { cutscene_list(r); },
     };
 }
 
@@ -2590,7 +2641,7 @@ const std::vector<NodeSpec>& node_specs() {
         mesh_mask_node(),
         mask_blend_node(), replace_photo_node(),
         preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), game_sound_node(), replace_sounds_node(),
-        lua_script_node(), package_mod(),
+        lua_script_node(), cutscene_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), if_node(), first_of_node(), file_exists_node(), text_matches_node(), not_node(),
@@ -2652,6 +2703,11 @@ const char* ai_note(std::string_view type) {
         {"LuaScript", "A REFramework script mod (Lua): the .lua, plus a folder named like it beside it for modules it "
                       "requires. Link 'script files' into Package's 'other file'; the mod then needs REFramework. "
                       "REFramework runs only reframework/autorun's top-level .lua files, so one script per block."},
+        {"Cutscene", "A real-time cutscene from a cutscene file (JSON: camera keys with t, position [x,y,z], rotation "
+                     "[x,y,z,w], fov, ease smooth/linear/cut; subtitles; letterbox; fades; motions on the player). Link "
+                     "'cutscene files' into Package's 'other file'. A run checks the file and names every problem. "
+                     "Camera positions come from the game: the user records them in game (F10) and uses Use recording; "
+                     "never invent coordinates."},
         {"ReplaceSounds", "Replaces game sounds by id: link Game sound blocks, or audio files whose names hold the "
                           "sound's id (their last run of 4+ digits, e.g. 880852580.wav). Link all of 'sound files' "
                           "into Package's 'other file'. Leave 'Same length' off for voices and effects; music tracks "

@@ -1,14 +1,11 @@
 -- remod movie probe: a spike for CLAUDE.md §10 M3, route 2 (play a movie when we choose). Read-only: it looks at
 -- the game's movie types and writes what it finds to a text file; it changes nothing in the game.
+-- How to run it: spikes/movie_probe.md.
 --
--- Use:
---   1. REFramework installed (dinput8.dll in the game folder).
---   2. Copy this file to <game folder>\reframework\autorun\.
---   3. Start the game. reframework\data\remod_movie_probe.txt now lists the movie types' methods and fields.
---   4. Optional: set WATCH_CALLS to true, start the game again and let a movie play (e.g. the intro of a new game).
---      The file then also lists which of those methods the game called while it played. This hooks every method of
---      those types, which may slow the game; turn it off afterwards.
---   5. Send remod_movie_probe.txt back.
+-- It writes reframework\data\remod_movie_probe.txt as soon as it loads (the movie types' methods and fields). With
+-- WATCH_CALLS it also adds each of their methods the first time the game calls one, e.g. while a movie plays. Watching
+-- hooks every method of those types: off by default, since on 2026-10-07 the game crashed at New Game with it on (with
+-- REFramework v1.5.9 of March 2025, whose integrity-check bypass failed on the April 2026 game; see movie_probe.md).
 --
 -- The type names come from the game's exe (re4.exe names them); nothing here guesses how they work.
 -- Only REFramework's documented API is used: sdk.find_type_definition, RETypeDefinition, REMethodDefinition,

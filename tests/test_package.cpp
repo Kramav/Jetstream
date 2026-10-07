@@ -195,7 +195,10 @@ TEST_CASE("build_package validates before writing anything") {
     CHECK_THROWS_WITH(remod::build_package(kProfile, spec({})), ContainsSubstring("no files"));
     CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tmp.path / "missing", "a.tex.143221013"}}})),
                       ContainsSubstring("not found"));
-    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, "a.tex.143221013"}, {tex, "a.tex.143221013"}}})),
+    // Two different files at one game path (the same file twice is packaged once: every cutscene brings the runtime).
+    write_file(tmp.path / "other.tex.143221013", "y");
+    CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, "a.tex.143221013"},
+                                                                     {tmp.path / "other.tex.143221013", "a.tex.143221013"}}})),
                       ContainsSubstring("twice"));
     write_file(tmp.path / "shot.gif", "g");
     CHECK_THROWS_WITH(remod::build_package(kProfile, spec({.files = {{tex, "a.tex.143221013"}}, .screenshot = tmp.path / "shot.gif"})),

@@ -12,6 +12,7 @@
 #include <cctype>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string_view>
@@ -179,15 +180,18 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec, bool* un
 
     // Validate everything before writing anything.
     std::vector<std::pair<fs::path, fs::path>> copies;  // source -> destination
-    std::set<fs::path> seen;
+    std::map<fs::path, fs::path> seen;  // destination -> its source
     for (const auto& f : spec.files) {
         if (!fs::is_regular_file(f.source)) throw PackageError("input file not found: " + f.source.string());
         if (const auto version = read_tex_version(f.source); version && std::to_string(*version) != profile.tex_suffix)
             throw PackageError(f.source.string() + " is a texture of version " + std::to_string(*version) + ", not " +
                                profile.name + "'s (" + profile.tex_suffix + ")");
         fs::path dest = spec.out_dir / package_path(profile, spec.mod_name, f.game_path);
-        if (!seen.insert(dest).second)
+        if (const auto [it, added] = seen.emplace(dest, f.source); !added) {
+            // The same file twice (every cutscene brings the one runtime script): once is enough.
+            if (fs::file_size(it->second) == fs::file_size(f.source) && read_all(it->second) == read_all(f.source)) continue;
             throw PackageError("game path listed twice: " + f.game_path.generic_string());
+        }
         copies.emplace_back(f.source, fs::absolute(dest));
     }
 
