@@ -928,7 +928,7 @@ propose them as next steps before then.
 **Order (user, 2026-10-03):** M2 REFramework scripting, M3 movies and cutscenes, M4 AI (was M2), M5 the REFramework
 runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 
-- **NEXT (user, 2026-10-03): M3 routes 1 and 2**, below: replace a game movie, then play a movie when we choose.
+- **NEXT (2026-10-07): M2, starting with the survey** (M2's order below). Before it: M3 routes 1 and 2, below: replace a game movie, then play a movie when we choose.
   **Route 1 done (user, 2026-10-06: "then we can consider route 1 done", once sound was re-encoded).** Its in-game
   check is in §9's list. Route 2: prepared, see M3 "Prepared".
 - **M2: REFramework scripting (user, 2026-10-03).** Help users make script mods for REFramework (Lua in
@@ -942,7 +942,23 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
   3. Trigger -> action blocks: a mod is data, run by the one generic runtime (M5). Each trigger needs an in-game spike
      for its hook point.
   4. AI-written Lua for the rest (`claude -p` / MCP), checked against step 2, packaged by step 1.
-  **Undecided:** mostly blocks (step 3) or mostly helping write Lua (steps 1, 2, 4). Steps 1 and 2 first either way.
+  **Decided (user, 2026-10-07): mostly the user writing Lua ("I can learn lua"), with previews and assistance.** A
+  separate script editing mode (a script graph opened from a Script block, like a custom node) was discussed and
+  is only needed if scripts become mostly blocks; not planned now. Ideas, best first:
+  - *Assistance:* type definitions generated from the SDK dump for VS Code's Lua Language Server (completion,
+    hover, wrong names underlined: game types and REFramework's API), so no editor is built into the tool; a name
+    check against the dump (typos, names a game update removed; also for AI-written Lua); templates for the common
+    patterns (hook a method pre / post, every frame, a settings window, saving settings); a syntax check with Lua's
+    own parser (MIT, embedded in core).
+  - *Previews:* the script's settings window (REFramework mods draw with ImGui, as the app does: run only its
+    `re.on_draw_ui` code against stub REFramework tables and the app's ImGui, so it looks as in game); on-screen
+    drawing (`draw.text` etc.) on a game-sized canvas; afterwards, REFramework's and the script's log files read
+    back into the tool, errors beside the script ([TBD] which files REFramework writes).
+  - *Can't be previewed:* anything needing the running game (hooks firing, game state); the name check is the most.
+  - **Order:** (1) survey what exists (published REFramework type definitions / Lua Language Server annotations,
+    Lua tooling for RE Engine games), (2) packaging Lua scripts (step 1 above), (3) the dump and the VS Code
+    definitions (step 2), (4) the syntax check and the settings-window preview. The survey decides how much of (3)
+    is ours to build.
 - **M3: Movies and cutscenes (user, 2026-10-03: "scripting our own cutscene").**
   - **Prepared (2026-10-03):**
     - Core `read_mp4_info` (core/movie.*): an MP4's video size, length, frame rate, codecs, audio, from its boxes.
