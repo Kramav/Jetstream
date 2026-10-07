@@ -1,6 +1,7 @@
 // remod CLI: runs a saved graph headlessly (`run`), plus the pipeline steps as single commands.
 #include "api.hpp"
 #include "custom.hpp"
+#include "game_code.hpp"
 #include "graph.hpp"
 #include "mcp.hpp"
 #include "movie.hpp"
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -42,6 +44,8 @@ constexpr const char* kUsage =
     "  remod sounds  --file <bank.sbnk.*|package.spck.*>: its sounds (id, length, channels, codec, where), the\n"
     "                ids a Replace sounds block's file names hold\n"
     "  remod sound-wav --file <bank|package> --id <sound id> --out <file.wav>: one sound, decoded\n"
+    "  remod check-lua --file <script.lua> [--dump <il2cpp_dump.json>]: a REFramework script's syntax and the game\n"
+    "                names it uses (the dump: --dump, else the app's SDK dump setting); exit 1 on a problem\n"
     "  remod api     graph editing for programs: one JSON request per line on stdin, one JSON reply per line\n"
     "                (requests: core/api.hpp)\n"
     "  remod mcp     an MCP server on stdin/stdout for an AI (Claude Code, Claude Desktop): the same graph editing,\n"
@@ -60,6 +64,7 @@ const std::map<std::string, Command> kCommands{
     {"png2tex", {{"profile", "png", "original", "out"}, {"noesis"}}},
     {"package", {{"profile", "tex", "game-path", "name", "out"}, {"version", "author", "description", "screenshot", "replace"}}},
     {"movie-info", {{"file"}, {}}},
+    {"check-lua", {{"file"}, {"dump"}}},
     {"sounds", {{"file"}, {}}},
     {"sound-wav", {{"file", "id", "out"}, {}}},
 };
@@ -107,6 +112,7 @@ int run(int argc, char** argv) {
             for (const remod::Profile& p : remod::load_profiles(remod::find_profiles_dir()))
                 if (game.empty()) game = remod::game_files_dir(settings.noesis_path, p);
         remod::set_game_files_dir(game);
+        remod::set_sdk_dump(args.contains("dump") ? args["dump"] : settings.sdk_dump);
     }
     // The built-in and the user's custom nodes are block types (a graph's own copies, registered on load, win).
     for (const remod::CustomNode& c : remod::load_block_library()) remod::register_custom(c);
@@ -139,6 +145,18 @@ int run(int argc, char** argv) {
         return 0;
     }
 
+    if (cmd->first == "check-lua") {
+        std::ifstream in(args["file"], std::ios::binary);
+        if (!in) throw std::runtime_error("can't read " + args["file"]);
+        const std::string source{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        const remod::GameCode* code = remod::game_code();
+        if (!code) std::cout << "game names not checked: no SDK dump (--dump, or the app's SDK dump setting)\n";
+        const auto problems =
+            remod::check_lua(source, std::filesystem::path(args["file"]).filename().string(), code);
+        for (const auto& p : problems) std::cout << args["file"] << ":" << p.line << ": " << p.message << "\n";
+        if (problems.empty()) std::cout << "no problems\n";
+        return problems.empty() ? 0 : 1;
+    }
     if (cmd->first == "movie-info") {
         const remod::MovieInfo m = remod::read_mp4_info(args["file"]);
         std::cout << m.width << "x" << m.height << ", " << m.seconds << " s, " << m.fps << " fps, video "

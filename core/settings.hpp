@@ -12,6 +12,8 @@ struct Settings {
     bool noesis_textures = false;  // convert textures with Noesis instead of the built-in converter
     bool show_help = true;
     std::string game_files_dir;  // extracted game files (REtool); empty = ask the RE plugin's NativesPath.txt
+    std::string game_dir;        // the installed game's folder (the .exe's): Lua script's Test in game
+    std::string sdk_dump;        // REFramework's il2cpp_dump.json: game names scripts are checked against (game_code.hpp)
     bool build_mode = false;     // app: Build layout (edit blocks and links) vs Use layout (fill in and run)
     bool show_descriptions = true;  // app: each block's description text (else on hovering its title)
     std::vector<std::string> pinned_folders;  // app: the Browser's pinned folders, in the order pinned

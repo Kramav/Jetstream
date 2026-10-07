@@ -18,7 +18,12 @@ constexpr const char* kInstructions =
     "A run asks the user, in a dialog of its own, to allow removing files, writing outside the graph's folder and "
     "starting programs; you cannot approve anything. A run that pauses at an Edit image or Edit video step waits for "
     "the user: tell them which file to edit and call edit_done only after they say they have finished. Game files are never "
-    "changed. Texture paths: files named .tex.143221013 under an extracted natives/STM folder.";
+    "changed. Texture paths: files named .tex.143221013 under an extracted natives/STM folder. "
+    "REFramework Lua scripts (a Lua script block, linked into Package's 'other file'): REFramework runs each .lua directly "
+    "in reframework/autorun (modules it requires go in a folder named like it, beside it); read the REFramework book "
+    "(https://cursey.github.io/reframework-book/) for its API instead of guessing; find every game name with "
+    "search_game_code, never from memory; check_script until it reports no problems. Behaviour in game can only be "
+    "tested by the user.";
 
 struct Tool {
     const char* name;
@@ -77,6 +82,17 @@ const std::vector<Tool>& tools() {
          "Run the graph. The user is asked in a dialog to allow any change that needs approval; you can't approve. "
          "Returns where every block got to; 'paused' means an Edit image or Edit video step waits for the user.",
          object()},
+        {"search_game_code", "game_code",
+         "Search the game's code (REFramework's SDK dump): types, fields and methods whose names hold every word of "
+         "the query. A query naming a type exactly lists all its members. Use it for every name a script uses.",
+         object({{"query", text("Words, e.g. 'player hp', or a full type name, e.g. 'chainsaw.PlayerManager'.")},
+                 {"limit", number("At most this many hits (default 60).")}},
+                {"query"})},
+        {"check_script", "check_script",
+         "Check a REFramework Lua script: syntax, and every game type, method and field name it passes as a string. "
+         "Fix every problem before telling the user it's ready.",
+         object({{"file", text("The .lua file (relative: to the graph's folder).")},
+                 {"text", text("Or the script's text.")}})},
         {"edit_done", "edit_done",
          "Mark an Edit image or Edit video step done ONLY after the user says they finished that edit.",
          object({{"id", number("The Edit image block.")},

@@ -14,6 +14,7 @@
 #include <iterator>
 #include <set>
 #include <sstream>
+#include <string_view>
 
 namespace remod {
 
@@ -90,10 +91,15 @@ bool is_safe_relative(const fs::path& p) {
     return std::ranges::none_of(p, [](const fs::path& part) { return part == ".."; });
 }
 
+bool is_game_root_path(const fs::path& game_path) {
+    return !game_path.empty() && lower(game_path.begin()->string()) == "reframework";
+}
+
 fs::path package_path(const Profile& profile, const std::string& mod_name, const fs::path& game_path) {
     check_mod_name(mod_name);
     if (!is_safe_relative(game_path))
         throw PackageError("game path '" + game_path.generic_string() + "' must be relative to the natives root, without '..'");
+    if (is_game_root_path(game_path)) return (fs::path(mod_name) / game_path).lexically_normal();
 
     // [guide] In the game, textures are named <name>.tex.<tex_suffix>. Any other ending (a plain ".tex", or a tool's
     // ".tex.re2remake") becomes the profile's suffix, so users never have to type it. Which game a texture is for
@@ -186,6 +192,8 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec, bool* un
     }
 
     ModInfo info = spec.info;
+    if (std::ranges::any_of(spec.files, [](const PackageFile& f) { return is_game_root_path(f.game_path); }))
+        info.description += (info.description.empty() ? "" : "\n") + std::string("Needs REFramework.");
     if (!spec.screenshot.empty()) {
         if (!fs::is_regular_file(spec.screenshot))
             throw PackageError("screenshot not found: " + spec.screenshot.string());
@@ -225,6 +233,118 @@ fs::path build_package(const Profile& profile, const PackageSpec& spec, bool* un
         throw;
     }
     return root;
+}
+
+std::vector<PackageFile> script_files(const fs::path& lua) {
+    std::error_code ec;
+    if (lower(lua.extension().string()) != ".lua" || !fs::is_regular_file(lua, ec))
+        throw PackageError("not a .lua file: " + lua.string());
+    const std::string stem = lua.stem().string();
+    std::vector<PackageFile> files{{lua, "reframework/autorun/" + stem + ".lua"}};
+    const fs::path modules = lua.parent_path() / stem;
+    std::vector<PackageFile> more;
+    if (fs::is_directory(modules, ec))
+        for (const auto& e : fs::recursive_directory_iterator(modules, ec))
+            if (e.is_regular_file())
+                more.push_back({e.path(), "reframework/autorun/" + stem + "/" +
+                                              e.path().lexically_relative(modules).generic_string()});
+    std::ranges::sort(more, {}, &PackageFile::game_path);
+    files.insert(files.end(), more.begin(), more.end());
+    return files;
+}
+
+namespace {
+
+fs::path in_game(const PackageFile& f, const fs::path& game_dir) {
+    if (!is_game_root_path(f.game_path) || !is_safe_relative(f.game_path))
+        throw PackageError(f.game_path.generic_string() + " isn't a path in REFramework's folder");
+    return game_dir / f.game_path;
+}
+
+}  // namespace
+
+void install_in_game(const std::vector<PackageFile>& files, const fs::path& game_dir) {
+    if (!fs::is_regular_file(game_dir / "dinput8.dll"))
+        throw PackageError("REFramework isn't installed in " + game_dir.string() +
+                           " (no dinput8.dll): set the game's folder, or install REFramework");
+    for (const auto& f : files) in_game(f, game_dir);  // all checked before anything is copied
+    for (const auto& f : files) {
+        const fs::path dest = in_game(f, game_dir);
+        fs::create_directories(dest.parent_path());
+        fs::copy_file(f.source, dest, fs::copy_options::overwrite_existing);
+    }
+}
+
+fs::path framework_log(const fs::path& game_dir) { return game_dir / "re2_framework_log.txt"; }
+
+bool lua_errors_logged(const fs::path& game_dir) {
+    // utility::Config's "key=value" lines; a bool is "true" / "false" [official, REFramework's utility/Config].
+    std::ifstream in(game_dir / "re2_fw_config.txt");
+    for (std::string line; std::getline(in, line);) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line == "ScriptRunner_LogToDisk=true") return true;
+    }
+    return false;
+}
+
+std::vector<GameError> script_errors_in_log(const fs::path& log, std::uintmax_t from, const fs::path& script) {
+    std::error_code ec;
+    const std::uintmax_t size = fs::file_size(log, ec);
+    if (ec) return {};
+    std::ifstream in(log, std::ios::binary);
+    in.seekg(std::streamoff(from <= size ? from : 0));
+    // spdlog's lines: "[<date> <time>] [REFramework] [error] <message>"; a message's further lines (a Lua stack
+    // traceback) don't start with "[".
+    std::vector<std::string> entries;
+    bool error = false;
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.starts_with("[")) {
+            const size_t at = line.find("] [error] ");
+            error = at != std::string::npos;
+            if (error) entries.push_back(line.substr(at + 10));
+        } else if (error && !entries.empty()) {
+            entries.back() += "\n" + line;
+        }
+    }
+    const std::string stem = lower(script.stem().string()), file = stem + ".lua";
+    // Where `name` starts a word in `text` (after a path separator, a space, a quote or the start), else npos.
+    const auto word = [](const std::string& text, const std::string& name, size_t from = 0) {
+        for (size_t at = text.find(name, from); at != std::string::npos; at = text.find(name, at + 1))
+            if (at == 0 || std::string_view("/ \"'").find(text[at - 1]) != std::string_view::npos) return at;
+        return std::string::npos;
+    };
+    std::vector<GameError> out;
+    for (const std::string& e : entries) {
+        std::string low = lower(e);
+        std::ranges::replace(low, '\\', '/');
+        if (word(low, file) == std::string::npos && word(low, stem + "/") == std::string::npos) continue;
+        if (const auto same = std::ranges::find(out, e, &GameError::message); same != out.end()) {
+            ++same->count;
+            continue;
+        }
+        GameError g{.message = e};
+        for (size_t at = word(low, file + ":"); at != std::string::npos && !g.line; at = word(low, file + ":", at + 1)) {
+            const size_t digits = at + file.size() + 1;
+            size_t end = digits;
+            while (end < low.size() && std::isdigit(static_cast<unsigned char>(low[end]))) ++end;
+            if (end > digits) g.line = std::stoi(low.substr(digits, end - digits));
+        }
+        out.push_back(std::move(g));
+    }
+    return out;
+}
+
+void remove_from_game(const std::vector<PackageFile>& files, const fs::path& game_dir) {
+    const fs::path autorun = (game_dir / "reframework" / "autorun").lexically_normal();
+    for (const auto& f : files) {
+        fs::path p = in_game(f, game_dir).lexically_normal();
+        std::error_code ec;
+        fs::remove(p, ec);
+        for (p = p.parent_path(); p != autorun && p.native().size() > autorun.native().size() && fs::is_empty(p, ec) && !ec;
+             p = p.parent_path())
+            fs::remove(p, ec);
+    }
 }
 
 }  // namespace remod

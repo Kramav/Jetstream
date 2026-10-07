@@ -2,6 +2,7 @@
 #include "custom.hpp"
 
 #include "browse.hpp"
+#include "game_code.hpp"
 #include "image.hpp"
 #include "movie.hpp"
 #include "package.hpp"
@@ -1077,7 +1078,8 @@ NodeSpec package_mod() {
         .inputs = {{.name = "tex", .label = "texture", .type = Tex, .multiple = true,
                     .hint = "Each new texture in the mod. A new line appears as you connect one."},
                    {.name = "file", .label = "other file", .type = Path, .multiple = true,
-                    .hint = "Files that go in the mod as they are at their in-game path, e.g. Replace movie's movies."},
+                    .hint = "Files that go in the mod as they are at their in-game path, e.g. Replace movie's movies or "
+                            "a Lua script's files (the mod then needs REFramework)."},
                    {.name = "preview", .label = "preview", .type = Image, .multiple = true,
                     .hint = "Images for Fluffy's preview, e.g. the edited images. Several are tiled into one picture."},
                    {.name = "name", .label = "Mod name", .type = Text, .widget = Widget::Text, .required = true,
@@ -1152,6 +1154,76 @@ NodeSpec package_mod() {
             r.change(ChangeKind::Write, (r.resolve(r.text("out")) / name) += ".zip");
             r.output("mod", file_value(fs::absolute(r.resolve(r.text("out")) / name) += ".zip"));  // as build_package
         },
+    };
+}
+
+// ---- Scripts (CLAUDE.md §10 M2) ----
+
+// A Lua script block's files (script_files) as its list output.
+std::vector<PackageFile> script_list(NodeRun& r) {
+    std::vector<PackageFile> files;
+    try {
+        files = script_files(r.resolve(r.text("script")));
+    } catch (const PackageError& e) {
+        throw GraphError(e.what());
+    }
+    std::vector<Value> out;
+    std::vector<ListItem> items;
+    for (const auto& f : files) {
+        out.push_back(file_value(f.source, f.game_path.generic_string()));
+        items.push_back({f.source.filename().string(), f.game_path.generic_string()});
+    }
+    r.output_list("files", std::move(out), std::move(items));
+    return files;
+}
+
+NodeSpec lua_script_node() {
+    return {
+        .type = "LuaScript",
+        .title = "Lua script",
+        .summary = "A REFramework script for the mod. Modules it requires go in a folder named like it, beside it; they "
+                   "come along. Connect to Package's 'other file'. Test in game puts it in your game to try first.",
+        .inputs = {{.name = "script", .label = "Script", .type = Path, .widget = Widget::Path, .required = true,
+                    .hint = "Your .lua file, e.g. scripts\\my_mod.lua (modules in scripts\\my_mod\\). It needn't exist "
+                            "yet if Claude writes it.",
+                    .path = PathKind::OpenFile, .filter = "lua"},
+                   {.name = "editor", .label = "Open with", .type = Path, .widget = Widget::Path,
+                    .hint = "The program Open in editor uses, e.g. VS Code's Code.exe. Empty: Windows' program for "
+                            ".lua files.",
+                    .path = PathKind::OpenFile, .filter = "exe", .advanced = true}},
+        .outputs = {{.name = "files", .type = Path, .label = "script files", .list = true}},
+        // What the user last asked Claude for, and what Claude said (Write with AI, CLAUDE.md §10 M2).
+        .state = {"ai_request", "ai_notes"},
+        .family = Family::Source,
+        .run = [](NodeRun& r) {
+            const auto files = script_list(r);
+            // Checked as the run goes (not in previews: the first read of a dump takes a while): a syntax error fails
+            // the block, a game name that isn't in the game is a warning (CLAUDE.md §10 M2, plan step 2).
+            const GameCode* code = nullptr;
+            std::string unchecked = " (game names not checked: set the SDK dump in the Pipeline panel)";
+            try {
+                if ((code = game_code())) unchecked.clear();
+            } catch (const std::exception& e) {
+                unchecked = std::string(" (game names not checked: ") + e.what() + ")";
+            }
+            size_t problems = 0;
+            for (const auto& f : files) {
+                if (!has_extension(f.source.string(), "lua")) continue;
+                std::ifstream in(long_path(f.source), std::ios::binary);
+                const std::string source{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+                for (const ScriptProblem& p : check_lua(source, f.source.filename().string(), code)) {
+                    const std::string where = f.source.filename().string() + ":" + std::to_string(p.line) + ": ";
+                    if (p.message.starts_with("syntax: ")) throw GraphError(where + p.message);
+                    r.warn(where + p.message);
+                    ++problems;
+                }
+            }
+            r.done(files[0].source.filename().string() +
+                       (files.size() > 1 ? " and " + std::to_string(files.size() - 1) + " module file(s)" : "") +
+                       (problems ? ", " + std::to_string(problems) + " problem(s): see the warnings" : unchecked),
+                   files[0].source);
+        },
+        .preview = [](NodeRun& r) { script_list(r); },
     };
 }
 
@@ -2517,7 +2589,8 @@ const std::vector<NodeSpec>& node_specs() {
         resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), part_texture_node(),
         mesh_mask_node(),
         mask_blend_node(), replace_photo_node(),
-        preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), game_sound_node(), replace_sounds_node(), package_mod(),
+        preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), game_sound_node(), replace_sounds_node(),
+        lua_script_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), if_node(), first_of_node(), file_exists_node(), text_matches_node(), not_node(),
@@ -2576,6 +2649,9 @@ const char* ai_note(std::string_view type) {
         {"GameSound", "One game sound to replace: 'sound' is <bank or package path>#<id> (ids: `remod sounds --file "
                       "<bank>`, or the Browser's Sounds list); 'audio' the replacement (empty: silence). Link its "
                       "output into Replace sounds' 'sound', never into Package."},
+        {"LuaScript", "A REFramework script mod (Lua): the .lua, plus a folder named like it beside it for modules it "
+                      "requires. Link 'script files' into Package's 'other file'; the mod then needs REFramework. "
+                      "REFramework runs only reframework/autorun's top-level .lua files, so one script per block."},
         {"ReplaceSounds", "Replaces game sounds by id: link Game sound blocks, or audio files whose names hold the "
                           "sound's id (their last run of 4+ digits, e.g. 880852580.wav). Link all of 'sound files' "
                           "into Package's 'other file'. Leave 'Same length' off for voices and effects; music tracks "

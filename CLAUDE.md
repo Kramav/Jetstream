@@ -47,6 +47,8 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
     1024x1024 (load and save).
   - **Adopted for game audio (2026-10-06; user: no Wwise dependency):** libopus 1.6.1, libvorbis 1.3.7 (with libogg
     1.3.6), all BSD, core-private (`core/wwise.*`, §10 Story movies' sound); plus ww2ogg's codebook library (§6).
+  - **Adopted for REFramework scripts (2026-10-07):** Lua 5.4.8 (MIT; a vcpkg override, REFramework embeds 5.4.3),
+    core-private (`core/game_code.*`): the syntax check only, nothing runs.
   - GoogleTest verified but not used.
 - Images (combining preview PNGs): **WIC**, built into Windows, used from core. No image library dependency.
 - Build (Developer PowerShell for VS 2026, which sets `VCPKG_ROOT`):
@@ -117,7 +119,7 @@ authors).** `make_converter` picks one:
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
-  OverlayImage, ReplacePhoto, Preview, PackageMod; file steps CopyFile,
+  OverlayImage, ReplacePhoto, Preview, LuaScript (§10 M2), PackageMod; file steps CopyFile,
   MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
   CutText, RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
   utility.**
@@ -745,6 +747,8 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 | REE-Lib (kagenocookie/RE-Engine-Lib) | Reference only: `.tex` and `.mdf2` layouts (`TexFile.cs`, `MdfFile.cs`); later `.mesh` (`MeshFile.cs`) | MIT [official] | Not linked (C#). No code copied; if any ever is, add its MIT notice |
 | ww2ogg's codebooks (`packed_codebooks_aoTuV_603.bin`, hcs64/ww2ogg commit 14ed9b0) | Wwise's Vorbis codebook library: checks libvorbis's setup against the replaced WEM's before writing (§10 story movies' sound) | BSD 3-clause (Xiph.org, Adam Gashlin) [official, its COPYING] | **Shipped (user, 2026-10-06):** `third_party/ww2ogg/`, installed to `data\`, licence in `licenses\ww2ogg.txt`. No ww2ogg code is used |
 | libvorbis 1.3.7 / libogg 1.3.6, libopus 1.6.1 | Writing (and decoding) Wwise Vorbis / Opus WEMs (`core/wwise.*`) | BSD 3-clause [official] | **Adopted 2026-10-06:** vcpkg, core-private, static in the release zip; in the notices |
+| Lua 5.4.8 | Syntax-checking REFramework scripts (`core/game_code.*`) | MIT [official] | **Adopted 2026-10-07:** vcpkg (override), core-private, static; in the notices |
+| REFramework's SDK dump (`il2cpp_dump.json`) | The game's type names for checking scripts | The user's own file, made by REFramework (MIT) | Never shipped or copied; the user picks it |
 | REtool | PAK extraction / optional PAK creation | No license found | Don't bundle. Detect path; guide manual install |
 | Fluffy Mod Manager | Install/test mods | No license found | Don't bundle. User selects path |
 | texconv (DirectXTex) | Not needed: the DirectXTex library does the encoding (§2, §4) | MIT [official] | — |
@@ -918,6 +922,8 @@ propose them as next steps before then.
 - [ ] **Replaced game sounds (§10 Game sounds).** Example 14: is the intro's English narration three beeps (a
   bank's first part and a package together); does a sound of another length play fully (Same length off); and a
   sound embedded in a bank (no package).
+- [ ] **Lua scripts through Fluffy (§10 M2 plan, step 1).** Does Fluffy install a mod's `reframework/autorun` files
+  at the game's root, and remove them on uninstall?
 - [ ] **Replaced movie sound (§10 Story movies' sound).** Example 12 also replaces mva000's sound packages: is the
   beep heard each second, and the original's music, dialogue and effects gone; does a WEM one zero byte longer per
   packet (libvorbis) play cleanly; with Same length off, does a sound of another length play fully without a bank
@@ -928,37 +934,176 @@ propose them as next steps before then.
 **Order (user, 2026-10-03):** M2 REFramework scripting, M3 movies and cutscenes, M4 AI (was M2), M5 the REFramework
 runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 
-- **NEXT (2026-10-07): M2, starting with the survey** (M2's order below). Before it: M3 routes 1 and 2, below: replace a game movie, then play a movie when we choose.
+- **NEXT (2026-10-07, user: "m3 route 3"): M3 route 3, scripted real-time cutscenes** (M3 "Route 3" below):
+  format, runtime and probe built; next the Cutscene block (packaging, Test in game, reading a recording). M2's step 5
+  (settings-window preview) is skipped for now. M2 steps 1-4 are built; step 2
+  waits for a real RE4R dump from the user to be checked on. The survey is done (M2 "Survey"). Before it: M3 routes 1 and 2, below: replace a game movie, then play a movie when we choose.
   **Route 1 done (user, 2026-10-06: "then we can consider route 1 done", once sound was re-encoded).** Its in-game
   check is in §9's list. Route 2: prepared, see M3 "Prepared".
 - **M2: REFramework scripting (user, 2026-10-03).** Help users make script mods for REFramework (Lua in
   `reframework/autorun`). Survey: REFramework (MIT) is the runtime and has no packaging conventions; EMV Engine (MIT,
   RE4R through the SILVER fork) is a shared Lua library; REE Content Editor (MIT, very active) edits and patches RE
-  Engine files, no runtime scripting. Nothing helps *write* RE4R scripts. Steps, cheapest first:
+  Engine files, no runtime scripting. Steps, cheapest first (superseded by the Plan below; kept for the reasoning):
   1. Packaging: Package for Fluffy takes Lua scripts (`reframework/autorun/<Mod>/`, at the game's root, not under
      natives) and marks the mod as needing REFramework (§3: the lowest tier the graph needs).
   2. Game knowledge: REFramework's SDK dump (types, methods, fields) searchable in the Browser, so blocks and the AI
-     check a hook's names before the game runs. [TBD-spike] the dump's format and how it's made.
+     check a hook's names before the game runs. The dump's format and how it's made: Survey below.
   3. Trigger -> action blocks: a mod is data, run by the one generic runtime (M5). Each trigger needs an in-game spike
      for its hook point.
   4. AI-written Lua for the rest (`claude -p` / MCP), checked against step 2, packaged by step 1.
-  **Decided (user, 2026-10-07): mostly the user writing Lua ("I can learn lua"), with previews and assistance.** A
-  separate script editing mode (a script graph opened from a Script block, like a custom node) was discussed and
-  is only needed if scripts become mostly blocks; not planned now. Ideas, best first:
-  - *Assistance:* type definitions generated from the SDK dump for VS Code's Lua Language Server (completion,
-    hover, wrong names underlined: game types and REFramework's API), so no editor is built into the tool; a name
-    check against the dump (typos, names a game update removed; also for AI-written Lua); templates for the common
-    patterns (hook a method pre / post, every frame, a settings window, saving settings); a syntax check with Lua's
-    own parser (MIT, embedded in core).
-  - *Previews:* the script's settings window (REFramework mods draw with ImGui, as the app does: run only its
-    `re.on_draw_ui` code against stub REFramework tables and the app's ImGui, so it looks as in game); on-screen
-    drawing (`draw.text` etc.) on a game-sized canvas; afterwards, REFramework's and the script's log files read
-    back into the tool, errors beside the script ([TBD] which files REFramework writes).
-  - *Can't be previewed:* anything needing the running game (hooks firing, game state); the name check is the most.
-  - **Order:** (1) survey what exists (published REFramework type definitions / Lua Language Server annotations,
-    Lua tooling for RE Engine games), (2) packaging Lua scripts (step 1 above), (3) the dump and the VS Code
-    definitions (step 2), (4) the syntax check and the settings-window preview. The survey decides how much of (3)
-    is ours to build.
+  **Decided (user, 2026-10-07, replacing that day's "I can learn lua"): Claude writes the Lua ("i hate writing
+  code").** The user describes the mod, tests it in game and says what's wrong; the tool makes the AI reliable
+  (game names looked up and checked, errors fed back) and one-click. Lua, not C# (re-engine-mcp's polished loop is
+  C#): a Lua mod runs on the stable REFramework every player has; C# needs the nightly and .NET on every player's
+  PC. A separate script editing mode (a script graph, like a custom node) is only needed if scripts become mostly
+  blocks; not planned. Can't be checked before the game: whether a hook does the right thing (the user plays).
+  - **Survey (2026-10-07; licences and activity from GitHub's API; Nexus and Patreon pages couldn't be fetched):**
+    | Candidate | Covers | Gap | Licence | Maintained |
+    |---|---|---|---|---|
+    | REFDumpFormatter (kagenocookie) | `il2cpp_dump.json` -> LuaCATS definitions of the game's types (or C#), per class or per namespace; also ships definitions of REFramework's API (`Includes/lua/REFramework`: re, sdk, imgui, draw, fs, json, ...) and the `.luarc.json` setup | .NET 8; tested on DD2 / DMC5, not RE4R; its API files last updated 2025-01 (imgui partial) | MIT | v1.6.6, 2026-03 |
+    | REFramework's Dump SDK (DeveloperTools > ObjectExplorer) | Writes `il2cpp_dump.json` to the game folder: an object keyed by full type name, with `parent`, `flags`, `fields`, `methods` (`params`, `returns`; keyed name + index), `properties`, `RSZ`, `reflection_*` [official, ObjectExplorer.cpp] | Needs the running game; "will probably crash during the IDA SDK dump step but that's fine" (REFDumpFormatter's README) | MIT | Nightly 2026-09; stable v1.5.9.1 2025-03 |
+    | REasy's `dump_il2cpp.ps1` (seifhassine) | The same dump with no REFramework, reading the running game's memory only; type-database versions 66, 67, 69-84 | Needs the running game | MIT | Pushed 2026-09 |
+    | re-engine-mcp (praydog) | MCP server: an AI searches 100k+ types, reads / writes fields, calls methods in the running game | Made for C# plugins (REFramework nightly + .NET 10), not Lua | MIT | 2026-03 |
+    | REFramework-LLS, REFrameworkLuaTypedef (infinitY0369) | Definitions of REFramework's API only | Stale (2023, 2024, pinned to an old REFramework commit) | None | No |
+    | "REFramework Lua API" (Nexus, RE4R mod 2670) | A wrapper with completion and checked errors, generated from REFramework's code | Beta, not the whole API | Unknown (page not fetched) | ? |
+    | Lua Language Server / EmmyLua analyzer | VS Code's engine; a command-line `--check` | Can't check names scripts pass as strings (below) | MIT / MIT | 3.19.1 / 0.25.1, 2026-08 |
+    | Lua 5.4 (REFramework embeds 5.4.3 with sol2) | Its parser alone (`luaL_loadbuffer`) is a syntax check | - | MIT | - |
+    Nothing packages Lua mods or previews a settings window. **The gap:** REFramework reaches game code by strings
+    (`sdk.find_type_definition("chainsaw.X")`, `:get_method("m")`, `sdk.hook`), which no language server checks: a
+    typo or a name a game update removed fails only in game. A name check against the dump is ours to build.
+  - **How REFramework runs scripts [official, ScriptRunner.cpp / REFramework.cpp, read 2026-10-07]:** at start and on
+    Reset Scripts it runs every `.lua` directly in `<game>\reframework\autorun\` (not subfolders; each can be
+    unticked in its menu); `require` finds `autorun\?.lua` and `autorun\?\init.lua`, so a script's own modules go in
+    `autorun\<name>\`. **No reload on file change:** only Reset Scripts (or its menu's checkboxes). The log is
+    `<game>\re2_framework_log.txt` (every game); the last script error also shows in the ScriptRunner menu. Lua errors
+    reach the log only with "Log Lua Errors to Disk" on (off by default; step 4 below).
+  - **Plan (user, 2026-10-07: AI writes the code, "as easy as possible").** Each step usable alone, cheapest first:
+    1. **Script block, packaging, Test in game.** `LuaScript` (Source): a `.lua` file (its folder of modules, if
+       one has its name, goes with it) -> a Path with a game-root path, `reframework/autorun/<name>.lua`; into
+       Package's other file, written as `<Mod>/reframework/autorun/...` beside `natives/`. A mod with one is tier 2
+       (`requires_reframework`; "Needs REFramework" added to modinfo's description). **Test in game** (block button,
+       app): copies it into `<game>\reframework\autorun\` (the game's folder: a new setting) and says to press Reset
+       Scripts; **Remove from game** undoes it. Through the API, writing into the game's folder needs approval.
+       **Built 2026-10-07:** `LuaScript` (pure; list output "script files": the `.lua`, then `<stem>\`'s files by
+       path), core `script_files`, `is_game_root_path` (`reframework/...` -> `<Mod>/reframework/...` in
+       `package_path`), `build_package` appends "Needs REFramework." to the description, `install_in_game` (refuses a
+       folder without `dinput8.dll`; overwrites) / `remove_from_game` (the files, then emptied folders, never
+       autorun), Settings `game_dir` (the Pipeline panel's "Game folder"), the block's two buttons (Use layout; status
+       line says to press Reset Scripts). No manifest.json is written (§9's open question; `ManifestV0` still
+       unused). Not done: Test in game through the API / MCP (step 3 needs it, with the guard). Checked: tests
+       (layout and modinfo, install over and remove, a graph run into Package, a missing script). **Not checked by
+       eye:** the buttons, the Game folder field.
+    2. **The game's names, as tools for the AI.** The user dumps once per game update (REFramework's Dump SDK; the
+       guide says how) and picks `il2cpp_dump.json` in Settings (never copied). Core reads it into a compact index
+       (types, parents, fields, methods with params and returns; cached by the dump's write time). Core
+       `check_lua`: Lua 5.4's parser (vcpkg `lua`, MIT, core-private) for syntax, then the name check: string
+       literals given to `find_type_definition` / `get_managed_singleton` / `typeof` / `create_instance`, and
+       `:get_method` / `:get_field` on one of those (or a local set from one in the same file), against the index:
+       unknown type, unknown member with the nearest names, a signature that doesn't match. ponytail: names built at
+       run time aren't checked. MCP tools `search_game_code` and `check_script`; CLI `remod check-lua`; the Script
+       block shows the result, Package warns.
+       **Built 2026-10-07** (`core/game_code.*`):
+       - `load_game_code`: nlohmann SAX over the dump (`_wfopen_s` FILE*), keeping only `parent`, `fields` (type,
+         `Static` in flags) and `methods` (name = key minus its `id`, params {type, name}, returns, static); RSZ,
+         addresses, properties and reflection skipped as they stream past.
+       - Cache: text lines (T / F / M, tab-separated) under `%LOCALAPPDATA%\remod\game_code\<hash of path>.txt`; its
+         first line holds the dump's path, size and write time, so another dump reads again; a bad cache is ignored.
+       - Lookups as REFramework's [official, RETypeDefinition.cpp]: name, then `name(T1, T2)` prototype, the type then
+         its parents; generic definitions (a `!` in a type) skipped. `X[]` counts as known when `X` is.
+       - `game_code()` global (Settings `sdk_dump`, "SDK dump" in the Pipeline panel; the CLI and `remod mcp` read the
+         app's setting, `check-lua --dump` overrides), reloaded when the file changes. ponytail: one dump for every game.
+       - `check_lua`: syntax by `luaL_loadbufferx` (Lua **5.4.8**, a vcpkg override: the baseline's 5.5 refuses valid
+         5.4, e.g. assigning a for-loop variable); names by our own Lua tokenizer (comments, long brackets, escapes) and
+         a pattern scan: sdk.find_type_definition / get_managed_singleton / create_instance / typeof("T"), then
+         `:get_method` / `:get_field` on a type, `:call` / `:get_field` / `:set_field` on an object, directly or through a
+         variable assigned from one (`local t = ...`; reassigned to anything else: dropped; `a.t = ...`: not followed).
+         Suggestions: up to 3 names within edit distance max(2, len/4), ignoring case; a wrong prototype lists the
+         method's real ones.
+       - `search_game_code`: words (all, ignoring case) in type names, then in `Type.member`, types first, sorted; a
+         query naming a type exactly lists its own members with signatures.
+       - API ops `game_code`, `check_script` (file or text; `names_unchecked` says why); MCP tools `search_game_code`,
+         `check_script`, and the instructions tell the AI the autorun rules, to read the REFramework book, to look up
+         every name and to check until clean.
+       - Lua script block: no longer `pure` (a first dump read takes a while; previews give its files only); its run
+         checks every `.lua` it packages: a syntax error fails it (`file:line: syntax: ...`), a name is a warning
+         ("N problem(s): see the warnings"); its message says when names weren't checked and why.
+       - Checked: tests (synthetic dump in ObjectExplorer's layout: junk skipped, ids stripped, statics, lookups through
+         parents and prototypes, bad / empty / missing dump; cache used, refused when cut short, re-read on a new dump;
+         search; syntax messages and lines; names: types, methods, fields, prototypes, singletons, create_instance,
+         comments and strings skipped, reassignment; API and the block's warn / fail), `remod check-lua` by hand.
+         **Not checked: a real RE4R dump** (its size, read time, memory, and whether type names match what
+         find_type_definition takes, e.g. nested types). **Not checked by eye:** the SDK dump field.
+    3. **Write with AI** on the Script block: "What should it do?" and **Write it** run `claude -p` (as Run program
+       does) with `remod mcp` attached and instructions (REFramework book pages, the checks, the autorun rules
+       above); it writes the `.lua`, runs `check_script` until clean, and the block shows the result. **Ask for a
+       change** for each round after. The user never opens an editor (the file stays plain Lua, editable by hand).
+       **Hand editing always stays (user, 2026-10-07: "always have a way for human editing ... sometimes i prefer to
+       handle the files themselves").** **Built 2026-10-07** (core `script_ai.*`, app):
+       - Block (Use layout): "Ask Claude to write it:" / "Ask Claude for a change:" box (state `ai_request`), **Write
+         it with Claude** / **Ask Claude** (one at a time; "Claude is working..."), **Open in editor** (advanced field
+         Open with, else Windows' program for .lua), Claude's note under it (state `ai_notes`, with any problems still
+         left), then Test in game / Remove from game. The field Script may name a file that doesn't exist yet.
+       - `find_claude`: claude.exe / claude.cmd on PATH, `%USERPROFILE%\.local\bin\claude.exe`, else the newest VS Code
+         extension's `resources\native-binary\claude.exe` (this PC: 2.1.285). `find_remod_cli`: beside the app, else
+         `..\cli` (build tree).
+       - `ask_claude`: writes `%LOCALAPPDATA%\remod\ai\request.md` (the script's path, "read it first, keep the user's
+         edits" or "write it from scratch", its modules folder, the request, the autorun rules, the REFramework book,
+         search_game_code for every name, check_script until clean, comments for a person, settings via re.on_draw_ui
+         and json, "don't write files", answer = note then one ```lua block) and `mcp.json` (remod.exe mcp); runs
+         `claude -p "Follow the instructions in request.md..." --output-format json --tools Read,Grep,Glob,WebFetch
+         --allowedTools Read Grep Glob WebFetch(domain:cursey.github.io) mcp__remod__search_game_code
+         mcp__remod__check_script --permission-mode dontAsk --mcp-config <mcp.json> --strict-mcp-config --add-dir <the
+         script's folder>` in that folder (a .cmd through cmd.exe, refusing `&|<>^%!"`), 15 min limit; takes the last
+         JSON line's `result` (`is_error` -> its words), `split_answer` (last ```lua block, else last fenced one; words
+         before it = the note) and `check_lua` on the script. Claude writes nothing.
+       - **Only on a click, never per use (user, 2026-10-07: "do not automate an api call for claude ... disable that
+         if you are charging me per use").** Nothing calls Claude by itself (not a run, a save, an error or a test:
+         tests use a stand-in). `per_use_billing`: ANTHROPIC_API_KEY / CLAUDE_CODE_USE_BEDROCK / _VERTEX in the
+         environment, or an apiKeyHelper or those in `%USERPROFILE%\.claude\settings.json`'s env, and ask_claude
+         refuses before starting anything. The user is on Claude Pro (no key): a call counts toward the plan's limits,
+         so no price is shown (Claude Code's `total_cost_usd` is a list-price estimate, not a charge).
+       - `save_script`: the old file to `<name>.lua.bak`, then the new; if the file's write time changed since asking
+         (`file_stamp`: edited, or made, by hand meanwhile), the user's is left alone and Claude's goes to
+         `<stem>_claude.lua`. Status line: what happened.
+       - Closing the app while Claude works doesn't wait (ponytail: its future is leaked; Claude Code finishes alone).
+         Only the main script is written; modules are read, not changed.
+       - Checked: tests (split_answer; save new / .bak / edited-meanwhile; ask_claude through a stand-in claude.cmd
+         answering as `-p --output-format json` does, its request file, an is_error reply, no reply, no request, no
+         Claude). **One real run** with these flags (Claude Code 2.1.285, Opus 5.5): it called search_game_code ("no SDK
+         dump set") and check_script (clean), no permission denials, a correct hello-window script, 15 s, $0.12.
+         **Not checked by eye:** the block's box, buttons and note.
+    4. **Errors from the game back to the AI.** After Test in game, the tool reads `re2_framework_log.txt` (from
+       where it was at Test in game) and shows the script's errors on the block; **Fix it** hands them to Claude (a
+       button: never sent by itself).
+       **Built 2026-10-07.** REFramework's side [official, ScriptRunner.cpp / .hpp, REFramework.cpp, read 2026-10-07]:
+       script errors go to the log (`spdlog::error`, via `spew_error`) **only with ScriptRunner's "Log Lua Errors to
+       Disk" on, off by default** (`<game>\re2_fw_config.txt`: `ScriptRunner_LogToDisk=true`); the log is opened with
+       truncate, so it's **emptied each game start** (not on Reset Scripts); lines are spdlog's default
+       `[date time] [REFramework] [error] <message>`, a message's further lines (a traceback) not starting with `[`;
+       a script that fails to load also shows a MessageBox in game.
+       - Core (package.*): `framework_log`, `lua_errors_logged` (that config line), `script_errors_in_log(log, from,
+         script)`: error entries from byte `from` (0 if the log is shorter now: the game restarted) that name
+         `<stem>.lua` or `<stem>/` as a word (after a separator, space or quote: `other_my_mod.lua` isn't it), each once
+         with a count (on_frame errors repeat every frame), its line from `<stem>.lua:<n>` (a module's line isn't).
+         "Unknown error in on_frame" names no script: left out.
+       - App: Test in game records the log's size per block (`State::log_from`) and, if logging is off, says to turn
+         on Log Lua Errors to Disk once. **Game errors** (button) reads since then (since the game started, without a
+         Test in game this session), shows them in amber under the block (`State::game_errors`, not saved), and the
+         status line says how many or why none. **Fix with Claude** (only when there are errors; one click) puts
+         "Fix these errors REFramework logged in game:" and them in the request box and asks, as Ask Claude does.
+         Nothing reads the log or asks Claude by itself.
+       - Checked: tests (config on / off / missing, a log with an old error, a repeated error with traceback, another
+         script's, a module's, a warning, an unattributed error; from Test in game, from the start, after a restart).
+         **Not checked:** a real REFramework log (the error text's exact form), by eye.
+    5. **Settings-window preview** (last): the script's `re.on_draw_ui` run in the app against stub REFramework
+       tables (`imgui.*` -> the app's ImGui, `json` / `fs` in a scratch folder, `sdk` / `re` doing nothing), so its
+       menu shows without launching the game.
+    - **Optional beside it: re-engine-mcp** (the user's PC only: REFramework nightly + .NET 10; the finished Lua mod
+      doesn't need it): Claude looks around the running game ("which field holds Leon's health?") before writing a
+      hook. Likely also the way to do M3 route 2's spike (calling the movie types live) [inferred, untried].
+    - **In game (§9 list):** Fluffy installs a mod's `reframework/` files at the game's root [guide, unconfirmed].
+    - Dropped (only help a human typing): generated VS Code definitions, `.luarc.json`, name completion, Copy hook
+      snippets. Not planned: trigger -> action blocks (step 3 of the old list) until scripts show what repeats.
 - **M3: Movies and cutscenes (user, 2026-10-03: "scripting our own cutscene").**
   - **Prepared (2026-10-03):**
     - Core `read_mp4_info` (core/movie.*): an MP4's video size, length, frame rate, codecs, audio, from its boxes.
@@ -1038,6 +1183,42 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     movie plays where (mva000 is likely the intro: 4K, 61 s).
   - **Route 2 spike:** REFramework installed, `spikes/movie_probe.lua` in `reframework/autorun`, play a movie, send
     the log. It decides whether Lua can start the game's movie player on a new `.mov`, or a C++ plugin is needed.
+  - **Route 3: scripted real-time cutscenes (started 2026-10-07; user: "long term id like this to extend to re9").**
+    - **Survey (2026-10-07):**
+      | Candidate | Covers | Gap | Licence | Maintained |
+      |---|---|---|---|---|
+      | EMV Engine, SILVER fork (RE4R) | Any animation on any character (`layer:changeMotion(bank, motion, frame, blend, InterpolationMode, InterpolationCurve)`, `set_Frame`), the game's cutscene camera (`EventCameraController`, `via.motion.ActorMotionCamera`), spawning; RE4R player = `chainsaw.CharacterManager:getPlayerContextRef():get_BodyGameObject()` | No timeline: its "Sequencer" chains BehaviorTree moves on hotkeys | MIT | Pushed 2026-09 |
+      | REFramework's free camera | Free movement, FOV, pause, HUD off | No recording or paths | MIT | Nightly 2026-09 |
+      | Otis_Inf photomode (RE4R) | Camera paths with keyframes | Paid, closed: can't be built on | Commercial | Yes |
+      | Custom Fixed Cameras (Nexus 6231, RE4R) | Saved camera angles switched on area triggers: Lua camera override works in RE4R | Fixed shots, no timing | Unknown (page not fetched) | ? |
+      | Noclip / trainer scripts (e.g. VIPO777's, MIT) | Camera driven each frame from `re.on_pre_application_entry` | **RE9 scripts** (user caught it): the pattern is engine-wide, the hook, class names (`app.*` vs `chainsaw.*`) and overloads per game | MIT | 2026 |
+      Nothing data-driven for RE4R: ours to build, on EMV's proven calls (reference; credit if code is copied).
+    - **Decided:** a cutscene is data (`schemas/cutscene.v0.example.json`), played by one generic runtime
+      (`runtime/remod_cutscene.lua`); everything per game is in the runtime's `GAMES` table keyed by
+      `reframework:get_game_name()` (RE9 later = an entry there, the format unchanged). Sound (Wwise) last.
+    - **Format v0:** `schema_version`, `name`, `length` (s), `start.key` (F1-F12 but F10), `letterbox` (bar height,
+      fraction of the screen), `camera` [{`t`, `position` [x,y,z], `rotation` [x,y,z,w], `fov`, `ease`: smooth
+      (default) / linear / cut, how the camera arrives at that key}], `subtitles` [{`t`, `until`, `text`}], `fades`
+      [{`t`, `until`, `from`, `to`: black's opacity}], `motions` [{`t`, `actor` ("player" only), `bank`, `motion`,
+      `frame`, `blend`}].
+    - **Runtime (built 2026-10-07):** loads `reframework\data\remod_cutscenes\*.json` (`fs.glob`, `json.load_file`);
+      REFramework menu: Play / Stop each, Reload, recording; a cutscene's start key toggles it; camera set in
+      `re.on_pre_application_entry(GAMES[g].camera_hook)` (RE4R: "BeginRendering", TBD-spike), position lerped, rotation
+      slerped (`Quaternion.new(w, x, y, z)` [official, book]), FOV lerped and restored after; letterbox, subtitles
+      (`draw.text`, fixed font, left at 10%), fades (`draw.filled_rect`, colour 0xAABBGGRR) in `re.on_frame`; motions on
+      the player through EMV's `changeMotion`; time from `os.clock` (else frames / 60). **F10 records** the camera as a
+      key into `remod_cutscenes\recording.json` (time between presses = time between keys; frame shots with the free
+      camera). Not yet: freezing the player, hiding the HUD, actors other than the player, triggers (M5), sound.
+    - **Probe (`spikes/cutscene_probe.lua`, built 2026-10-07; the user's, once, in game):** F5 writes down the
+      camera (object, position, rotation, FOV, components, parent), the player lookups, what `fs.glob` returns and
+      whether `os.clock` exists; F6 holds the camera with each of 7 hooks in turn (UpdateBehavior, LateUpdateBehavior,
+      UpdateMotion, PrepareRendering, BeforeLockSceneRendering, LockScene, BeginRendering; 3 s each, shown on screen)
+      and reads back after BeginRendering how often something moved it; F7 = "this one held still"; F8 restarts the
+      player's current animation through changeMotion. Results: `reframework\data\remod_cutscene_probe.json` (remod
+      can read it from the Game folder). Install: a Lua script block on it, Test in game, Reset Scripts.
+    - Checked: tests (the runtime loaded in Lua 5.4 with stand-in REFramework tables: `camera_at` before / between
+      (linear, smooth, cut) / after keys, missing FOV, no keys; both scripts' syntax; the example's shape). **Not
+      checked: anything in game** (all four probe questions are open).
   - **Research (2026-10-03, read-only look at the extracted game files).**
     - **Pre-rendered movies are plain MP4s [game data].** `natives/STM/streaming/_chainsaw/movie/<group>/<id>/<id>.mov.1.x64`
       is an MP4 (`ftyp mp42`, H.264 `avc1`); the non-streaming `.mov.1.x64` beside it is 38 bytes (`REMV`, names

@@ -44,6 +44,8 @@ Settings load_settings(const fs::path& file) {
         s.noesis_textures = j.value("noesis_textures", false);
         s.show_help = j.value("show_help", true);
         s.game_files_dir = j.value("game_files_dir", "");
+        s.game_dir = j.value("game_dir", "");
+        s.sdk_dump = j.value("sdk_dump", "");
         s.build_mode = j.value("build_mode", false);
         s.show_descriptions = j.value("show_descriptions", true);
         s.pinned_folders = j.value("pinned_folders", std::vector<std::string>{});
@@ -58,7 +60,8 @@ void save_settings(const Settings& s, const fs::path& file) {
     std::ofstream out(file);
     out << nlohmann::json{{"graph_path", s.graph_path}, {"noesis_path", s.noesis_path},
                           {"noesis_textures", s.noesis_textures}, {"show_help", s.show_help},
-                          {"game_files_dir", s.game_files_dir}, {"build_mode", s.build_mode},
+                          {"game_files_dir", s.game_files_dir}, {"game_dir", s.game_dir}, {"sdk_dump", s.sdk_dump},
+                          {"build_mode", s.build_mode},
                           {"show_descriptions", s.show_descriptions}, {"pinned_folders", s.pinned_folders}}
                .dump(2)
         << "\n";

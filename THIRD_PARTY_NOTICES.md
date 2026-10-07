@@ -15,6 +15,7 @@ folder of the release zip (sources: each vcpkg port's `copyright` file, and `thi
 | libopus 1.6.1 | writing the game's Opus audio (WEM) | BSD 3-clause | https://opus-codec.org |
 | libvorbis 1.3.7 | writing the game's Vorbis audio (WEM) | BSD 3-clause | https://xiph.org/vorbis |
 | libogg 1.3.6 | used by libvorbis | BSD 3-clause | https://xiph.org/ogg |
+| Lua 5.4.8 | checking REFramework scripts' syntax | MIT | https://www.lua.org |
 | ww2ogg's Wwise Vorbis codebooks (`packed_codebooks_aoTuV_603.bin`) | writing the game's Vorbis audio | BSD 3-clause (Xiph.org Foundation, Adam Gashlin) | https://github.com/hcs64/ww2ogg (commit 14ed9b0) |
 | `vcomp140.dll` | DirectXTex's OpenMP runtime | Microsoft Visual C++ Redistributable terms | Visual Studio |
 

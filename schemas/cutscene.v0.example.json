@@ -1,0 +1,21 @@
+{
+  "schema_version": 0,
+  "name": "Example: slow push in",
+  "length": 8.0,
+  "start": { "key": "F9" },
+  "letterbox": 0.12,
+  "camera": [
+    { "t": 0.0, "position": [0.0, 1.6, -3.0], "rotation": [0.0, 0.0, 0.0, 1.0], "fov": 60.0 },
+    { "t": 4.0, "position": [0.5, 1.6, -1.5], "rotation": [0.0, 0.0998, 0.0, 0.995], "fov": 45.0, "ease": "smooth" },
+    { "t": 6.0, "position": [2.0, 1.8, 0.0], "rotation": [0.0, 0.7071, 0.0, 0.7071], "fov": 50.0, "ease": "cut" },
+    { "t": 8.0, "position": [2.0, 1.8, 0.5], "rotation": [0.0, 0.7071, 0.0, 0.7071], "fov": 50.0, "ease": "linear" }
+  ],
+  "subtitles": [
+    { "t": 1.0, "until": 3.5, "text": "Something's wrong with this village." }
+  ],
+  "fades": [
+    { "t": 0.0, "until": 0.5, "from": 1.0, "to": 0.0 },
+    { "t": 7.5, "until": 8.0, "from": 0.0, "to": 1.0 }
+  ],
+  "motions": []
+}

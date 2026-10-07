@@ -35,7 +35,7 @@ install(FILES third_party/ww2ogg/packed_codebooks_aoTuV_603.bin DESTINATION data
 install(FILES THIRD_PARTY_NOTICES.md DESTINATION .)
 install(FILES third_party/ww2ogg/COPYING DESTINATION licenses RENAME ww2ogg.txt)
 foreach(port imgui imgui-node-editor directxtex directxmath tomlplusplus nlohmann-json nativefiledialog-extended
-             opus libvorbis libogg)
+             opus libvorbis libogg lua)
     install(FILES ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${port}/copyright
             DESTINATION licenses RENAME ${port}.txt)
 endforeach()

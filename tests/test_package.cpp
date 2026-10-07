@@ -212,3 +212,105 @@ TEST_CASE("build_package validates before writing anything") {
                       ContainsSubstring("version 10"));
     CHECK_FALSE(fs::exists(out));
 }
+
+TEST_CASE("a Lua script and its modules go to the mod's reframework/autorun, beside natives") {
+    TempDir tmp;
+    write_file(tmp.path / "scripts/my_mod.lua", "require('my_mod.util')");
+    write_file(tmp.path / "scripts/my_mod/util.lua", "return {}");
+    write_file(tmp.path / "scripts/my_mod/data/a.json", "{}");
+    write_file(tmp.path / "scripts/other.lua", "-- not part of it");
+
+    const auto files = remod::script_files(tmp.path / "scripts/my_mod.lua");
+    REQUIRE(files.size() == 3);
+    CHECK(files[0].game_path == "reframework/autorun/my_mod.lua");
+    CHECK(files[1].game_path == "reframework/autorun/my_mod/data/a.json");
+    CHECK(files[2].game_path == "reframework/autorun/my_mod/util.lua");
+    CHECK(remod::script_files(tmp.path / "scripts/other.lua").size() == 1);
+    CHECK_THROWS_AS(remod::script_files(tmp.path / "scripts/my_mod/data/a.json"), PackageError);
+    CHECK_THROWS_AS(remod::script_files(tmp.path / "scripts/missing.lua"), PackageError);
+
+    CHECK(remod::package_path(kProfile, "M", "reframework/autorun/x.lua") ==
+          fs::path("M/reframework/autorun/x.lua").lexically_normal());
+    CHECK_THROWS_AS(remod::package_path(kProfile, "M", "reframework/../x.lua"), PackageError);
+
+    remod::PackageSpec spec{.mod_name = "M", .out_dir = tmp.path / "out", .info = {.name = "M", .description = "Hi."},
+                            .files = files, .zip = false};
+    const fs::path root = remod::build_package(kProfile, spec);
+    CHECK(read_file(root / "reframework/autorun/my_mod.lua") == "require('my_mod.util')");
+    CHECK(read_file(root / "reframework/autorun/my_mod/util.lua") == "return {}");
+    CHECK_FALSE(fs::exists(root / "natives"));
+    CHECK(read_file(root / "modinfo.ini") == "name=M\r\ndescription=Hi.\\nNeeds REFramework.\r\n");
+}
+
+TEST_CASE("Test in game copies a script into REFramework's autorun, Remove takes it out again") {
+    TempDir tmp;
+    write_file(tmp.path / "s/my_mod.lua", "a");
+    write_file(tmp.path / "s/my_mod/util.lua", "b");
+    const auto files = remod::script_files(tmp.path / "s/my_mod.lua");
+    const fs::path game = tmp.path / "game";
+    fs::create_directories(game);
+
+    CHECK_THROWS_WITH(remod::install_in_game(files, game), ContainsSubstring("dinput8.dll"));
+    write_file(game / "dinput8.dll", "");
+    write_file(game / "reframework/autorun/someone_elses.lua", "c");
+    remod::install_in_game(files, game);
+    CHECK(read_file(game / "reframework/autorun/my_mod.lua") == "a");
+    CHECK(read_file(game / "reframework/autorun/my_mod/util.lua") == "b");
+    write_file(tmp.path / "s/my_mod.lua", "a2");
+    remod::install_in_game(files, game);  // again, over the last copy
+    CHECK(read_file(game / "reframework/autorun/my_mod.lua") == "a2");
+    CHECK_THROWS_AS(remod::install_in_game({{tmp.path / "s/my_mod.lua", "_chainsaw/x.lua"}}, game), PackageError);
+
+    remod::remove_from_game(files, game);
+    CHECK_FALSE(fs::exists(game / "reframework/autorun/my_mod.lua"));
+    CHECK_FALSE(fs::exists(game / "reframework/autorun/my_mod"));
+    CHECK(fs::exists(game / "reframework/autorun/someone_elses.lua"));
+    remod::remove_from_game(files, game);  // nothing there: fine
+    CHECK(fs::is_directory(game / "reframework/autorun"));
+}
+
+TEST_CASE("Game errors: a script's errors in REFramework's log, since Test in game") {
+    TempDir tmp;
+    const fs::path game = tmp.path / "game", log = remod::framework_log(game);
+    const fs::path script = tmp.path / "scripts/my_mod.lua";
+    CHECK(log == game / "re2_framework_log.txt");
+    CHECK(remod::script_errors_in_log(log, 0, script).empty());  // no log yet
+
+    // Lua errors reach the log only with ScriptRunner's Log Lua Errors to Disk on.
+    CHECK_FALSE(remod::lua_errors_logged(game));
+    write_file(game / "re2_fw_config.txt", "ScriptRunner_LogToDisk=false\r\nFirstPerson_Enabled=true\r\n");
+    CHECK_FALSE(remod::lua_errors_logged(game));
+    write_file(game / "re2_fw_config.txt", "FirstPerson_Enabled=true\r\nScriptRunner_LogToDisk=true\r\n");
+    CHECK(remod::lua_errors_logged(game));
+
+    // spdlog's lines, as REFramework writes them: an old error, then what came after Test in game.
+    const std::string before =
+        "[2026-10-07 12:00:00.001] [REFramework] [info] [ScriptState] Running script C:\\Game\\reframework\\autorun\\my_mod.lua...\r\n"
+        "[2026-10-07 12:00:00.002] [REFramework] [error] C:\\Game\\reframework\\autorun\\my_mod.lua:3: old error\r\n";
+    const std::string after =
+        "[2026-10-07 12:01:00.000] [REFramework] [error] C:\\Game\\reframework\\autorun\\my_mod.lua:12: attempt to index a nil value (local 'player')\r\n"
+        "stack traceback:\r\n"
+        "\t[C]: in ?\r\n"
+        "[2026-10-07 12:01:00.016] [REFramework] [error] C:\\Game\\reframework\\autorun\\my_mod.lua:12: attempt to index a nil value (local 'player')\r\n"
+        "stack traceback:\r\n"
+        "\t[C]: in ?\r\n"
+        "[2026-10-07 12:01:00.020] [REFramework] [error] C:\\Game\\reframework\\autorun\\other_my_mod.lua:5: not ours\r\n"
+        "[2026-10-07 12:01:00.021] [REFramework] [error] C:\\Game\\reframework\\autorun\\my_mod\\util.lua:7: in a module\r\n"
+        "[2026-10-07 12:01:00.022] [REFramework] [warning] C:\\Game\\reframework\\autorun\\my_mod.lua:1: a warning, not an error\r\n"
+        "[2026-10-07 12:01:00.023] [REFramework] [error] Unknown error in on_frame\r\n";
+    write_file(log, before + after);
+
+    const auto errors = remod::script_errors_in_log(log, before.size(), script);
+    REQUIRE(errors.size() == 2);
+    CHECK(errors[0].line == 12);
+    CHECK(errors[0].count == 2);  // the same error every frame: once, counted
+    CHECK(errors[0].message ==
+          "C:\\Game\\reframework\\autorun\\my_mod.lua:12: attempt to index a nil value (local 'player')\nstack "
+          "traceback:\n\t[C]: in ?");
+    CHECK(errors[1].line == 0);  // a module's line isn't the script's
+    CHECK_THAT(errors[1].message, ContainsSubstring("util.lua:7: in a module"));
+
+    CHECK(remod::script_errors_in_log(log, 0, script).size() == 3);  // since the game started: the old one too
+    CHECK(remod::script_errors_in_log(log, before.size() + after.size() + 100, script).size() == 3);  // restarted
+    CHECK(remod::script_errors_in_log(log, before.size(), tmp.path / "nothing.lua").empty());
+}

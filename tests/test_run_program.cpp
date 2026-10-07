@@ -175,3 +175,25 @@ TEST_CASE("Run program: runs again only when what it gets changed, or its output
     again();
     CHECK(runs() == 4);
 }
+
+TEST_CASE("Lua script block: its files into Package, the mod needs REFramework") {
+    TempDir tmp;
+    test::write_file(tmp.path / "scripts/my_mod.lua", "print('hi')");
+    test::write_file(tmp.path / "scripts/my_mod/util.lua", "return {}");
+    Graph g;
+    g.add_node("LuaScript").params["script"] = "scripts\\my_mod.lua";
+    auto& pkg = g.add_node("PackageMod");
+    pkg.params["name"] = "M";
+    pkg.params["out"] = "out";
+    REQUIRE(g.connect({1, "files", 2, "file"}).empty());
+
+    const auto result = run(g, tmp.path);
+    CHECK(result.nodes.at(1).state == NodeState::Done);
+    CHECK(result.nodes.at(1).message.starts_with("my_mod.lua and 1 module file(s) (game names not checked"));
+    CHECK(fs::is_regular_file(tmp.path / "out/M/reframework/autorun/my_mod.lua"));
+    CHECK(fs::is_regular_file(tmp.path / "out/M/reframework/autorun/my_mod/util.lua"));
+    CHECK_THAT(test::read_file(tmp.path / "out/M/modinfo.ini"), ContainsSubstring("Needs REFramework."));
+
+    g.find(1)->params["script"] = "scripts\\nope.lua";
+    CHECK_THAT(run_error(g, tmp.path), ContainsSubstring("not a .lua file"));
+}

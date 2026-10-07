@@ -4,8 +4,11 @@
 #define IMGUI_DEFINE_MATH_OPERATORS  // required by the node editor's internal header; before any imgui.h
 #include "browser.hpp"
 #include "custom.hpp"
+#include "game_code.hpp"
 #include "graph.hpp"
+#include "package.hpp"
 #include "profile.hpp"
+#include "script_ai.hpp"
 #include "route.hpp"
 #include "settings.hpp"
 #include "setup.hpp"
@@ -379,6 +382,8 @@ struct State {
     }();
     bool noesis_textures = saved.noesis_textures;  // convert textures with Noesis, not the built-in converter
     std::string game_files = saved.game_files_dir;  // REtool folder; empty = ask the RE plugin (see game_files_dir)
+    std::string game_dir = saved.game_dir;  // the installed game's folder: a Lua script's Test in game
+    std::string sdk_dump = saved.sdk_dump;  // REFramework's il2cpp_dump.json: game names scripts are checked against
     bool show_help = saved.show_help;
     bool build_mode = saved.build_mode;  // Build layout (edit structure) vs Use layout (fill in and run)
     bool overview = false;  // zoomed out: blocks show only their title, status and linked rows
@@ -463,6 +468,16 @@ struct State {
     std::string show_movie;  // a block's movie to play in the viewer (its Preview movie button), handed on next frame
     std::string preview_path = "\x01";
     std::future<remod::RunResult> run;
+    // Write with AI: Claude writing a Lua script block's script (one at a time), for which block and file, and the
+    // file's write time when asked (save_script leaves a file edited meanwhile alone).
+    std::future<remod::ScriptAnswer> ai;
+    int ai_node = 0;
+    std::filesystem::path ai_script;
+    std::string ai_stamp;
+    // Errors from the game (CLAUDE.md §10 M2, plan step 4), per Lua script block: where REFramework's log ended at its
+    // Test in game, and the script's errors read from it since (shown under the block; not saved).
+    std::map<int, std::uintmax_t> log_from;
+    std::map<int, std::string> game_errors;
     std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
     // Link drawing: pin centres (canvas coordinates) recorded while drawing the nodes, and the routes, recomputed
     // only when a block or pin moves. routed[i] = the graph link that routes.paths[i] belongs to.
@@ -615,6 +630,8 @@ void remember_paths(State& s) {
                               .noesis_textures = s.noesis_textures,
                               .show_help = s.show_help,
                               .game_files_dir = s.game_files,
+                              .game_dir = s.game_dir,
+                              .sdk_dump = s.sdk_dump,
                               .build_mode = s.build_mode,
                               .show_descriptions = s.show_descriptions,
                               .pinned_folders = s.pinned};
@@ -882,6 +899,114 @@ std::string open_in_editor(const std::filesystem::path& file, const std::filesys
     return "";
 }
 
+// A Lua script block's script file (typed, or from a linked Value), from the graph's folder; empty if none.
+std::filesystem::path script_of(const State& s, int node) {
+    std::filesystem::path script(remod::fill_game(unquote(remod::known_value(s.graph, node, "script"))));
+    if (!script.empty() && !script.is_absolute()) script = std::filesystem::absolute(s.graph_path).parent_path() / script;
+    return script;
+}
+
+// A Lua script block's Test in game (or, `remove`, Remove from game): its script and modules into (out of) the game's
+// reframework\autorun; the outcome goes to the status line.
+void script_in_game(State& s, int node, bool remove) {
+    try {
+        if (s.game_dir.empty()) throw remod::PackageError("set the Game folder first (in the Pipeline panel)");
+        const std::filesystem::path script = script_of(s, node);
+        if (script.empty()) throw remod::PackageError("pick the block's script first");
+        const auto files = remod::script_files(script);
+        const std::filesystem::path game(unquote(s.game_dir));
+        if (remove) {
+            remod::remove_from_game(files, game);
+            s.status = "Removed " + script.filename().string() + " from the game. Press Reset Scripts in REFramework's "
+                       "menu (or restart the game) to unload it.";
+        } else {
+            remod::install_in_game(files, game);
+            std::error_code ec;
+            const std::uintmax_t size = std::filesystem::file_size(remod::framework_log(game), ec);
+            s.log_from[node] = ec ? 0 : size;  // Game errors reads what REFramework logs after this
+            s.game_errors.erase(node);
+            s.status = "Copied " + std::to_string(files.size()) + " file(s) into the game's reframework\\autorun. In "
+                       "game, press Reset Scripts in REFramework's menu (Insert) to load it.";
+            if (!remod::lua_errors_logged(game))
+                s.status += " To see its errors here, turn on Log Lua Errors to Disk in REFramework's ScriptRunner menu "
+                            "once.";
+        }
+    } catch (const std::exception& e) {
+        s.status = std::string(remove ? "Couldn't remove the script: " : "Couldn't test the script: ") + e.what();
+    }
+}
+
+// Write with AI (CLAUDE.md §10 M2, plan step 3): Claude writes or changes a Lua script block's script in the
+// background (core ask_claude); poll_ai saves its answer.
+void ask_ai(State& s, int node) {
+    const remod::Node* n = s.graph.find(node);
+    if (s.ai.valid() || !n) return;
+    const auto request = n->params.find("ai_request");
+    const auto profile = std::ranges::find(s.profiles, s.graph.profile, &remod::Profile::id);
+    wchar_t exe[MAX_PATH];
+    const DWORD len = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const remod::ScriptAsk ask{.script = script_of(s, node),
+                               .request = request == n->params.end() ? std::string() : request->second,
+                               .game = profile == s.profiles.end() ? std::string() : profile->name,
+                               .claude = remod::find_claude(),
+                               .remod = remod::find_remod_cli(std::filesystem::path(std::wstring(exe, len)).parent_path())};
+    s.ai_node = node;
+    s.ai_script = ask.script;
+    s.ai_stamp = remod::file_stamp(ask.script);
+    s.ai = std::async(std::launch::async, [ask] { return remod::ask_claude(ask); });
+    s.status = "Claude is working on " + ask.script.filename().string() + " (this can take a few minutes)...";
+}
+
+void poll_ai(State& s) {
+    if (!s.ai.valid() || s.ai.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    std::string notes;
+    try {
+        const remod::ScriptAnswer a = s.ai.get();
+        const bool had = !s.ai_stamp.empty();
+        const std::filesystem::path written = remod::save_script(s.ai_script, a.script, s.ai_stamp);
+        notes = a.notes;
+        if (!a.problems.empty()) {
+            notes += "\n\nStill " + std::to_string(a.problems.size()) + " problem(s):";
+            for (const auto& p : a.problems) notes += "\n  line " + std::to_string(p.line) + ": " + p.message;
+        }
+        const std::string name = s.ai_script.filename().string();
+        s.status = written != s.ai_script
+                       ? "You changed " + name + " while Claude worked: yours is untouched, Claude's version is " +
+                             written.filename().string() + "."
+                       : "Claude wrote " + name + (had ? "; the previous version is " + name + ".bak" : std::string()) +
+                             ". Open in editor to read or change it.";
+    } catch (const std::exception& e) {
+        notes = std::string("Claude couldn't: ") + e.what();
+        s.status = notes;
+    }
+    if (remod::Node* n = s.graph.find(s.ai_node)) n->params["ai_notes"] = notes;
+}
+
+// A Lua script block's Game errors: the script's errors in REFramework's log since its Test in game (since the game
+// started, if none this session), kept to show under the block.
+void read_game_errors(State& s, int node) {
+    if (s.game_dir.empty()) {
+        s.status = "Set the Game folder first (in the Pipeline panel).";
+        return;
+    }
+    const std::filesystem::path game(unquote(s.game_dir)), script = script_of(s, node);
+    const auto from = s.log_from.find(node);
+    const auto errors =
+        remod::script_errors_in_log(remod::framework_log(game), from == s.log_from.end() ? 0 : from->second, script);
+    std::string text;
+    for (const auto& e : errors)
+        text += (text.empty() ? "" : "\n") + (e.line ? "line " + std::to_string(e.line) + ": " : std::string()) +
+                e.message + (e.count > 1 ? " (" + std::to_string(e.count) + " times)" : std::string());
+    s.game_errors[node] = text;
+    const std::string name = script.filename().string(), since = from == s.log_from.end() ? "the game started"
+                                                                                          : "Test in game";
+    s.status = !errors.empty()           ? std::to_string(errors.size()) + " error(s) from " + name + " since " + since +
+                                               ": under the block."
+               : remod::lua_errors_logged(game) ? "No errors from " + name + " in REFramework's log since " + since + "."
+                                                 : "Nothing in the log, but REFramework isn't writing Lua errors to it: "
+                                                   "turn on Log Lua Errors to Disk in its ScriptRunner menu.";
+}
+
 // "Open in editor" for an Edit image block: its program, else Windows'; a problem goes to the status line.
 void open_edit(State& s, int node, const std::filesystem::path& file) {
     if (const std::string problem = open_in_editor(file, editor_of(s, node)); !problem.empty()) s.status = problem;
@@ -1125,6 +1250,27 @@ void draw_side_panel(State& s) {
             ImGui::SetTooltip("Your REtool folder, e.g. ...\\REtool\\RE4\\re_chunk_000\\natives\\stm.\n"
                               "The texture picker opens here. Filled in from the RE plugin's settings if you've set "
                               "it there.");
+
+        // The installed game, for a Lua script's Test in game.
+        ImGui::InputTextWithHint("##gamedir", "installed game folder (with the game's .exe)", &s.game_dir);
+        ImGui::SameLine();
+        if (ImGui::Button("...##gamedir") && browse(remod::PathKind::Folder, nullptr, s.game_dir)) remember_paths(s);
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Game folder");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Where the game is installed (the folder with its .exe), e.g. under steamapps\\common.\n"
+                              "A Lua script's Test in game copies the script into its reframework\\autorun folder.");
+
+        // REFramework's SDK dump: the game's names scripts are checked against.
+        ImGui::InputTextWithHint("##sdkdump", "il2cpp_dump.json (REFramework's Dump SDK)", &s.sdk_dump);
+        ImGui::SameLine();
+        if (ImGui::Button("...##sdkdump") && browse(remod::PathKind::OpenFile, "json", s.sdk_dump)) remember_paths(s);
+        ImGui::SameLine();
+        ImGui::TextUnformatted("SDK dump");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The game's code, for checking a Lua script's names (types, methods, fields).\n"
+                              "Make it in game once per game update: REFramework's menu > DeveloperTools >\n"
+                              "ObjectExplorer > Dump SDK. It's written to the game's folder as il2cpp_dump.json.");
     }
 
     // Which game (profile) the graph targets. Picking a texture sets this automatically.
@@ -2806,6 +2952,66 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 if (ImGui::IsItemHovered())
                     hovered_hint = "Play " + status->file.filename().string() + " in the viewer, bottom left.";
             }
+            if (!s.build_mode && n.type == "LuaScript") {
+                // Write with AI; the file stays the user's to open and edit (user, 2026-10-07).
+                const std::filesystem::path script = script_of(s, n.id);
+                std::error_code ec;
+                const bool exists = !script.empty() && std::filesystem::is_regular_file(script, ec);
+                const auto asked = n.params.find("ai_request");
+                std::string request = asked == n.params.end() ? std::string() : asked->second;
+                ImGui::TextDisabled(exists ? "Ask Claude for a change:" : "Ask Claude to write it:");
+                if (ImGui::InputTextMultiline("##ai_request", &request, ImVec2(node_width, font * 4.5f)))
+                    n.params["ai_request"] = request;  // only once typed in: an untouched block stays unchanged
+                if (ImGui::IsItemHovered())
+                    hovered_hint = "What the script should do, or what to change, in your own words. Claude reads the "
+                                   "script first, so your own edits stay.";
+                const bool busy = s.ai.valid();
+                ImGui::BeginDisabled(busy || request.find_first_not_of(" \t\r\n") == std::string::npos);
+                if (ImGui::Button(busy && s.ai_node == n.id ? "Claude is working..."
+                                  : exists                    ? "Ask Claude"
+                                                              : "Write it with Claude"))
+                    ask_ai(s, n.id);
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    hovered_hint = busy ? "Claude is working on a script; one at a time."
+                                        : "Claude Code writes the script, checking every game name against your SDK "
+                                          "dump. It answers in a few minutes; the previous version is kept as .bak.";
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!exists);
+                if (ImGui::Button("Open in editor")) {
+                    const std::filesystem::path program(unquote(remod::known_value(s.graph, n.id, "editor")));
+                    if (const std::string problem = open_in_editor(script, program); !problem.empty()) s.status = problem;
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    hovered_hint = exists ? "Open the script to read or change it yourself." : "No script file yet.";
+                if (const auto said = n.params.find("ai_notes"); said != n.params.end() && !said->second.empty())
+                    wrapped_text(said->second.c_str(), node_width, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                if (ImGui::Button("Test in game")) script_in_game(s, n.id, false);
+                if (ImGui::IsItemHovered())
+                    hovered_hint = "Copy the script (and its modules) into your game's reframework\\autorun, without "
+                                   "packaging. Then press Reset Scripts in REFramework's menu.";
+                ImGui::SameLine();
+                if (ImGui::Button("Remove from game")) script_in_game(s, n.id, true);
+                if (ImGui::IsItemHovered()) hovered_hint = "Take the copy Test in game made out of the game again.";
+                if (ImGui::Button("Game errors")) read_game_errors(s, n.id);
+                if (ImGui::IsItemHovered())
+                    hovered_hint = "Read this script's errors from REFramework's log: since Test in game, or since the "
+                                   "game started.";
+                if (const auto found = s.game_errors.find(n.id); found != s.game_errors.end() && !found->second.empty()) {
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(s.ai.valid());
+                    if (ImGui::Button("Fix with Claude")) {
+                        n.params["ai_request"] = "Fix these errors REFramework logged in game:\n\n" + found->second;
+                        ask_ai(s, n.id);
+                    }
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        hovered_hint = "Put these errors in the box above and ask Claude to fix them (or fix them "
+                                       "yourself: Open in editor).";
+                    wrapped_text(found->second.c_str(), node_width, ImGui::GetColorU32(kAmber));
+                }
+            }
             if (manual) {  // Edit image: the user's own step
                 const std::filesystem::path file = status ? status->file : std::filesystem::path();
                 if (file.empty()) {
@@ -3742,12 +3948,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         }
         draw_unsaved_prompt(state);
         draw_warnings(state);
+        poll_ai(state);
         // {game} in fields: the Game files folder, worked out again only when what it comes from changes.
         static std::string game_key = "\x01";
         if (std::string key = state.game_files + '|' + state.noesis_path + '|' + state.graph.profile; key != game_key) {
             game_key = std::move(key);
             remod::set_game_files_dir(game_files_dir(state));
         }
+        remod::set_sdk_dump(unquote(state.sdk_dump));  // cheap: the dump is read on a script's first check
         // The window's title: the graph's file name, with * while it has unsaved changes.
         static std::wstring title;
         if (std::wstring now = L"remod " REMOD_VERSION " - " + std::filesystem::path(state.graph_path).filename().wstring() +
@@ -3769,6 +3977,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     if (state.run.valid()) state.run.wait();  // let a running graph finish (every tool call has a timeout)
     remember_paths(state);
+    // ponytail: Claude still writing a script isn't waited for (a future's destructor would, for minutes): its future
+    // is left behind and the process ends; Claude Code finishes on its own and writes nothing (remod writes the file).
+    if (state.ai.valid()) new std::future<remod::ScriptAnswer>(std::move(state.ai));
     browser.reset();  // its GPU textures, before the device goes
     for (State::PreviewSet* set : {&state.thumbs, &state.big}) {
         if (set->job.valid()) set->job.wait();

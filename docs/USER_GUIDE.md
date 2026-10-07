@@ -109,6 +109,7 @@ Undo / redo: **Ctrl+Z** / **Ctrl+Y**. Save: **Ctrl+S**. A `*` in the title means
 | Edit video | **Your step:** edit the movie and render your edit; the run waits until you click Done editing. |
 | Replace movie | A new version of one of the game's movies: your video, or a test card (below), and its sound packages. |
 | Replace sounds | Your audio in place of game sounds, each found by the sound id in its file's name (below). |
+| Lua script | A REFramework script for the mod, with Test in game (below). |
 | Package for Fluffy | Builds the mod and its zip. |
 | Copy / Move / Rename / Delete file, Make folder | File housekeeping. Delete uses the Recycle Bin. |
 | Run program | Runs a program or script as a step (below). |
@@ -249,6 +250,44 @@ one.
 
 Not known yet (needs a test in game): whether a sound of another length plays fully.
 
+## Scripts (REFramework)
+
+A mod can include a Lua script for [REFramework](https://github.com/praydog/REFramework), which players then need
+installed.
+
+1. Add a **Lua script** block and pick your `.lua` file, e.g. `scripts\my_mod.lua`. Modules it loads with
+   `require` go in a folder named like it beside it (`scripts\my_mod\`); they come along.
+2. To try it without packaging: set **Game folder** in the Pipeline panel (where the game is installed), click
+   **Test in game**, then in game press **Reset Scripts** in REFramework's menu (Insert). REFramework doesn't reload
+   a changed script by itself: after each change, Test in game and Reset Scripts again. **Remove from game** takes
+   it out. REFramework's log is `re2_framework_log.txt` in the game's folder (for every game).
+   **Game errors** reads your script's errors from that log since Test in game and shows them under the block; **Fix
+   with Claude** asks Claude to fix them (or fix them yourself: **Open in editor**). REFramework only writes Lua errors
+   to its log with **Log Lua Errors to Disk** on, in its ScriptRunner menu (off until you turn it on, once). The log
+   starts empty each time the game starts.
+3. Link **script files** into Package's **other file**. The script goes in the mod's `reframework\autorun\`, and the
+   mod's description says "Needs REFramework."
+
+**Letting Claude write it (optional).** With [Claude Code](https://claude.com/claude-code) installed and signed in
+(the VS Code extension's copy is found too), the Lua script block in Use layout has a box: describe what the script
+should do (or, once it exists, what to change) and click **Write it with Claude** / **Ask Claude**. Claude reads the
+script first, looks up every game name in your SDK dump, checks the script, and answers in a minute or a few; its
+note shows under the box and the status line gives the cost. The script stays an ordinary `.lua` file: **Open in
+editor** opens it to read or change yourself (set **Open with**, under the block's other settings, to use e.g. VS
+Code). Claude only reads; remod writes the file, keeping the previous version as `my_mod.lua.bak`. If you save the
+file yourself while Claude is working, yours is kept and Claude's answer goes to `my_mod_claude.lua` instead.
+
+**Checking a script.** Every Run checks the block's scripts. A syntax error stops the run with the file and line. With
+an **SDK dump** set in the Pipeline panel, every game name the script passes as text is checked too
+(`sdk.find_type_definition("chainsaw.PlayerManager")`, `:get_method("...")`, `:get_field("...")`, `:call("...")`):
+one the game doesn't have is a warning, with the nearest real names. The SDK dump is the game's code as REFramework
+sees it. Make it once per game update: with REFramework installed, in game open REFramework's menu, then
+DeveloperTools > ObjectExplorer > **Dump SDK**. It writes `il2cpp_dump.json` to the game's folder (it may crash near the
+end; the file is still written). The first check reads it, which takes a while; later ones use a copy of what's needed.
+From the command line: `remod check-lua --file my_mod.lua`.
+
+Not known yet (needs a test): whether Fluffy installs a mod's `reframework` files into the game's folder.
+
 ## Built from blocks
 
 Some blocks are made of other blocks, such as **Convert with streaming copy**. They're listed in the Nodes panel under
@@ -336,6 +375,8 @@ claude mcp add remod -- "C:\remod\remod.exe" mcp
   a Windows dialog first.
 - **Your steps:** Edit image steps wait for you.
 - **Game files:** never changed.
+- **Scripts:** it can write REFramework scripts for you. It looks up the game's real names in your SDK dump and checks
+  the script until it's clean (see Scripts above). Whether the script does the right thing in game is for you to test.
 
 ## Noesis (optional)
 

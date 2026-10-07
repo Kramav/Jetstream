@@ -14,10 +14,12 @@
     "nativefiledialog-extended",
     { "name": "directxtex", "default-features": false, "features": ["dx11"] },
     "opus",
-    "libvorbis"
+    "libvorbis",
+    "lua"
   ],
   "overrides": [
     { "name": "imgui", "version": "1.92.9" },
-    { "name": "imgui-node-editor", "version": "0.9.3", "port-version": 4 }
+    { "name": "imgui-node-editor", "version": "0.9.3", "port-version": 4 },
+    { "name": "lua", "version": "5.4.8" }
   ]
 }

@@ -1,5 +1,7 @@
 #include "api.hpp"
 
+#include "game_code.hpp"
+
 #include "image.hpp"
 #include "settings.hpp"
 #include "setup.hpp"
@@ -315,6 +317,43 @@ std::string ApiSession::call(const std::string& request) {
             if (const NodeSpec* spec = find_spec(n.type); !spec || !spec->manual)
                 throw GraphError("block " + std::to_string(n.id) + " isn't a manual step (Edit image, Edit video)");
             set_edit_done(graph_, n.id, r.value("done", true), r.value("item", std::string()));
+        } else if (op == "game_code") {
+            // The game's types, fields and methods, from REFramework's SDK dump (CLAUDE.md §10 M2): real names for a
+            // script.
+            const GameCode* code = game_code();
+            if (!code)
+                throw GraphError("no SDK dump set: the user picks REFramework's il2cpp_dump.json in remod's Pipeline "
+                                 "panel (made in game: REFramework menu > DeveloperTools > ObjectExplorer > Dump SDK)");
+            json hits = json::array();
+            for (const CodeHit& h : search_game_code(*code, r.at("query").get<std::string>(), r.value("limit", 60u)))
+                hits.push_back({{"type", h.type}, {"member", h.member}, {"detail", h.detail}});
+            reply["hits"] = hits;
+        } else if (op == "check_script") {
+            // A Lua script's problems: syntax, and game names that aren't in the game (when an SDK dump is set).
+            std::string source, name = r.value("name", std::string("script.lua"));
+            if (r.contains("file")) {
+                fs::path file = path_of(r.at("file"));
+                if (file.is_relative() && !file_.empty()) file = fs::absolute(file_).parent_path() / file;
+                std::ifstream in(file, std::ios::binary);
+                if (!in) throw GraphError("can't read " + file.string());
+                source.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+                name = file.filename().string();
+            } else if (r.contains("text")) {
+                source = r.at("text").get<std::string>();
+            } else {
+                throw GraphError("check_script needs a file or a text");
+            }
+            const GameCode* code = nullptr;
+            try {
+                code = game_code();
+                if (!code) reply["names_unchecked"] = "no SDK dump set (the user picks it in the Pipeline panel)";
+            } catch (const std::exception& e) {
+                reply["names_unchecked"] = e.what();
+            }
+            json problems = json::array();
+            for (const ScriptProblem& p : check_lua(source, name, code))
+                problems.push_back({{"line", p.line}, {"message", p.message}});
+            reply["problems"] = problems;
         } else if (op == "validate") {
             reply["problems"] = graph_.validate();
         } else if (op == "preview") {
