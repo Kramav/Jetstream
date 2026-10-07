@@ -778,6 +778,22 @@ in a txt file next to the plugin — the tool must set/verify this.
 
 Fill these in from the manual spike before implementing the affected code.
 
+**Finding a game's switch from the SDK dump (lesson, 2026-10-07: six probe runs to stop the player; user: "we were
+just looking in the wrong space ... so we don't end up in this rabbit hole again").** Don't guess setters by name and
+try them one per run. Instead:
+1. **A flag that doesn't change when set is a copy, not the switch.** The game recomputes it each frame from somewhere
+   else (`EnableOperation` came from the operation stop). Find what writes it: grep the dump cache
+   (`%LOCALAPPDATA%\remod\game_code\*.txt`, T / F / M lines) for related names across managers and contexts, not
+   just the class you started in.
+2. **Look for the game's own request API first:** `request*` / `proc*` methods on a manager singleton, with an enum
+   saying who and why (`CharacterManager.requestOperationStop(CharacterControlIndex, PauseLayer)`), used by the
+   game's menus or events. Requests are usually per frame: send them every frame while needed.
+3. **Ask what the game already does that looks like the goal** (its inventory and menus stop the player) and find
+   that mechanism, rather than a generic-sounding one (input devices, command groups, behaviour flags).
+4. **Every probe shows the game's own read-back on screen** each frame, so a run says at once whether a write took.
+5. **Check the probe that ran is the one written:** its "loaded (run N)" log line and the installed file's time (a
+   test once ran the previous version).
+
 **Every spike gets a step-by-step guide (user, 2026-10-07: "whenever we have a spike, make a guide for doing it in the
 spikes folder"):** `spikes/<name>.md`, written for the user (what it answers, time, what's needed, numbered steps in
 remod and the game, taking it out, where the result lands, what to do if something goes wrong), listed in
@@ -942,8 +958,50 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 - **NEXT (2026-10-07): the user runs the route 2 movie probe (`spikes/movie_probe.md`); AFTER that, finishing the
   cutscene (M3 route 3) is the next step (user: "finishing the cutscene is the next step AFTER I do this spike").**
   Route 3 so far (M3 "Route 3" below): format, runtime, probe and the Cutscene block built (2026-10-07); the
-  cutscene probe ran the same day and confirmed the camera hook and animations. Still to do: trying a recorded
-  cutscene in game, freezing the player and hiding the HUD, more actors, triggers (M5), sound. M2's step 5
+  cutscene probe ran the same day; the test cutscene (`spikes/cutscene_test.json`) then played in game with the
+  camera held and cutting on time. **Freezing the player and hiding the HUD: built into the runtime 2026-10-07**
+  (`GAMES.re4.freeze` / `hud`; `play` freezes and hides, `stop` (end, Stop, Reset Scripts) puts both back; failures
+  reported in the menu and log, never stopping the cutscene), from `spikes/hud_freeze_probe.md` [game data, user]:
+  - freeze: the player context's `get_HeadUpdater()` (`chainsaw.PlayerHeadUpdater`, a via.Behavior) `set_Enabled(false)`
+    stops him when standing; switched off mid-move the camera acted oddly (with the game's camera). Cutscenes must be
+    able to start while the player moves (user, 2026-10-07: "we can't have an automatic hook otherwise"). Tried and
+    dropped: waiting for him to stand still (input not blocked meanwhile); probe run 3, Leon's behaviour tree flag
+    `PlayerHeadUpdater.get_BehaviorTreeVariablesHub()` (`chainsaw.Accessor_Ch0CommonBTreeUserVariables`)
+    `set_EnableOperation(false)` held each frame: no error, but `PlayerHeadUpdater.get_EnableOperation()` stayed true
+    and the controls worked. **Now (user's suggestion): the head updater is switched off at once when a cutscene
+    starts, before the camera and animations** (the camera is ours during it). **In game (user, 2026-10-07, on a
+    second look): with a direction held while the cutscene starts, Leon keeps walking (the head updater off keeps its
+    last command).** Probe run 4: `share.hid.DeviceSystem` (singleton) `set_ActiveCommand(share.hid.CommandTag)`
+    without the `Character` group (tags None, System, Character, Develop, All), held each frame before UpdateBehavior:
+    set and held (4294967295 -> ...93; tags None 0, System 1, Character 2, Develop 0x80000000, All 0xFFFFFFFF), but
+    Leon still moved and the camera panned: no effect. Run 5: ActiveCommand = None (all game controls), and the head
+    updater off plus `changeMotion(1000, 160)` (his idle) at once: **neither changed anything** (user, 2026-10-07).
+    REFramework's FreeCam "Disable Movement" has the same problem (user). **Why EnableOperation never changed: it's
+    copied each frame from the operation-stop system** [dump]: `chainsaw.CharacterManager.requestOperationStop(
+    CharacterControlIndex target, character.PauseLayer layer)` (+ `procOperationStop`, an `OperationStopRequestList`
+    of `OperationStopInfo`), read back as `CharacterContext.get_OperationEnable()` / `get_OperationStopState()`;
+    targets None, Player_1..10; layers None, Self, Inventory, Tutorial, File, Map, Craft (the game's menus). Probe
+    run 6 sends it every frame before UpdateBehavior, layer by layer. **Run 6 works (user, 2026-10-07): every layer
+    stops Leon even with a direction held; the runtime uses Self** (OperationEnable / EnableOperation read false while sent, true again
+    after). **The runtime now uses it** (`GAMES.re4.hold_player`, every frame of a cutscene before UpdateBehavior;
+    control returns when it's no longer sent); the head-updater freeze is gone. Not yet seen in a cutscene. (The
+    user has since updated REFramework again: hooks are available if ever needed.)
+    **Plan (user, 2026-10-07; order theirs):** the operation stop (run 6), then 2. a read-only watch probe (log which
+    player / input values change when the game's own events, ladder, door kick, interaction, take control; then set
+    the same), 4. a method hook on the input update (after checking the updated REFramework's anti-tamper status in
+    its log), 3. hold him in place each frame (position + idle). The menu shows
+    "Leon's animation now" (bank, motion, frame of end; `current_motion`) for writing `motions`. Still to see: a
+    different animation (not his idle) played by a cutscene while he's frozen. Untried: `share.hid.DeviceSystem.set_HIDInputMode`
+    (values unknown, might block REFramework's keys too).
+    `onChangeEventPause(true)` did NOT freeze him.
+  - HUD: `chainsaw.OptionManager` singleton `getCurrentOptionValue` / `setCurrentOptionValue(OptionID.DisplayUI, n)`:
+    0 nothing, 1 and 3 crosshair and red damage edges, 2 everything (the user's). Ponytail: it's the player's saved
+    option; a crash mid-cutscene could leave it at 0 (set it back in the game's options). The game's own
+    `chainsaw.GuiDrawController.setStatus(DrawOffAttribute.EventHide, bool)` has no path to its instance in the dump
+    outside `HighwayGuiManager`.
+  - Not yet seen together in a cutscene, nor whether changeMotion animates him while frozen.
+  Still to do: a cutscene from the
+  user's own recording (F10), more actors, triggers (M5), sound. M2's step 5
   (settings-window preview) is skipped for now. M2 steps 1-4 are built; step 2
   waits for a real RE4R dump from the user to be checked on. The survey is done (M2 "Survey"). Before it: M3 routes 1 and 2, below: replace a game movie, then play a movie when we choose.
   **Route 1 done (user, 2026-10-06: "then we can consider route 1 done", once sound was re-encoded).** Its in-game
@@ -1039,8 +1097,12 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
          parents and prototypes, bad / empty / missing dump; cache used, refused when cut short, re-read on a new dump;
          search; syntax messages and lines; names: types, methods, fields, prototypes, singletons, create_instance,
          comments and strings skipped, reassignment; API and the block's warn / fail), `remod check-lua` by hand.
-         **Not checked: a real RE4R dump** (its size, read time, memory, and whether type names match what
-         find_type_definition takes, e.g. nested types). **Not checked by eye:** the SDK dump field.
+         **Real RE4R dump (user, 2026-10-07):** 1.03 GB; the first read (Debug CLI, `check-lua` on the cutscene runtime:
+         no problems) took 307 s; the cache (112 MB of text) still takes ~100 s to read (Debug CLI): too slow for the app,
+         to fix (a Release build, or a binary / lazily read cache). Search only matches names (not field types): the
+         cache file can be grepped by type. Tests leave 480-byte caches in the user's `%LOCALAPPDATA%\remod\game_code`
+         (to fix: a temp cache dir in tests). Not yet measured: memory; whether nested types' names match what
+         find_type_definition takes. **Not checked by eye:** the SDK dump field.
     3. **Write with AI** on the Script block: "What should it do?" and **Write it** run `claude -p` (as Run program
        does) with `remod mcp` attached and instructions (REFramework book pages, the checks, the autorun rules
        above); it writes the `.lua`, runs `check_script` until clean, and the block shows the result. **Ask for a
@@ -1238,7 +1300,7 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       `frame`, `blend`}].
     - **Runtime (built 2026-10-07):** loads `reframework\data\remod_cutscenes\*.json` (`fs.glob`, `json.load_file`);
       REFramework menu: Play / Stop each, Reload, recording; a cutscene's start key toggles it; camera set in
-      `re.on_pre_application_entry(GAMES[g].camera_hook)` (RE4R: "BeginRendering", TBD-spike), position lerped, rotation
+      `GAMES[g].camera_hooks` (RE4R: see the probe run below), position lerped, rotation
       slerped (`Quaternion.new(w, x, y, z)` [official, book]), FOV lerped and restored after; letterbox, subtitles
       (`draw.text`, fixed font, left at 10%), fades (`draw.filled_rect`, colour 0xAABBGGRR) in `re.on_frame`; motions on
       the player through EMV's `changeMotion`; time from `os.clock` (else frames / 60). **F10 records** the camera as a
@@ -1258,7 +1320,13 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       `sdk.get_primary_camera()`), Leon `ch0a0z0_body` by the EMV lookup. Hooks, frames the camera moved after our
       set: UpdateBehavior 408/477, LateUpdateBehavior 463/463, UpdateMotion 457/457 (they run before the game's camera:
       overwritten), PrepareRendering 2/473, BeforeLockSceneRendering, LockScene, BeginRendering 0 (the user saw the
-      view hold from the 4th on, no jitter or drift). **`camera_hook` = BeginRendering confirmed.** `changeMotion`
+      view hold from the 4th on, no jitter or drift). **But playing the test cutscene with BeginRendering alone, the
+      view followed the mouse** (Leon also moved, expected), while a readback after BeginRendering each second showed
+      position and rotation exactly ours, cut included: the view is taken before that. Now `camera_hooks` sets it
+      after LateUpdateBehavior and before PrepareRendering, BeforeLockSceneRendering, LockScene, BeginRendering:
+      **in game the view holds (mouse ignored) and follows the keys, cut included** (user, 2026-10-07; which step
+      is the one that matters wasn't narrowed down). A camera error shows in the menu and is logged once per play
+      (`log.*` reaches the log without "Log Lua Errors to Disk"). `changeMotion`
       (bank 1000, motion 160) visibly restarted Leon's animation. `fs.glob` returns paths relative to
       `reframework\data` (the runtime's fallback handles it); `os.clock` exists. Not yet tried: a recorded cutscene
       played in game. `spikes/cutscene_test.json` (steps in the probe's guide) is one at the probe's spot, from its

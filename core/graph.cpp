@@ -573,7 +573,9 @@ std::vector<std::string> Graph::validate() const {
             const std::string state_key = key.substr(0, key.find('@'));  // per-item state: "<name>@<item key>"
             const bool known = (in && in->editable()) || (flips && flips->result) || key == "title" ||
                                std::ranges::any_of(spec->outputs, [&](const PortSpec& o) { return o.field && key == o.field; }) ||
-                               std::ranges::any_of(spec->state, [&](const char* s) { return state_key == s; });
+                               std::ranges::any_of(spec->state, [&](const char* s) { return state_key == s; }) ||
+                               // any list block's "show": the item previews show (front ends set it)
+                               (key == "show" && std::ranges::any_of(spec->outputs, [](const PortSpec& o) { return o.list; }));
             if (!known) errors.push_back(node_label(n) + ": unknown parameter '" + key + "'");
         }
         // Fan-out: one list per block, and {name} only where there's an item to name.

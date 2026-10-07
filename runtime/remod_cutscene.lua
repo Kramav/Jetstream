@@ -14,15 +14,39 @@ local RECORD_KEY = 0x79  -- F10
 -- What differs between games, found by remod's spikes/cutscene_probe.lua run in that game.
 local GAMES = {
     re4 = {
-        -- The engine step after which nothing moves the camera again (probe 2026-10-07: 0 of 468 frames moved;
-        -- UpdateBehavior, LateUpdateBehavior and UpdateMotion run before the game's camera and are overwritten).
-        camera_hook = "BeginRendering",
+        -- Where the camera is set each frame ("after X": once step X is done, else just before it). Set only at
+        -- BeginRendering the view still followed the mouse, though the transform read back as ours (the view is taken
+        -- earlier); set at each step from the game's own camera update (LateUpdateBehavior) on, it holds (2026-10-07).
+        camera_hooks = { "after LateUpdateBehavior", "PrepareRendering", "BeforeLockSceneRendering", "LockScene",
+                         "BeginRendering" },
         -- The player's GameObject, as EMV Engine (MIT) finds it in RE4R.
         player = function()
             local mgr = sdk.get_managed_singleton("chainsaw.CharacterManager")
             local ctx = mgr and mgr:call("getPlayerContextRef")
             return ctx and ctx:call("get_BodyGameObject")
         end,
+        -- Keep the player from being controlled, sent every frame while a cutscene plays: the game's own operation stop
+        -- (as for its menus), layer Self. He stops by himself even with a direction held, and control comes back when
+        -- it's no longer sent (spikes/hud_freeze_probe run 6, 2026-10-07). Switching off his head updater instead kept
+        -- his last action (he walked on).
+        hold_player = function()
+            local mgr = sdk.get_managed_singleton("chainsaw.CharacterManager")
+            if not mgr then error("no CharacterManager") end
+            local function enum(t, name) return sdk.find_type_definition(t):get_field(name):get_data(nil) end
+            mgr:call("requestOperationStop", enum("chainsaw.CharacterControlIndex", "Player_1"),
+                enum("chainsaw.character.PauseLayer", "Self"))
+        end,
+        -- The game's Display HUD option (chainsaw.OptionManager, OptionID.DisplayUI) set to `value`; gives the one it
+        -- had. Values (probe): 0 none, 1 and 3 crosshair and damage edges, 2 everything.
+        hud = function(value)
+            local om = sdk.get_managed_singleton("chainsaw.OptionManager")
+            if not om then error("no OptionManager") end
+            local id = sdk.find_type_definition("chainsaw.option.OptionID"):get_field("DisplayUI"):get_data(nil)
+            local before = om:call("getCurrentOptionValue", id)
+            om:call("setCurrentOptionValue", id, value)
+            return before
+        end,
+        hud_off = 0,
     },
 }
 local game = GAMES[reframework:get_game_name()]
@@ -94,49 +118,104 @@ local function camera_at(keys, t)
 end
 
 -- ---- Playing ----
-local playing = nil  -- { data, started, fired = {}, fov_before }
+local playing = nil  -- { data, started, fired = {}, fov_before, hud_before }
+
+local problem = nil  -- the last one, shown in the menu; each also logged once (log.* reaches the log without
+                     -- REFramework's "Log Lua Errors to Disk")
+local function report(what, err)
+    problem = what .. ": " .. tostring(err)
+    log.error("[remod_cutscene] " .. problem)
+end
+
+-- f(...) for a part that may fail in a game update; nil and reported if it does.
+local function try(what, f, ...)
+    local ok, result = pcall(f, ...)
+    if ok then return result end
+    report(what, result)
+end
 
 local function stop()
-    if playing and playing.fov_before then
+    if not playing then return end
+    if playing.fov_before then
         local cam = camera_parts()
         if cam then pcall(cam.call, cam, "set_FOV", playing.fov_before) end
     end
-    playing = nil
+    if playing.hud_before then try("showing the HUD", game.hud, playing.hud_before) end
+    playing = nil  -- the player's controls come back as hold_player is no longer sent
 end
 
+-- While a cutscene plays the player can't be controlled (hold_player, each frame below) and the HUD is hidden; both
+-- come back when it ends or stops.
 local function play(data)
+    stop()
     local cam = camera_parts()
     local fov_before = nil
     if cam then
         local ok, fov = pcall(cam.call, cam, "get_FOV")
         fov_before = ok and fov or nil
     end
-    playing = { data = data, started = now(), fired = {}, fov_before = fov_before }
+    playing = { data = data, started = now(), fired = {}, fov_before = fov_before,
+                hud_before = try("hiding the HUD", game.hud, game.hud_off) }
 end
 
 local function elapsed() return playing and (now() - playing.started) or 0 end
 
 -- An animation on an actor ("player" only, for now).
-local function start_motion(m)
-    if m.actor and m.actor ~= "player" then return end
+local function player_layer()
     local player = game.player()
     local motion = player and player:call("getComponent(System.Type)", sdk.typeof("via.motion.Motion"))
-    local layer = motion and motion:call("getLayer", 0)
+    return motion and motion:call("getLayer", 0)
+end
+
+-- What the player is playing now, for writing motions: "bank 1000, motion 160, frame 76 of 2433".
+local function current_motion()
+    local layer = player_layer()
+    if not layer then return "no player" end
+    return string.format("bank %d, motion %d, frame %.0f of %.0f", layer:call("get_MotionBankID"),
+        layer:call("get_MotionID"), layer:call("get_Frame"), layer:call("get_EndFrame"))
+end
+
+local function start_motion(m)
+    if m.actor and m.actor ~= "player" then return end
+    local layer = player_layer()
     if not layer then return end
     pcall(layer.call, layer,
         "changeMotion(System.UInt32, System.UInt32, System.Single, System.Single, via.motion.InterpolationMode, via.motion.InterpolationCurve)",
         m.bank, m.motion, m.frame or 0.0, m.blend or 10.0, 1, 0)
 end
 
+local function set_camera()
+    local pos, rot, fov = camera_at(playing.data.camera, elapsed())
+    local cam, xform = camera_parts()
+    if not pos then return end
+    if not xform then error("no primary camera") end
+    xform:call("set_Position", pos)
+    xform:call("set_Rotation", rot)
+    if fov then cam:call("set_FOV", fov) end
+end
+
+local function hold_camera()
+    if not playing or not playing.data.camera then return end
+    local ok, err = pcall(set_camera)
+    if not ok and playing.camera_problem ~= err then  -- once per play, not every frame
+        playing.camera_problem = err
+        report("camera", err)
+    end
+end
+
 if game then
-    re.on_pre_application_entry(game.camera_hook, function()
-        if not playing or not playing.data.camera then return end
-        local pos, rot, fov = camera_at(playing.data.camera, elapsed())
-        local cam, xform = camera_parts()
-        if not pos or not xform then return end
-        xform:call("set_Position", pos)
-        xform:call("set_Rotation", rot)
-        if fov then cam:call("set_FOV", fov) end
+    for _, hook in ipairs(game.camera_hooks) do
+        local after = hook:match("^after (.+)$")
+        if after then re.on_application_entry(after, hold_camera) else re.on_pre_application_entry(hook, hold_camera) end
+    end
+    -- The player held before the game's behaviour update, every frame of a cutscene (reported once per play).
+    re.on_pre_application_entry("UpdateBehavior", function()
+        if not playing then return end
+        local ok, err = pcall(game.hold_player)
+        if not ok and playing.hold_problem ~= err then
+            playing.hold_problem = err
+            report("holding the player", err)
+        end
     end)
 end
 
@@ -228,6 +307,7 @@ re.on_draw_ui(function()
     end
     if imgui.button("Reload cutscenes") then load_all() end
     if load_error then imgui.text("Problem: " .. load_error) end
+    if problem then imgui.text("Problem: " .. problem) end
     if #cutscenes == 0 then imgui.text("No cutscenes in reframework\\data\\" .. DIR .. ".") end
     for i, c in ipairs(cutscenes) do
         local name = c.data.name or c.file
@@ -238,6 +318,8 @@ re.on_draw_ui(function()
         imgui.same_line()
         imgui.text(name .. (c.data.start and c.data.start.key and ("  (" .. c.data.start.key .. ")") or ""))
     end
+    local ok, now_playing = pcall(current_motion)
+    imgui.text("Leon's animation now: " .. (ok and now_playing or "unknown"))
     imgui.text("F10: add the camera as a key to " .. DIR .. "\\recording.json" ..
         (recording and (" (" .. #recording.keys .. " keys)") or ""))
     if recording and imgui.button("Start a new recording") then recording = nil end

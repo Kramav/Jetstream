@@ -307,7 +307,15 @@ edit by hand (the format: `schemas\cutscene.v0.example.json`). Players need REFr
 A Run checks the cutscene file and names every problem in it.
 
 The cutscene probe (`spikes\cutscene_probe.md`, run 2026-10-07) showed the camera holds still and Leon's animations
-play from the script in RE4R. Freezing the player and hiding the HUD aren't done yet.
+play from the script in RE4R. While a cutscene plays, Leon stands still and the HUD is hidden; both come back when it
+ends or you stop it. While it plays the game ignores your controls for Leon (as it does while its own menus are
+open), so he stops by himself even if you're running when it starts.
+
+**Animations in a cutscene** (`motions`: a time, then the animation's `bank` and `motion` numbers): to find an
+animation's numbers, open REFramework's menu > Script Generated UI > remod cutscenes while playing. It shows "Leon's
+animation now", e.g. `bank 1000, motion 160, frame 76 of 2433`: do the action in game and note the numbers.
+The HUD is hidden through the game's own Display HUD option: if the game ever crashes during a cutscene and the HUD
+stays hidden, set it back in the game's options.
 
 ## Built from blocks
 

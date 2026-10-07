@@ -191,6 +191,7 @@ TEST_CASE("Cutscene blocks into Package: the runtime once, the run fails on a ba
     remod::Graph g;
     g.add_node("Cutscene").params["cutscene"] = "a.json";
     g.add_node("Cutscene").params["cutscene"] = "b.json";
+    g.nodes[0].params["show"] = "a.json";  // the app's list arrows set it on any list block
     auto& pkg = g.add_node("PackageMod");
     pkg.params["name"] = "M";
     pkg.params["out"] = "out";
