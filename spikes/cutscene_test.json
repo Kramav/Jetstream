@@ -1,0 +1,24 @@
+{
+  "schema_version": 0,
+  "name": "Test at the probe's spot",
+  "length": 10.0,
+  "start": { "key": "F9" },
+  "letterbox": 0.12,
+  "camera": [
+    { "t": 0.0, "position": [186.647, 28.059, 42.236], "rotation": [-0.02791, -0.94454, -0.08333, 0.31641], "fov": 72.6 },
+    { "t": 4.0, "position": [187.104, 28.059, 42.625], "rotation": [-0.02791, -0.94454, -0.08333, 0.31641], "fov": 55.0, "ease": "smooth" },
+    { "t": 6.0, "position": [185.505, 28.859, 41.262], "rotation": [-0.02791, -0.94454, -0.08333, 0.31641], "fov": 72.6, "ease": "cut" },
+    { "t": 9.5, "position": [185.505, 29.359, 41.262], "rotation": [-0.02791, -0.94454, -0.08333, 0.31641], "fov": 72.6, "ease": "linear" }
+  ],
+  "subtitles": [
+    { "t": 1.0, "until": 3.5, "text": "remod test cutscene: push in" },
+    { "t": 6.2, "until": 9.0, "text": "cut, then rising" }
+  ],
+  "fades": [
+    { "t": 0.0, "until": 0.5, "from": 1.0, "to": 0.0 },
+    { "t": 9.5, "until": 10.0, "from": 0.0, "to": 1.0 }
+  ],
+  "motions": [
+    { "t": 0.0, "actor": "player", "bank": 1000, "motion": 160, "frame": 0.0, "blend": 10.0 }
+  ]
+}

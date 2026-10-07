@@ -11,10 +11,12 @@
 local DIR = "remod_cutscenes"
 local RECORD_KEY = 0x79  -- F10
 
--- What differs between games. Values marked TBD-spike come from remod's spikes/cutscene_probe.lua run in that game.
+-- What differs between games, found by remod's spikes/cutscene_probe.lua run in that game.
 local GAMES = {
     re4 = {
-        camera_hook = "BeginRendering",  -- TBD-spike: the engine step after which nothing moves the camera again
+        -- The engine step after which nothing moves the camera again (probe 2026-10-07: 0 of 468 frames moved;
+        -- UpdateBehavior, LateUpdateBehavior and UpdateMotion run before the game's camera and are overwritten).
+        camera_hook = "BeginRendering",
         -- The player's GameObject, as EMV Engine (MIT) finds it in RE4R.
         player = function()
             local mgr = sdk.get_managed_singleton("chainsaw.CharacterManager")

@@ -1,5 +1,23 @@
 # Cutscene probe (M3 route 3: real-time cutscenes)
 
+**Status: run 2026-10-07; not needed again for RE4R** (run it again for another game). Results:
+- Camera: `MainCamera`, no parent; found via `sdk.get_primary_camera()`. Leon: `ch0a0z0_body`, found via
+  `chainsaw.CharacterManager:getPlayerContextRef():get_BodyGameObject()`.
+- Hooks: UpdateBehavior, LateUpdateBehavior and UpdateMotion don't hold (the game moves the camera after them, almost
+  every frame). PrepareRendering held (2 of 473 frames moved), BeforeLockSceneRendering, LockScene and BeginRendering
+  held perfectly (0 moved). The runtime uses BeginRendering.
+- `changeMotion` works: Leon visibly restarted his animation (bank 1000, motion 160).
+- `fs.glob` returns paths relative to `reframework\data`; `os.clock` exists.
+
+**Afterwards: a test cutscene at the probe's spot** ([cutscene_test.json](cutscene_test.json)). Its camera is the
+probe's own (where you pressed F5), pushed in towards Leon, then a cut to a shot pulled back that rises. It only makes
+sense at that spot: load the same save and stand where you were.
+1. In remod, add a **Cutscene** block with Cutscene file `spikes\cutscene_test.json`, then click **Test in game**.
+2. In game: **Reset Scripts**, then press **F9** (or REFramework's menu > Script Generated UI > remod cutscenes >
+   Play).
+3. Expect a fade in, letterbox bars, two subtitles, a smooth push in, a cut, a slow rise, a fade out, and Leon
+   restarting his idle animation. Leon still takes your input and the HUD still shows (not built yet).
+
 **What it answers:** four things the cutscene runtime depends on in RE4R: what the camera is and how to find Leon;
 which engine hook lets us hold the camera still; whether Leon's animation can be restarted from a script; and how
 REFramework lists files. It changes only the camera while you run the hook test and Leon's animation when you press

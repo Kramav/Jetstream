@@ -119,6 +119,7 @@ TEST_CASE("cutscene files: the runtime and the cutscene, where the game reads th
 
 TEST_CASE("check_cutscene names every problem") {
     CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/cutscene.v0.example.json")).empty());
+    CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/../spikes/cutscene_test.json")).empty());
     CHECK(remod::check_cutscene("{ nope") == std::vector<std::string>{"not readable JSON"});
     const std::vector<std::string> p = remod::check_cutscene(R"({
         "schema_version": 1, "length": 5, "start": {"key": "F10"}, "letterbox": 0.6,

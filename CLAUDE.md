@@ -941,9 +941,9 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 
 - **NEXT (2026-10-07): the user runs the route 2 movie probe (`spikes/movie_probe.md`); AFTER that, finishing the
   cutscene (M3 route 3) is the next step (user: "finishing the cutscene is the next step AFTER I do this spike").**
-  Route 3 so far (M3 "Route 3" below): format, runtime, probe and the Cutscene block built (2026-10-07); still to do:
-  what the cutscene probe (`spikes/cutscene_probe.md`) decides (the camera hook, then trying a recorded cutscene in
-  game), freezing the player and hiding the HUD, more actors, triggers (M5), sound. M2's step 5
+  Route 3 so far (M3 "Route 3" below): format, runtime, probe and the Cutscene block built (2026-10-07); the
+  cutscene probe ran the same day and confirmed the camera hook and animations. Still to do: trying a recorded
+  cutscene in game, freezing the player and hiding the HUD, more actors, triggers (M5), sound. M2's step 5
   (settings-window preview) is skipped for now. M2 steps 1-4 are built; step 2
   waits for a real RE4R dump from the user to be checked on. The survey is done (M2 "Survey"). Before it: M3 routes 1 and 2, below: replace a game movie, then play a movie when we choose.
   **Route 1 done (user, 2026-10-06: "then we can consider route 1 done", once sound was re-encoded).** Its in-game
@@ -1254,6 +1254,16 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     - Checked: tests (the runtime loaded in Lua 5.4 with stand-in REFramework tables: `camera_at` before / between
       (linear, smooth, cut) / after keys, missing FOV, no keys; both scripts' syntax; the example's shape). **Not
       checked: anything in game** (all four probe questions are open).
+    - **Probe run 2026-10-07 (user) [game data, `remod_cutscene_probe.json`]:** camera `MainCamera` (no parent;
+      `sdk.get_primary_camera()`), Leon `ch0a0z0_body` by the EMV lookup. Hooks, frames the camera moved after our
+      set: UpdateBehavior 408/477, LateUpdateBehavior 463/463, UpdateMotion 457/457 (they run before the game's camera:
+      overwritten), PrepareRendering 2/473, BeforeLockSceneRendering, LockScene, BeginRendering 0 (the user saw the
+      view hold from the 4th on, no jitter or drift). **`camera_hook` = BeginRendering confirmed.** `changeMotion`
+      (bank 1000, motion 160) visibly restarted Leon's animation. `fs.glob` returns paths relative to
+      `reframework\data` (the runtime's fallback handles it); `os.clock` exists. Not yet tried: a recorded cutscene
+      played in game. `spikes/cutscene_test.json` (steps in the probe's guide) is one at the probe's spot, from its
+      camera pose only (push in towards Leon, cut, rise; no invented rotation); a test checks it. The schema example's
+      positions are invented (format only, not for playing).
     - **Cutscene block (built 2026-10-07; core `cutscene.*`):** `Cutscene` (Source): Cutscene file (.json; needn't exist
       yet), advanced Open with; list output "cutscene files" = `cutscene_files`: `runtime_dir()` (`<tool>/runtime`,
       beside profiles; installed into the zip) `/remod_cutscene.lua` at `reframework/autorun/remod_cutscene.lua`, then

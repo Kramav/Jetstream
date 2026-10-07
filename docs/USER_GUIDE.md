@@ -306,8 +306,8 @@ edit by hand (the format: `schemas\cutscene.v0.example.json`). Players need REFr
 
 A Run checks the cutscene file and names every problem in it.
 
-Not known yet (the cutscene probe, `spikes\cutscene_probe.md`): whether the camera holds still during playback in
-RE4R, and whether Leon's animations play. Freezing the player and hiding the HUD aren't done yet.
+The cutscene probe (`spikes\cutscene_probe.md`, run 2026-10-07) showed the camera holds still and Leon's animations
+play from the script in RE4R. Freezing the player and hiding the HUD aren't done yet.
 
 ## Built from blocks
 
