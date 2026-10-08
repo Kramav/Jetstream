@@ -3,8 +3,9 @@
 // script checked against it, so names an AI (or a person) writes are real before the game runs.
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <string>
-#include <unordered_map>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -28,9 +29,20 @@ struct GameType {
     std::vector<GameMethod> methods;
 };
 
+// The game's types by full name, e.g. "chainsaw.PlayerManager". Held as the cache's text (about 110 MB for RE4R's 163k
+// types) plus a sorted index of type names; a type's members are read from the text the first time it's asked for
+// (thread-safe), so loading takes a read of the file, not ~1.5M strings built (100 s in Debug, measured 2026-10-07).
 struct GameCode {
-    std::unordered_map<std::string, GameType> types;  // by full name, e.g. "chainsaw.PlayerManager"
-    const GameType* find(const std::string& name) const;
+    GameCode();
+    ~GameCode();
+    GameCode(GameCode&&) noexcept;
+    GameCode& operator=(GameCode&&) noexcept;
+    struct Store;
+    std::unique_ptr<Store> store;
+
+    std::size_t size() const;  // types
+    const std::vector<std::string_view>& names() const;  // every type's name, sorted
+    const GameType* find(std::string_view name) const;
     // A field or method by name (or a method by prototype), on the type or a parent, as REFramework looks [official,
     // RETypeDefinition.cpp]; nullptr if none.
     const GameField* field(const std::string& type, const std::string& name) const;
@@ -45,8 +57,8 @@ GameCode load_game_code(const std::filesystem::path& dump, const std::filesystem
 
 // The dump scripts are checked against (Settings::sdk_dump; front ends set it). game_code() loads it on first use (and
 // again when the file changes), cached under %LOCALAPPDATA%\remod\game_code; nullptr if none is set. Throws if it can't
-// be read. ponytail: one dump for every game, as {game}.
-void set_sdk_dump(const std::filesystem::path& dump);
+// be read. `cache_dir` (tests): the cache's folder instead. ponytail: one dump for every game, as {game}.
+void set_sdk_dump(const std::filesystem::path& dump, const std::filesystem::path& cache_dir = {});
 const GameCode* game_code();
 
 // Types and members whose names hold every word of `query` (ignoring case), types first; a query naming a type exactly

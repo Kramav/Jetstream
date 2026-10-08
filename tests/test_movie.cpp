@@ -183,6 +183,78 @@ TEST_CASE("Replace movie: both copies at their in-game paths, packaged; one with
     CHECK_THROWS_WITH(remod::run_graph(empty, opt), ContainsSubstring("nothing to package"));
 }
 
+TEST_CASE("New movie: our own movie at new paths, made like mva000; its name checked") {
+    CHECK(remod::new_movie_name_problem("rmd001").empty());
+    CHECK_THAT(remod::new_movie_name_problem("rmd01"), ContainsSubstring("6 lowercase"));
+    CHECK_THAT(remod::new_movie_name_problem("RMD001"), ContainsSubstring("6 lowercase"));
+    CHECK_THAT(remod::new_movie_name_problem("mva999"), ContainsSubstring("the game's movies"));
+    const auto utf16 = [](const std::string& s) {
+        std::string out;
+        for (const char c : s) out += {c, '\0'};
+        return out;
+    };
+    std::string pfb = "head" + utf16("@_Chainsaw/Movie/mv/mva000/mva000.mov") + "mid" +
+                      utf16("_Chainsaw/Sound/Resource/Container/mv/snd_cont_mva000.user") +
+                      utf16("@_Chainsaw/Movie/mv/mva000/mva000.mov");
+    const std::string before = pfb;
+    CHECK(remod::rename_movie_paths(pfb, "mva000", "rmd001") == 2);
+    CHECK(pfb.size() == before.size());
+    CHECK(pfb.find(utf16("mv/rmd001/rmd001.mov")) != std::string::npos);
+    CHECK(pfb.find(utf16("snd_cont_mva000")) != std::string::npos);  // the sound container's path isn't the movie's
+
+    // A game folder with mva000: both MP4s, the stubs, the two prefabs.
+    TempDir dir;
+    const fs::path natives = dir.path / "natives/STM", stream = natives / "streaming/_chainsaw/movie/mv/mva000",
+                   base = natives / "_chainsaw/movie/mv/mva000";
+    fs::create_directories(stream);
+    fs::create_directories(base);
+    remod::encode_movie({}, {.width = 320, .height = 180, .seconds = 1, .fps = 30, .bitrate = 1'000'000}, "a",
+                        stream / "mva000.mov.1.x64");
+    remod::encode_movie({}, {.width = 160, .height = 90, .seconds = 1, .fps = 30, .bitrate = 1'000'000}, "b",
+                        stream / "mva000_fhd.mov.1.x64");
+    test::write_file(base / "mva000.mov.1.x64", "REMV stub");
+    test::write_file(base / "mva000_fhd.mov.1.x64", "REMV stub");
+    test::write_file(base / "mva000.pfb.17.x64", before);
+    test::write_file(base / "mva000_fhd.pfb.17", "x" + utf16("@_Chainsaw/Movie/mv/mva000/mva000_FHD.mov"));
+    remod::set_game_files_dir(natives);
+    struct Reset {
+        ~Reset() { remod::set_game_files_dir({}); }
+    } reset;
+
+    remod::Graph g;
+    g.add_node("NewMovie");  // 1: rmd001, a test card
+    auto& pack = g.add_node("PackageMod").params;  // 2
+    pack["name"] = "NewMovieTest";
+    pack["out"] = "mods";
+    pack["replace"] = "true";
+    REQUIRE(g.connect({1, "files", 2, "file"}) == "");
+    REQUIRE(g.validate().empty());
+    struct NoTextures : remod::ITextureConverter {
+        remod::TexMeta load_tex(const fs::path&, const fs::path&, const remod::Profile&) override { return {}; }
+        remod::TexMeta save_tex(const fs::path&, const fs::path&, const fs::path&, const remod::Profile&) override {
+            return {};
+        }
+    } conv;
+    const remod::RunOptions opt{.profile = remod::load_profile(REMOD_PROFILES_DIR "/re4r.toml"), .converter = conv,
+                                .base_dir = dir.path, .cache_dir = dir.path / "cache"};
+    const auto result = remod::run_graph(g, opt);
+    CHECK_THAT(result.nodes.at(1).message, ContainsSubstring("rmd001"));
+    const fs::path mod = dir.path / "mods/NewMovieTest";
+    const fs::path mv = mod / "natives/STM/_chainsaw/movie/mv/rmd001";
+    CHECK(remod::read_mp4_info(mod / "natives/STM/streaming/_chainsaw/movie/mv/rmd001/rmd001.mov.1.x64").width == 320);
+    CHECK(remod::read_mp4_info(mod / "natives/STM/streaming/_chainsaw/movie/mv/rmd001/rmd001_fhd.mov.1.x64").width == 160);
+    CHECK(test::read_file(mv / "rmd001.mov.1.x64") == "REMV stub");
+    CHECK(test::read_file(mv / "rmd001_fhd.mov.1.x64") == "REMV stub");
+    CHECK(test::read_file(mv / "rmd001.pfb.17.x64") == pfb);
+    CHECK(test::read_file(mv / "rmd001_fhd.pfb.17").find(utf16("mv/rmd001/rmd001_FHD.mov")) != std::string::npos);
+    CHECK_THAT(test::read_file(mod / "reframework/data/remod_movies/rmd001.json"), ContainsSubstring("\"rmd001\""));
+    CHECK(fs::exists(mod / "reframework/autorun/remod_cutscene.lua"));
+    CHECK_THAT(remod::run_graph(g, opt).nodes.at(1).message, ContainsSubstring("unchanged"));  // nothing encoded again
+
+    g.find(1)->params["name"] = "mva001";
+    CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("the game's movies"));
+}
+
 TEST_CASE("encode_movie: same_length cuts a longer video and holds a shorter one's last frame") {
     TempDir dir;
     const fs::path two = dir.path / "two.mp4", out = dir.path / "out.mp4";

@@ -1250,8 +1250,8 @@ NodeSpec cutscene_node() {
     return {
         .type = "Cutscene",
         .title = "Cutscene",
-        .summary = "A real-time cutscene the game plays: camera shots, subtitles, letterbox, fades and Leon's animations, "
-                   "from a cutscene file (.json). Connect to Package's 'other file': the mod gets remod's cutscene "
+        .summary = "A real-time cutscene the game plays: camera shots, subtitles, letterbox, fades, Leon's animations "
+                   "and the game's movies, from a cutscene file (.json). Connect to Package's 'other file': the mod gets remod's cutscene "
                    "script too, and needs REFramework. Record camera shots in game with F10, then Use recording.",
         .inputs = {{.name = "cutscene", .label = "Cutscene file", .type = Path, .widget = Widget::Path, .required = true,
                     .hint = "Your cutscene, e.g. cutscenes\\door.json (the format: remod's "
@@ -1519,6 +1519,62 @@ NodeSpec edit_video_node() {
     };
 }
 
+// A game movie's copies (the main one, then its 1080p copy if there is one) encoded from `video` (none: a test card
+// reading `title`), each at its original's size, frame rate and bit rate, reused from the run cache when nothing
+// changed. Gives {original, made} for each; adds what it did to `message`.
+std::vector<std::pair<fs::path, fs::path>> encode_movie_copies(NodeRun& r, const MovieFiles& m, const fs::path& video,
+                                                               bool same_length, const std::string& title,
+                                                               std::string& message, double card_seconds = 0) {
+    const fs::path& cache = r.run.options.cache_dir;
+    std::error_code ec;
+    std::vector<std::pair<fs::path, fs::path>> made;
+    for (const fs::path& original : {m.main, m.fhd}) {
+        const std::string file = original.filename().string();
+        if (!fs::is_regular_file(long_path(original), ec)) continue;
+        MovieInfo like = movie_info(original);
+        if (video.empty() && card_seconds > 0) like.seconds = card_seconds;  // a test card this long
+        const fs::path out =
+            cache.empty() ? r.temp_file("_" + file + ".mp4")
+                          : cache / (hash_hex(stamp(original) + '\0' + (video.empty() ? "card" : stamp(video)) +
+                                              (same_length ? "|same" : "|own") + (title == m.id ? "" : "|" + title) +
+                                              (video.empty() && card_seconds > 0 ? "|" + std::to_string(card_seconds) : "") +
+                                              "|mf2") +
+                                     ".mp4");
+        const std::string size = std::to_string(like.width) + "x" + std::to_string(like.height);
+        if (!cache.empty() && fs::is_regular_file(out, ec)) {
+            fs::last_write_time(out, fs::file_time_type::clock::now(), ec);  // recently used: pruned last
+            message += (message.empty() ? "" : ", ") + size + " unchanged";
+        } else {
+            // Written as .part, then renamed, so a cut-off encode is never reused.
+            fs::path target = out;
+            if (!cache.empty()) {
+                fs::create_directories(cache);
+                (target = out).replace_extension(".part.mp4");
+                fs::remove(target, ec);
+            }
+            const auto start = std::chrono::steady_clock::now();
+            std::string sound;
+            try {
+                sound = encode_movie(video, like, title, target, same_length);
+            } catch (const std::runtime_error& e) {
+                fs::remove(target, ec);
+                throw GraphError(e.what());
+            }
+            if (target != out) fs::rename(target, out);
+            char took[64];
+            std::snprintf(took, sizeof took, " in %.0f s",
+                          std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+            message += (message.empty() ? "encoded " : ", ") + size + took + (sound.empty() ? "" : ", sound: " + sound);
+            const MovieInfo got = read_mp4_info(out);
+            if (std::abs(got.seconds - like.seconds) > 0.5)
+                r.log(file + ": the new movie is " + std::to_string(std::lround(got.seconds)) + " s, the original " +
+                      std::to_string(std::lround(like.seconds)) + " s");
+        }
+        made.emplace_back(original, out);
+    }
+    return made;
+}
+
 NodeSpec replace_movie_node() {
     return {
         .type = "ReplaceMovie",
@@ -1564,52 +1620,11 @@ NodeSpec replace_movie_node() {
             const fs::path& cache = r.run.options.cache_dir;
             std::vector<fs::path> made;
             std::string message;
-            for (const auto& [port, original] : {std::pair<const char*, fs::path>{"movie", m.main}, {"fhd", m.fhd}}) {
-                const std::string file = original.filename().string();
-                if (!fs::is_regular_file(long_path(original), ec)) {
-                    r.nothing("fhd", "no 1080p copy of " + m.id);
-                    continue;
-                }
-                const MovieInfo like = movie_info(original);
-                const fs::path out =
-                    cache.empty() ? r.temp_file("_" + file + ".mp4")
-                                  : cache / (hash_hex(stamp(original) + '\0' + (video.empty() ? "card" : stamp(video)) +
-                                                      (same_length ? "|same" : "|own") + "|mf2") +
-                                             ".mp4");
-                const std::string size = std::to_string(like.width) + "x" + std::to_string(like.height);
-                if (!cache.empty() && fs::is_regular_file(out, ec)) {
-                    fs::last_write_time(out, fs::file_time_type::clock::now(), ec);  // recently used: pruned last
-                    message += (message.empty() ? "" : ", ") + size + " unchanged";
-                } else {
-                    // Written as .part, then renamed, so a cut-off encode is never reused.
-                    fs::path target = out;
-                    if (!cache.empty()) {
-                        fs::create_directories(cache);
-                        (target = out).replace_extension(".part.mp4");
-                        fs::remove(target, ec);
-                    }
-                    const auto start = std::chrono::steady_clock::now();
-                    std::string sound;
-                    try {
-                        sound = encode_movie(video, like, m.id, target, same_length);
-                    } catch (const std::runtime_error& e) {
-                        fs::remove(target, ec);
-                        throw GraphError(e.what());
-                    }
-                    if (target != out) fs::rename(target, out);
-                    char took[64];
-                    std::snprintf(took, sizeof took, " in %.0f s",
-                                  std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
-                    message += (message.empty() ? "encoded " : ", ") + size + took +
-                               (sound.empty() ? "" : ", sound: " + sound);
-                    const MovieInfo got = read_mp4_info(out);
-                    if (std::abs(got.seconds - like.seconds) > 0.5)
-                        r.log(file + ": the new movie is " + std::to_string(std::lround(got.seconds)) +
-                              " s, the original " + std::to_string(std::lround(like.seconds)) + " s");
-                }
+            for (const auto& [original, out] : encode_movie_copies(r, m, video, same_length, m.id, message)) {
                 made.push_back(out);
-                r.output(port, file_value(out, m.folder + file));
+                r.output(original == m.main ? "movie" : "fhd", file_value(out, m.folder + original.filename().string()));
             }
+            if (made.size() < 2) r.nothing("fhd", "no 1080p copy of " + m.id);
             const fs::path movie = made.front();
 
             // A story movie's sound (its packages, and the banks holding their first parts and sizes): each sound
@@ -1664,9 +1679,209 @@ NodeSpec replace_movie_node() {
     };
 }
 
+// A file of `bytes` in the run cache (named by them: an unchanged run writes nothing), else in the run's temporary
+// folder as `name`.
+fs::path cached_bytes(NodeRun& r, const std::string& bytes, const std::string& name) {
+    const fs::path& cache = r.run.options.cache_dir;
+    if (cache.empty()) {
+        const fs::path out = r.temp_file(name);
+        write_bytes(out, bytes);
+        return out;
+    }
+    const fs::path out = cache / (hash_hex(bytes + "|bytes1") + fs::path(name).extension().string());
+    std::error_code ec;
+    if (fs::is_regular_file(out, ec) && fs::file_size(out, ec) == bytes.size()) {
+        fs::last_write_time(out, fs::file_time_type::clock::now(), ec);
+        return out;
+    }
+    fs::create_directories(cache);
+    write_bytes(out, bytes);  // as .part, then renamed
+    return out;
+}
+
+// A brand-new sound bank (docs/re4r_movies.md §4, proven 2026-10-07), named `bank` (its file name), made from the
+// game's ch_csa404_se and holding `audio`'s sound (none: a beep each second), `seconds` long (0: the audio's own).
+// Gives the bank's file and the note the runtime plays it by: {"bank": its path as the game writes bank paths (with
+// "@"), "event": its event id}. Reused from the run cache when nothing changed.
+// ponytail: mono, played like the template's cutscene effect (no stereo one-sound bank exists to copy).
+std::pair<fs::path, std::string> make_sound_bank(NodeRun& r, const std::string& bank, const fs::path& audio,
+                                                 double seconds) {
+    const fs::path like = fs::path(fill_game("{game}")) / "_chainsaw/sound/wwise/ch_csa404_se.sbnk.1.x64";
+    std::error_code ec;
+    if (!fs::is_regular_file(long_path(like), ec)) throw GraphError("not found: " + like.string());
+    const fs::path& cache = r.run.options.cache_dir;
+    const std::string key = hash_hex(stamp(like) + '\0' + (audio.empty() ? "beep" : stamp(audio)) + '\0' +
+                                     std::to_string(seconds) + '\0' + bank + "|nsb1");
+    const fs::path file = cache.empty() ? r.temp_file(bank + ".sbnk") : cache / (key + ".sbnk"),
+                   event_file = fs::path(file).replace_extension(".event");
+    std::string event;
+    if (!cache.empty() && fs::is_regular_file(file, ec) && fs::is_regular_file(event_file, ec)) {
+        event = read_bytes(event_file);
+        fs::last_write_time(file, fs::file_time_type::clock::now(), ec);
+        fs::last_write_time(event_file, fs::file_time_type::clock::now(), ec);
+    } else {
+        NewSoundBank made;
+        try {
+            made = new_sound_bank(read_bytes(like), bank, [&](const WemInfo& info) {
+                const double s = seconds > 0 ? seconds : audio.empty() ? 3 : 0;
+                return read_sound(audio, info.rate, info.channels, std::uint64_t(std::llround(s * info.rate)));
+            }, find_codebooks());
+        } catch (const std::runtime_error& e) {
+            throw GraphError(std::string("making the sound bank: ") + e.what());
+        }
+        if (!cache.empty()) fs::create_directories(cache);
+        write_bytes(file, made.bytes);
+        event = std::to_string(made.event_id);
+        write_bytes(event_file, event);
+    }
+    return {file, "{\"bank\": \"@_Chainsaw/Sound/Wwise/" + bank + ".sbnk\", \"event\": " + event + "}"};
+}
+
+// A movie of your own under a new movie id, beside the game's (docs/re4r_movies.md, proven 2026-10-07): new files at
+// new paths, made like mva000's, and a note for the cutscene runtime, which registers the movie when it's first
+// played. Nothing of the game's is replaced.
+NodeSpec new_movie_node() {
+    return {
+        .type = "NewMovie",
+        .title = "New movie",
+        .summary = "Adds your video to the game as a movie of its own, under a new name, replacing none of the "
+                   "game's. Cutscenes play it by that name (\"movies\": [{\"t\": 0, \"id\": \"<name>\"}]). Connect to "
+                   "Package's 'other file'; the mod needs REFramework.",
+        .inputs = {{.name = "name", .label = "Movie name", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "6 lowercase letters, digits or _, like the game's mva000, and not starting with mv, "
+                            "e.g. rmd001. Each new movie in a mod needs its own name.",
+                    .initial = "rmd001"},
+                   {.name = "video", .label = "Your video", .type = Path, .widget = Widget::Path,
+                    .hint = "Any video Windows plays (mp4, mov, wmv...), at its own length, scaled to 4K and 1080p "
+                            "like the game's movies. Its sound plays with it (in mono, from a sound bank of its own: "
+                            "the game doesn't play sound inside a new movie's file). Empty: a 12-second test card "
+                            "showing the name and the seconds, beeping each second.",
+                    .path = PathKind::OpenFile, .filter = kVideoFormats}},
+        .outputs = {{.name = "files", .type = Path, .label = "new movie files", .list = true}},
+        .family = Family::Transform,
+        .run = [](NodeRun& r) {
+            const std::string name = r.text("name");
+            if (const std::string problem = new_movie_name_problem(name); !problem.empty()) throw GraphError(problem);
+            const std::string video_text = r.text("video");
+            const fs::path video = video_text.empty() ? fs::path() : r.resolve(video_text);
+            std::error_code ec;
+            if (!video.empty() && !fs::is_regular_file(long_path(video), ec))
+                throw GraphError("video not found: " + video.string());
+            // Made like mva000: the movie the game registers first (Movie_1st), with a 4K and a 1080p copy.
+            const MovieFiles m =
+                movie_files(r, fs::path(fill_game("{game}")) / "streaming/_chainsaw/movie/mv/mva000/mva000.mov.1.x64");
+            const fs::path from = m.natives / "_chainsaw/movie/mv/mva000";
+            const std::string to = "_chainsaw/movie/mv/" + name + "/" + name;
+
+            std::vector<Value> out;
+            std::vector<ListItem> items;
+            std::vector<fs::path> made;
+            const auto add = [&](const fs::path& source, const std::string& game_path) {
+                out.push_back(file_value(source, game_path));
+                items.push_back({fs::path(game_path).filename().string(), game_path});
+                made.push_back(source);
+            };
+            try {
+                const PackageFile runtime = cutscene_runtime();
+                add(runtime.source, runtime.game_path.generic_string());
+            } catch (const PackageError& e) {
+                throw GraphError(e.what());
+            }
+            std::string message;
+            // A test card of 12 s, not mva000's 61.
+            const auto copies = encode_movie_copies(r, m, video, false, name, message, 12);
+            if (copies.size() < 2) throw GraphError("mva000's 1080p copy is missing: " + m.fhd.string());
+
+            // Its sound: a bank of its own, as long as the movie (sound in a new movie's file isn't played: sound
+            // probe, 2026-10-07).
+            const auto [bank, sound] =
+                make_sound_bank(r, "remod_mv_" + name, video, read_mp4_info(copies.front().second).seconds);
+            add(bank, "_chainsaw/sound/wwise/remod_mv_" + name + ".sbnk.1.x64");
+            const std::string note = "{\n  \"schema_version\": 0,\n  \"name\": \"" + name +
+                                     "\",\n  \"made_like\": \"mva000\",\n  \"sound\": " + sound + "\n}\n";
+            add(cached_bytes(r, note, name + ".json"), "reframework/data/remod_movies/" + name + ".json");
+            for (const auto& [original, movie] : copies) {
+                const bool fhd = original == m.fhd;
+                add(movie, "streaming" + std::string("/") + to + (fhd ? "_fhd" : "") + ".mov.1.x64");
+                // Outside streaming/ the game has a 38-byte stub per movie, the same for all.
+                const fs::path stub = from / (fhd ? "mva000_fhd.mov.1.x64" : "mva000.mov.1.x64");
+                if (!fs::is_regular_file(long_path(stub), ec)) throw GraphError("not found: " + stub.string());
+                add(stub, to + (fhd ? "_fhd" : "") + ".mov.1.x64");
+            }
+            // mva000's prefabs with their movie paths renamed. The 4K one's file has the platform suffix (its path
+            // starts with "@"), the 1080p one's doesn't, as the game's.
+            for (const auto& [file, suffix] : {std::pair<const char*, const char*>{"mva000.pfb.17.x64", ".pfb.17.x64"},
+                                               {"mva000_fhd.pfb.17", "_fhd.pfb.17"}}) {
+                const fs::path pfb = from / file;
+                if (!fs::is_regular_file(long_path(pfb), ec)) throw GraphError("not found: " + pfb.string());
+                std::string bytes = read_bytes(pfb);
+                if (rename_movie_paths(bytes, "mva000", name) == 0)
+                    throw GraphError(pfb.filename().string() + " doesn't name its movie as expected");
+                add(cached_bytes(r, bytes, name + suffix), to + suffix);
+            }
+            r.output_list("files", std::move(out), std::move(items));
+            if (!r.run.options.cache_dir.empty()) prune_cache(r.run.options.cache_dir, made);
+            r.done(name + ": " + message + (video.empty() ? " (test card)" : ""), copies.front().second);
+        },
+    };
+}
+
 // ---- Game sounds (CLAUDE.md §10, "Game sounds") ----
 
 constexpr const char* kAudioFormats = "wav,mp3,m4a,aac,wma,flac,mp4,m4v,mov,wmv,avi,mkv";
+
+// A sound of your own, new to the game (docs/re4r_movies.md §4, proven 2026-10-07): a sound bank of its own and a note
+// the cutscene runtime plays it by. Nothing of the game's is replaced.
+NodeSpec new_sound_node() {
+    return {
+        .type = "NewSound",
+        .title = "New sound",
+        .summary = "Adds your audio to the game as a sound of its own, under a name, replacing none of the game's. "
+                   "Cutscenes play it by that name (\"sounds\": [{\"t\": 0, \"id\": \"<name>\"}]). Connect to "
+                   "Package's 'other file'; the mod needs REFramework.",
+        .inputs = {{.name = "name", .label = "Sound name", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "1-32 lowercase letters, digits or _, e.g. door_creak. Each new sound in a mod needs its "
+                            "own name.",
+                    .initial = "my_sound"},
+                   {.name = "audio", .label = "Your audio", .type = Path, .widget = Widget::Path,
+                    .hint = "Any audio Windows plays (wav, mp3, m4a, wma, flac, or a video's sound), at its own "
+                            "length; played in mono. Empty: 3 seconds of beeps.",
+                    .path = PathKind::OpenFile, .filter = kAudioFormats}},
+        .outputs = {{.name = "files", .type = Path, .label = "new sound files", .list = true}},
+        .family = Family::Transform,
+        .run = [](NodeRun& r) {
+            const std::string name = r.text("name");
+            if (const std::string problem = new_sound_name_problem(name); !problem.empty()) throw GraphError(problem);
+            const std::string typed = r.text("audio");
+            const fs::path audio = typed.empty() ? fs::path() : r.resolve(typed);
+            std::error_code ec;
+            if (!audio.empty() && !fs::is_regular_file(long_path(audio), ec))
+                throw GraphError("audio not found: " + audio.string());
+            std::vector<Value> out;
+            std::vector<ListItem> items;
+            std::vector<fs::path> made;
+            const auto add = [&](const fs::path& source, const std::string& game_path) {
+                out.push_back(file_value(source, game_path));
+                items.push_back({fs::path(game_path).filename().string(), game_path});
+                made.push_back(source);
+            };
+            try {
+                const PackageFile runtime = cutscene_runtime();
+                add(runtime.source, runtime.game_path.generic_string());
+            } catch (const PackageError& e) {
+                throw GraphError(e.what());
+            }
+            const auto [bank, sound] = make_sound_bank(r, "remod_snd_" + name, audio, 0);
+            add(bank, "_chainsaw/sound/wwise/remod_snd_" + name + ".sbnk.1.x64");
+            const std::string note =
+                "{\n  \"schema_version\": 0,\n  \"name\": \"" + name + "\",\n  \"sound\": " + sound + "\n}\n";
+            add(cached_bytes(r, note, name + ".json"), "reframework/data/remod_sounds/" + name + ".json");
+            r.output_list("files", std::move(out), std::move(items));
+            if (!r.run.options.cache_dir.empty()) prune_cache(r.run.options.cache_dir, made);
+            r.done(name + (audio.empty() ? ": 3 s of beeps" : ": " + audio.filename().string()), bank);
+        },
+    };
+}
 
 NodeSpec game_sound_node() {
     return {
@@ -2640,7 +2855,7 @@ const std::vector<NodeSpec>& node_specs() {
         resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), part_texture_node(),
         mesh_mask_node(),
         mask_blend_node(), replace_photo_node(),
-        preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), game_sound_node(), replace_sounds_node(),
+        preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), new_movie_node(), new_sound_node(), game_sound_node(), replace_sounds_node(),
         lua_script_node(), cutscene_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
@@ -2697,6 +2912,15 @@ const char* ai_note(std::string_view type) {
                          "sound bank is timed to the original. mva000 / 201 / 202 get new sound packages (the video's "
                          "sound, the rest silent) unless 'Replace its sound' is off. Encoding a 4K movie takes a "
                          "while; an unchanged run reuses it."},
+        {"NewMovie", "Adds a video as a NEW game movie (nothing of the game's replaced), named by 'name' (6 lowercase "
+                     "letters / digits / _, not starting mv; each new movie its own). Link 'new movie files' into "
+                     "Package's 'other file'. It plays from a Cutscene whose file lists it under \"movies\": "
+                     "[{\"t\": <s>, \"id\": \"<name>\"}], with the game paused and the player held; its video's "
+                     "sound plays with it (mono). Needs the Game files folder (it copies mva000's prefabs)."},
+        {"NewSound", "Adds audio as a NEW game sound (nothing replaced), named by 'name' (1-32 lowercase letters / "
+                     "digits / _). Link 'new sound files' into Package's 'other file'. A Cutscene plays it when its "
+                     "file lists it under \"sounds\": [{\"t\": <s>, \"id\": \"<name>\"}]. Mono. Needs the Game "
+                     "files folder."},
         {"GameSound", "One game sound to replace: 'sound' is <bank or package path>#<id> (ids: `remod sounds --file "
                       "<bank>`, or the Browser's Sounds list); 'audio' the replacement (empty: silence). Link its "
                       "output into Replace sounds' 'sound', never into Package."},
@@ -2704,7 +2928,9 @@ const char* ai_note(std::string_view type) {
                       "requires. Link 'script files' into Package's 'other file'; the mod then needs REFramework. "
                       "REFramework runs only reframework/autorun's top-level .lua files, so one script per block."},
         {"Cutscene", "A real-time cutscene from a cutscene file (JSON: camera keys with t, position [x,y,z], rotation "
-                     "[x,y,z,w], fov, ease smooth/linear/cut; subtitles; letterbox; fades; motions on the player). Link "
+                     "[x,y,z,w], fov, ease smooth/linear/cut; subtitles; letterbox; fades; motions on the player; "
+                     "movies: [{t, id}] with a game movie's name (mva000) or a New movie block's name; sounds: "
+                     "[{t, id}] with a New sound block's name). Link "
                      "'cutscene files' into Package's 'other file'. A run checks the file and names every problem. "
                      "Camera positions come from the game: the user records them in game (F10) and uses Use recording; "
                      "never invent coordinates."},

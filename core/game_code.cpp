@@ -16,6 +16,8 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
+#include <unordered_map>
 
 namespace remod {
 
@@ -27,9 +29,81 @@ std::string GameMethod::prototype() const {
     return s + ")";
 }
 
-const GameType* GameCode::find(const std::string& name) const {
-    const auto it = types.find(name);
-    return it == types.end() ? nullptr : &it->second;
+// The cache's lines (§ reading the dump: T / F / M, tab-separated), from the first T on, and an index of the T lines.
+struct GameCode::Store {
+    std::string text;
+    std::vector<std::string_view> names;                      // sorted
+    std::vector<std::pair<std::string_view, size_t>> index;   // name -> offset of its T line, sorted by name
+    std::mutex mutex;
+    std::unordered_map<size_t, std::unique_ptr<GameType>> parsed;  // by T-line offset; pointers stay valid
+};
+
+GameCode::GameCode() = default;
+GameCode::~GameCode() = default;
+GameCode::GameCode(GameCode&&) noexcept = default;
+GameCode& GameCode::operator=(GameCode&&) noexcept = default;
+
+size_t GameCode::size() const { return store ? store->index.size() : 0; }
+
+const std::vector<std::string_view>& GameCode::names() const {
+    static const std::vector<std::string_view> none;
+    return store ? store->names : none;
+}
+
+namespace {
+
+std::vector<std::string_view> split_tabs(std::string_view line) {
+    std::vector<std::string_view> out;
+    for (size_t at; (at = line.find('\t')) != std::string_view::npos; line.remove_prefix(at + 1)) out.push_back(line.substr(0, at));
+    out.push_back(line);
+    return out;
+}
+
+// One F or M line (its fields split) into `t`.
+void add_member(GameType& t, const std::vector<std::string_view>& f) {
+    if (f[0] == "F" && f.size() == 4) {
+        t.fields.push_back({std::string(f[1]), std::string(f[2]), f[3] == "1"});
+    } else if (f[0] == "M" && f.size() >= 4 && f.size() % 2 == 0) {
+        GameMethod m{std::string(f[1]), std::string(f[2]), {}, f[3] == "1"};
+        for (size_t i = 4; i + 1 < f.size(); i += 2) m.params.emplace_back(std::string(f[i]), std::string(f[i + 1]));
+        t.methods.push_back(std::move(m));
+    }
+}
+
+// The lines of the type whose T line starts at `at`, the T line itself left out.
+std::string_view block(const std::string& text, size_t at) {
+    const size_t from = text.find('\n', at) + 1;
+    size_t end = text.find("\nT\t", from - 1);
+    end = end == std::string::npos ? text.size() : end + 1;
+    return std::string_view(text).substr(from, end - from);
+}
+
+template <class F>
+void each_line(std::string_view s, F&& f) {
+    while (!s.empty()) {
+        const size_t nl = s.find('\n');
+        f(s.substr(0, nl));
+        if (nl == std::string_view::npos) break;
+        s.remove_prefix(nl + 1);
+    }
+}
+
+}  // namespace
+
+const GameType* GameCode::find(std::string_view name) const {
+    if (!store) return nullptr;
+    Store& s = *store;
+    const auto it = std::ranges::lower_bound(s.index, name, {}, &std::pair<std::string_view, size_t>::first);
+    if (it == s.index.end() || it->first != name) return nullptr;
+    std::lock_guard lock(s.mutex);
+    auto& slot = s.parsed[it->second];
+    if (!slot) {
+        slot = std::make_unique<GameType>();
+        const size_t tab = s.text.find('\t', it->second + 2);  // "T\t<name>\t<parent>"
+        slot->parent = s.text.substr(tab + 1, s.text.find('\n', tab) - tab - 1);
+        each_line(block(s.text, it->second), [&](std::string_view line) { add_member(*slot, split_tabs(line)); });
+    }
+    return slot.get();
 }
 
 namespace {
@@ -78,13 +152,39 @@ using nlohmann::json;
 // The dump's layout [official, ObjectExplorer.cpp]: { "<type>": { "parent": "<type>", "fields": { "<name>": { "type",
 // "flags" } }, "methods": { "<name><id>": { "id", "flags", "params": [ { "type", "name" } ], "returns": { "type" } } },
 // ... } }. Everything else (addresses, RSZ, properties, reflection) is skipped as it streams past.
+// Each type is written out as cache lines once the next begins, so only one is held at a time.
 struct DumpReader : json::json_sax_t {
-    GameCode& code;
-    explicit DumpReader(GameCode& c) : code(c) {}
+    std::string& out;
+    explicit DumpReader(std::string& o) : out(o) {}
 
     int depth = 0;  // open objects and arrays
     std::string keys[8];
+    std::string type_name;
+    GameType current;
     GameType* type = nullptr;
+    size_t types = 0;
+
+    void flush() {
+        if (!type) return;
+        // ponytail: a tab or line break inside a name would break the line format; none seen, made a space.
+        const auto clean = [](std::string& s) { std::ranges::replace_if(s, [](char c) { return c == '\t' || c == '\n' || c == '\r'; }, ' '); };
+        clean(type_name), clean(current.parent);
+        for (GameField& f : current.fields) clean(f.name), clean(f.type);
+        for (GameMethod& m : current.methods) {
+            clean(m.name), clean(m.returns);
+            for (auto& [ptype, pname] : m.params) clean(ptype), clean(pname);
+        }
+        out += "T\t" + type_name + "\t" + current.parent + "\n";
+        for (const GameField& f : current.fields) out += "F\t" + f.name + "\t" + f.type + "\t" + (f.is_static ? "1" : "0") + "\n";
+        for (const GameMethod& m : current.methods) {
+            out += "M\t" + m.name + "\t" + m.returns + "\t" + (m.is_static ? "1" : "0");
+            for (const auto& [ptype, pname] : m.params) out += "\t" + ptype + "\t" + pname;
+            out += "\n";
+        }
+        ++types;
+        current = {};
+        type = nullptr;
+    }
     GameMethod* method = nullptr;
     long long method_id = -1;
     std::string method_key, error;
@@ -98,7 +198,9 @@ struct DumpReader : json::json_sax_t {
     bool key(string_t& k) override {
         if (depth < 8) keys[depth] = k;
         if (depth == 1) {
-            type = &code.types[k];
+            flush();
+            type_name = k;
+            type = &current;
             method = nullptr;
         } else if (depth == 3 && type && in("fields")) {
             type->fields.push_back({k, "", false});
@@ -170,54 +272,62 @@ std::string stamp(const fs::path& dump) {
            std::to_string(fs::last_write_time(dump).time_since_epoch().count());
 }
 
-std::vector<std::string> split_tabs(const std::string& line) {
-    std::vector<std::string> out;
-    size_t from = 0;
-    for (size_t at; (at = line.find('\t', from)) != std::string::npos; from = at + 1) out.push_back(line.substr(from, at - from));
-    out.push_back(line.substr(from));
-    return out;
-}
-
-std::optional<GameCode> read_cache(const fs::path& cache, const std::string& want) {
-    std::ifstream in(cache, std::ios::binary);
-    std::string line;
-    if (!std::getline(in, line) || line != std::string(kCacheMagic) + "\t" + want) return std::nullopt;
-    GameCode code;
-    GameType* type = nullptr;
-    while (std::getline(in, line)) {
-        const auto f = split_tabs(line);
-        if (f[0] == "T" && f.size() == 3) {
-            type = &code.types[f[1]];
-            type->parent = f[2];
-        } else if (f[0] == "F" && f.size() == 4 && type) {
-            type->fields.push_back({f[1], f[2], f[3] == "1"});
-        } else if (f[0] == "M" && f.size() >= 4 && f.size() % 2 == 0 && type) {
-            GameMethod m{f[1], f[2], {}, f[3] == "1"};
-            for (size_t i = 4; i + 1 < f.size(); i += 2) m.params.emplace_back(f[i], f[i + 1]);
-            type->methods.push_back(std::move(m));
-        } else {
-            return std::nullopt;  // not ours, or cut short: read the dump again
+// Cache lines into a GameCode: indexes the T lines; nullopt if a line isn't ours (cut short, or another file).
+std::optional<GameCode> from_lines(std::string text) {
+    auto s = std::make_unique<GameCode::Store>();
+    s->text = std::move(text);
+    bool ok = true, any = false;
+    size_t at = 0;
+    each_line(s->text, [&](std::string_view line) {
+        if (line.starts_with("T\t")) {
+            const size_t tab = line.find('\t', 2);
+            if (tab == std::string_view::npos) ok = false;
+            else s->index.emplace_back(line.substr(2, tab - 2), at), any = true;
+        } else if (!any || !(line.starts_with("F\t") || line.starts_with("M\t"))) {
+            ok = false;
         }
-    }
+        at += line.size() + 1;
+    });
+    if (!ok || (!s->text.empty() && s->text.back() != '\n')) return std::nullopt;
+    std::ranges::stable_sort(s->index, {}, &std::pair<std::string_view, size_t>::first);
+    // A name twice (a broken dump): the first kept.
+    const auto dup = std::ranges::unique(s->index, {}, &std::pair<std::string_view, size_t>::first);
+    s->index.erase(dup.begin(), dup.end());
+    s->names.reserve(s->index.size());
+    for (const auto& [name, _] : s->index) s->names.push_back(name);
+    GameCode code;
+    code.store = std::move(s);
     return code;
 }
 
-void write_cache(const GameCode& code, const fs::path& cache, const std::string& stamp_line) {
+std::optional<std::string> read_whole(const fs::path& file) {
+    std::FILE* f = nullptr;
+    if (_wfopen_s(&f, file.c_str(), L"rb") != 0 || !f) return std::nullopt;
+    const std::unique_ptr<std::FILE, int (*)(std::FILE*)> in(f, &std::fclose);
+    std::error_code ec;
+    const auto size = fs::file_size(file, ec);
+    if (ec) return std::nullopt;
+    std::string text(size, '\0');
+    if (std::fread(text.data(), 1, size, f) != size) return std::nullopt;
+    return text;
+}
+
+std::optional<GameCode> read_cache(const fs::path& cache, const std::string& want) {
+    auto text = read_whole(cache);
+    if (!text) return std::nullopt;
+    const std::string head = std::string(kCacheMagic) + "\t" + want + "\n";
+    if (!text->starts_with(head)) return std::nullopt;
+    text->erase(0, head.size());
+    return from_lines(std::move(*text));
+}
+
+void write_cache(const std::string& lines, const fs::path& cache, const std::string& stamp_line) {
     std::error_code ec;
     fs::create_directories(cache.parent_path(), ec);
     const fs::path part = fs::path(cache) += ".part";
     {
         std::ofstream out(part, std::ios::binary);
-        out << kCacheMagic << "\t" << stamp_line << "\n";
-        for (const auto& [name, t] : code.types) {
-            out << "T\t" << name << "\t" << t.parent << "\n";
-            for (const GameField& f : t.fields) out << "F\t" << f.name << "\t" << f.type << "\t" << f.is_static << "\n";
-            for (const GameMethod& m : t.methods) {
-                out << "M\t" << m.name << "\t" << m.returns << "\t" << m.is_static;
-                for (const auto& [ptype, pname] : m.params) out << "\t" << ptype << "\t" << pname;
-                out << "\n";
-            }
-        }
+        out << kCacheMagic << "\t" << stamp_line << "\n" << lines;
         if (!out.flush()) return;  // a cache is only a speed-up
     }
     fs::rename(part, cache, ec);
@@ -235,25 +345,29 @@ GameCode load_game_code(const fs::path& dump, const fs::path& cache) {
     if (_wfopen_s(&opened, dump.c_str(), L"rb") != 0) opened = nullptr;
     const std::unique_ptr<std::FILE, int (*)(std::FILE*)> in(opened, &std::fclose);
     if (!in) throw std::runtime_error("can't open " + dump.string());
-    GameCode code;
-    DumpReader reader(code);
+    std::string lines;
+    DumpReader reader(lines);
     if (!json::sax_parse(in.get(), &reader))
         throw std::runtime_error(dump.filename().string() + " isn't a readable SDK dump (" + reader.error + ")");
-    if (code.types.empty()) throw std::runtime_error(dump.filename().string() + " holds no types: not an SDK dump?");
-    if (!cache.empty()) write_cache(code, cache, want);
-    return code;
+    reader.flush();
+    if (reader.types == 0) throw std::runtime_error(dump.filename().string() + " holds no types: not an SDK dump?");
+    if (!cache.empty()) write_cache(lines, cache, want);
+    auto code = from_lines(std::move(lines));
+    if (!code) throw std::runtime_error(dump.filename().string() + " couldn't be indexed");  // not expected: lines cleaned
+    return std::move(*code);
 }
 
 namespace {
 std::mutex g_code_mutex;
-fs::path g_dump;
+fs::path g_dump, g_cache_dir;
 std::string g_loaded;  // stamp of the dump g_code was read from
 std::unique_ptr<GameCode> g_code;
 }  // namespace
 
-void set_sdk_dump(const fs::path& dump) {
+void set_sdk_dump(const fs::path& dump, const fs::path& cache_dir) {
     std::lock_guard lock(g_code_mutex);
     g_dump = dump;
+    g_cache_dir = cache_dir;
 }
 
 const GameCode* game_code() {
@@ -263,10 +377,12 @@ const GameCode* game_code() {
     if (!fs::is_regular_file(g_dump, ec)) throw std::runtime_error("SDK dump not found: " + g_dump.string());
     const std::string now = stamp(g_dump);
     if (!g_code || g_loaded != now) {
-        const fs::path dir = default_cache_dir();  // %LOCALAPPDATA%\remod\run_cache: ours sits beside it
-        const fs::path cache = dir.empty() ? fs::path()
-                                           : dir.parent_path() / "game_code" /
-                                                 (std::to_string(std::hash<std::string>{}(g_dump.string())) + ".txt");
+        fs::path dir = g_cache_dir;
+        if (dir.empty())
+            if (const fs::path run = default_cache_dir(); !run.empty())  // %LOCALAPPDATA%\remod\run_cache: ours beside it
+                dir = run.parent_path() / "game_code";
+        const fs::path cache =
+            dir.empty() ? fs::path() : dir / (std::to_string(std::hash<std::string>{}(g_dump.string())) + ".txt");
         g_code = std::make_unique<GameCode>(load_game_code(g_dump, cache));
         g_loaded = now;
     }
@@ -312,22 +428,30 @@ std::vector<CodeHit> search_game_code(const GameCode& code, const std::string& q
     const auto all = [&](const std::string& text) {
         return std::ranges::all_of(words, [&](const std::string& w) { return text.find(w) != std::string::npos; });
     };
-    std::vector<std::string> names;  // sorted, so results don't depend on the hash map's order
-    for (const auto& [name, t] : code.types) names.push_back(name);
-    std::ranges::sort(names);
-    for (const std::string& name : names)
-        if (hits.size() < limit && all(lower(name))) {
+    std::string low;  // reused: no allocation per name
+    const auto lowered = [&](std::string_view type, std::string_view member) -> const std::string& {
+        low.assign(type);
+        if (!member.empty()) low.append(".").append(member);
+        for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return low;
+    };
+    for (std::string_view name : code.names())
+        if (hits.size() < limit && all(lowered(name, {}))) {
             const GameType& t = *code.find(name);
-            hits.push_back({name, "", t.parent.empty() ? "" : "parent " + t.parent});
+            hits.push_back({std::string(name), "", t.parent.empty() ? "" : "parent " + t.parent});
         }
-    for (const std::string& name : names) {
+    // Members straight from the cache's lines, so a search doesn't read every type in.
+    if (!code.store) return hits;
+    for (const auto& [name, at] : code.store->index) {
         if (hits.size() >= limit) break;
-        const GameType& t = *code.find(name);
-        const std::string low = lower(name) + ".";
-        for (const GameField& f : t.fields)
-            if (hits.size() < limit && all(low + lower(f.name))) hits.push_back({name, f.name, field_detail(f)});
-        for (const GameMethod& m : t.methods)
-            if (hits.size() < limit && all(low + lower(m.name))) hits.push_back({name, m.name, method_detail(m)});
+        each_line(block(code.store->text, at), [&](std::string_view line) {
+            const std::string_view member = line.substr(2, line.find('\t', 2) - 2);
+            if (hits.size() >= limit || !all(lowered(name, member))) return;
+            GameType one;
+            add_member(one, split_tabs(line));
+            if (!one.fields.empty()) hits.push_back({std::string(name), one.fields[0].name, field_detail(one.fields[0])});
+            if (!one.methods.empty()) hits.push_back({std::string(name), one.methods[0].name, method_detail(one.methods[0])});
+        });
     }
     return hits;
 }
@@ -431,14 +555,15 @@ size_t edit_distance(const std::string& a, const std::string& b) {
 }
 
 // Up to three of `names` closest to `name` (ignoring case), as " (did you mean a, b?)", else "".
-std::string nearest(const std::string& name, const std::vector<std::string>& names) {
+template <class Names>
+std::string nearest(const std::string& name, const Names& names) {
     const std::string want = lower(name);
     const size_t limit = std::max<size_t>(2, want.size() / 4);
     std::vector<std::pair<size_t, std::string>> close;
-    for (const std::string& n : names) {
-        const std::string low = lower(n);
-        if (low.size() > want.size() + limit || want.size() > low.size() + limit) continue;  // can't be close
-        if (const size_t d = edit_distance(want, low); d <= limit) close.emplace_back(d, n);
+    for (const auto& n : names) {
+        if (n.size() > want.size() + limit || want.size() > n.size() + limit) continue;  // can't be close
+        const std::string low = lower(std::string(n));
+        if (const size_t d = edit_distance(want, low); d <= limit) close.emplace_back(d, std::string(n));
     }
     std::ranges::sort(close);
     std::string out;
@@ -482,7 +607,6 @@ private:
     const std::vector<Token>& t_;
     const GameCode& code_;
     std::vector<ScriptProblem>& problems_;
-    std::vector<std::string> type_names_;
 
     bool is(size_t i, Token::Kind k) const { return i < t_.size() && t_[i].kind == k; }
     bool is_sym(size_t i, const char* s) const { return is(i, Token::Symbol) && t_[i].text == s; }
@@ -502,9 +626,7 @@ private:
         end = i + 6;
         const std::string& name = t_[i + 4].text;
         if (!known_type(name)) {
-            if (type_names_.empty())
-                for (const auto& [n, _] : code_.types) type_names_.push_back(n);
-            problem(t_[i + 4].line, "no type \"" + name + "\" in the game" + nearest(name, type_names_));
+            problem(t_[i + 4].line, "no type \"" + name + "\" in the game" + nearest(name, code_.names()));
             return std::nullopt;
         }
         if (!type_def && !object) return std::nullopt;  // typeof gives a System.Type: not followed

@@ -80,7 +80,8 @@ TEST_CASE("cutscene runtime: the camera between its keys") {
 }
 
 TEST_CASE("cutscene runtime and probe: Lua 5.4 syntax; the example cutscene's shape") {
-    for (const char* file : {REMOD_RUNTIME_DIR "/remod_cutscene.lua", REMOD_RUNTIME_DIR "/../spikes/cutscene_probe.lua"}) {
+    for (const char* file : {REMOD_RUNTIME_DIR "/remod_cutscene.lua", REMOD_RUNTIME_DIR "/../spikes/cutscene_probe.lua",
+                             REMOD_RUNTIME_DIR "/../spikes/new_movie_probe.lua"}) {
         const std::string source = test::read_file(file);
         REQUIRE_FALSE(source.empty());
         CHECK(remod::check_lua(source, fs::path(file).filename().string(), nullptr).empty());
@@ -120,6 +121,7 @@ TEST_CASE("cutscene files: the runtime and the cutscene, where the game reads th
 TEST_CASE("check_cutscene names every problem") {
     CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/cutscene.v0.example.json")).empty());
     CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/../spikes/cutscene_test.json")).empty());
+    CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/../examples/cutscenes/play_a_movie.json")).empty());
     CHECK(remod::check_cutscene("{ nope") == std::vector<std::string>{"not readable JSON"});
     const std::vector<std::string> p = remod::check_cutscene(R"({
         "schema_version": 1, "length": 5, "start": {"key": "F10"}, "letterbox": 0.6,
@@ -130,7 +132,8 @@ TEST_CASE("check_cutscene names every problem") {
         ],
         "subtitles": [{"t": 3, "until": 2}],
         "fades": [{"t": 0, "until": 1, "from": 2, "to": 0}],
-        "motions": [{"t": 1, "bank": -1, "motion": 2.5, "actor": "ashley"}]
+        "motions": [{"t": 1, "bank": -1, "motion": 2.5, "actor": "ashley"}],
+        "movies": [{"t": 6, "id": "mva000"}, {"t": 1, "id": "../x"}]
     })");
     const std::vector<std::string> want{
         "schema_version must be 0",
@@ -148,6 +151,8 @@ TEST_CASE("check_cutscene names every problem") {
         "motion 1: bank must be a whole number, 0 or more",
         "motion 1: motion must be a whole number, 0 or more",
         "motion 1: actor can only be \"player\" for now",
+        "movie 1: t 6 is past the length (5)",
+        "movie 2: id must be the movie's name, e.g. \"mva000\"",
     };
     CHECK(p == want);
 }

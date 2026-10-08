@@ -44,6 +44,9 @@ constexpr const char* kUsage =
     "  remod sounds  --file <bank.sbnk.*|package.spck.*>: its sounds (id, length, channels, codec, where), the\n"
     "                ids a Replace sounds block's file names hold\n"
     "  remod sound-wav --file <bank|package> --id <sound id> --out <file.wav>: one sound, decoded\n"
+    "  remod new-sound --like <bank> --name <name> --out <new bank> [--audio <file>]: a brand-new sound bank made\n"
+    "                from a one-sound game bank (new ids from the name), holding your audio (none: 3 s of beeps);\n"
+    "                prints its bank and event ids\n"
     "  remod check-lua --file <script.lua> [--dump <il2cpp_dump.json>]: a REFramework script's syntax and the game\n"
     "                names it uses (the dump: --dump, else the app's SDK dump setting); exit 1 on a problem\n"
     "  remod api     graph editing for programs: one JSON request per line on stdin, one JSON reply per line\n"
@@ -67,6 +70,7 @@ const std::map<std::string, Command> kCommands{
     {"check-lua", {{"file"}, {"dump"}}},
     {"sounds", {{"file"}, {}}},
     {"sound-wav", {{"file", "id", "out"}, {}}},
+    {"new-sound", {{"like", "name", "out"}, {"audio"}}},
 };
 
 void print_meta(const remod::TexMeta& m) {
@@ -177,8 +181,22 @@ int run(int argc, char** argv) {
         }
         return 0;
     }
-    if (cmd->first == "sound-wav") {
-        const std::string wem = remod::sound_wem(args["file"], std::uint32_t(std::stoul(args["id"])));
+    if (cmd->first == "new-sound") {
+        std::ifstream in(std::filesystem::path(args["like"]), std::ios::binary);
+        const std::string like{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        const std::filesystem::path audio = args.contains("audio") ? args["audio"] : "";
+        const remod::NewSoundBank bank = remod::new_sound_bank(
+            like, args["name"],
+            [&](const remod::WemInfo& info) {
+                return remod::read_sound(audio, info.rate, info.channels, audio.empty() ? info.rate * 3 : 0);
+            },
+            remod::find_codebooks());
+        std::ofstream(std::filesystem::path(args["out"]), std::ios::binary)
+            .write(bank.bytes.data(), std::streamsize(bank.bytes.size()));
+        std::cout << "bank " << bank.bank_id << " event " << bank.event_id << "\n";
+        return 0;
+    }
+    if (cmd->first == "sound-wav") {        const std::string wem = remod::sound_wem(args["file"], std::uint32_t(std::stoul(args["id"])));
         const remod::WemInfo info = remod::read_wem_info(wem);
         const std::string wav =
             remod::wav_bytes(remod::decode_wem(wem, remod::find_codebooks()), info.channels, info.rate);

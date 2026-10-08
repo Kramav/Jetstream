@@ -381,4 +381,63 @@ std::uint32_t sound_id_in(const std::string& name) {
     return id <= 0xFFFFFFFFull ? std::uint32_t(id) : 0;
 }
 
+std::string new_sound_name_problem(const std::string& name) {
+    if (name.empty() || name.size() > 32 ||
+        !std::ranges::all_of(name, [](unsigned char c) { return std::islower(c) || std::isdigit(c) || c == '_'; }))
+        return "the sound's name must be 1 to 32 lowercase letters, digits or _, e.g. door_creak";
+    return "";
+}
+
+NewSoundBank new_sound_bank(std::string_view like, const std::string& name,
+                            const std::function<std::vector<std::int16_t>(const WemInfo&)>& pcm,
+                            const fs::path& codebooks) {
+    Bank bank = read_bank(like);
+    if (bank.media.size() != 1) throw std::runtime_error("the bank to copy must hold exactly one sound");
+    const auto get32 = [](const std::string& s, size_t at) {
+        std::uint32_t v;
+        std::memcpy(&v, s.data() + at, 4);
+        return v;
+    };
+    // The ids it defines: the bank's (BKHD: u32 version, u32 id), each event data object's (HIRC: u32 count, then
+    // objects {u8 type, u32 size, u32 id, ...}), its sound's. Each new one is Wwise's FNV-1 hash of "<name>/<old>".
+    std::map<std::uint32_t, std::uint32_t> ids;
+    std::uint32_t event = 0, bank_id = 0;
+    int events = 0;
+    for (const auto& [tag, body] : bank.chunks) {
+        if (tag == "BKHD" && body.size() >= 8) ids[bank_id = get32(body, 4)];
+        if (tag != "HIRC" || body.size() < 4) continue;
+        for (size_t i = 0, at = 4, count = get32(body, 0); i < count && at + 9 <= body.size(); ++i) {
+            const std::uint32_t id = get32(body, at + 5);
+            ids[id];
+            if (body[at] == 4) event = id, ++events;  // an Event
+            at += 5 + get32(body, at + 1);
+        }
+    }
+    if (events != 1) throw std::runtime_error("the bank to copy must hold exactly one event");
+    ids[bank.media[0].id];
+    for (auto& [old, fresh] : ids) {
+        std::uint32_t h = 2166136261u;
+        for (const char c : name + "/" + std::to_string(old))
+            h = (h * 16777619u) ^ std::uint8_t(std::tolower(static_cast<unsigned char>(c)));
+        fresh = h;
+    }
+    // Every place they're written (as 4 little-endian bytes) in the header and the event data.
+    for (auto& [tag, body] : bank.chunks) {
+        if (tag != "BKHD" && tag != "HIRC") continue;
+        for (size_t at = 0; at + 4 <= body.size(); ++at)
+            if (const auto it = ids.find(get32(body, at)); it != ids.end()) {
+                std::memcpy(body.data() + at, &it->second, 4);
+                at += 3;
+            }
+    }
+    // Its sound, in the original's form, and the size the event data records for it.
+    BankMedia& media = bank.media[0];
+    const WemInfo info = read_wem_info(media.data);
+    media.data = encode_wem(media.data, pcm(info), codebooks);
+    media.id = ids[media.id];
+    for (const BankSource& s : bank_sources(bank))
+        if (s.media == media.id) set_source_memory(bank, s, std::uint32_t(media.data.size()));
+    return {write_bank(bank), ids[bank_id], ids[event]};
+}
+
 }  // namespace remod

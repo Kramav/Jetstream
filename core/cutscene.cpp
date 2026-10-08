@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <tuple>
 
 namespace remod {
 
@@ -153,6 +154,19 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                     p.push_back(where + ": " + key + " must be a whole number, 0 or more");
             if (m.contains("actor") && m["actor"] != "player") p.push_back(where + ": actor can only be \"player\" for now");
         }
+    // A game movie by its id's name (RE4R: chainsaw.MovieDefine.ID, e.g. "mva000") or a New movie's; the timeline
+    // waits while it plays. A New sound's name: it plays from then on, beside the rest.
+    for (const auto& [key, what, example] : {std::tuple{"movies", "movie", "the movie's name, e.g. \"mva000\""},
+                                             std::tuple{"sounds", "sound", "a New sound block's name"}})
+        if (const json* entries = list(key))
+            for (size_t i = 0; i < entries->size(); ++i) {
+                const json& m = (*entries)[i];
+                const std::string where = std::string(what) + " " + std::to_string(i + 1);
+                time_of(m, where, "t");
+                const std::string id = m.contains("id") && m["id"].is_string() ? m["id"].get<std::string>() : "";
+                if (id.empty() || !std::ranges::all_of(id, [](unsigned char ch) { return std::isalnum(ch) || ch == '_'; }))
+                    p.push_back(where + ": id must be " + example);
+            }
     return p;
 }
 

@@ -3,13 +3,182 @@
 -- reframework\data\remod_cutscenes\<name>.json (the format: schemas/cutscene.v0.example.json in remod).
 --
 -- A cutscene: a length; an optional start key; camera keys (time, position, rotation x y z w, FOV, ease) the camera
--- follows; subtitles; a letterbox; fades; motions (one of the game's animations, by motion bank and id, on the player).
+-- follows; subtitles; a letterbox; fades; motions (one of the game's animations, by motion bank and id, on the player);
+-- movies (one of the game's, by id, full screen with the world paused; the cutscene's time waits while it plays).
 -- REFramework's menu > Script Generated UI > remod cutscenes: play or stop each, reload, and record camera keys: F10
 -- adds the camera as it is now as a key to remod_cutscenes\recording.json (the time between presses becomes the time
 -- between keys). Frame shots with REFramework's free camera, then press F10.
 
 local DIR = "remod_cutscenes"
 local RECORD_KEY = 0x79  -- F10
+
+-- ---- Time: os.clock when REFramework's Lua has it, else frames at 60 per second ----
+local frames = 0
+local function now() return (os and os.clock) and os.clock() or frames / 60 end
+
+local function enum(t, name) return sdk.find_type_definition(t):get_field(name):get_data(nil) end
+-- An AppSingleton`1 of the game's, by its get_Instance (on the parent).
+local function instance(t) return sdk.find_type_definition(t):get_method("get_Instance"):call(nil) end
+
+-- The game's pause for event movies, so the world stands still while one plays (RE4R).
+local function event_pause(on)
+    instance("share.PauseManager"):call(
+        (on and "requestStartPause" or "requestEndPause") .. "(share.PauseManager.PauseType, System.String, System.Action)",
+        enum("share.PauseManager.PauseType", "EventMovie"), sdk.create_managed_string("remod_cutscene"), nil)
+end
+
+-- ---- New movies (remod's New movie block; docs/re4r_movies.md, proven 2026-10-07) ----
+-- A mod's new movie is new files at new paths (MP4s and prefabs made like mva000's) and a note in
+-- reframework\data\remod_movies\<name>.json. The first time one is played it's registered with the game under a new
+-- id, in a catalog of its own, built from copies of mva000's objects with its own prefabs.
+local new_movies = {}  -- name -> note (from the files)
+local registered = {}  -- name -> id (this game session)
+local MOVIES_DIR = "remod_movies"
+
+-- A new object of a game type: created (REFramework's "simplify", else nil for some types), else a copy of `like`.
+local function new_object(type_name, like)
+    local ok, o = pcall(sdk.create_instance, type_name, true)
+    if not (ok and o) then o = like and like:call("MemberwiseClone") end
+    if not o then error("can't make a " .. type_name) end
+    return o:add_ref()
+end
+
+-- An array holding `values`: created, else a copy of `like` (as long); each set read back.
+local function new_array(elem_type, values, like)
+    local ok, arr = pcall(sdk.create_managed_array, elem_type, #values)
+    if not (ok and arr) and like and like:get_size() == #values then arr = like:call("Clone") end
+    if not arr then error("can't make an array of " .. elem_type) end
+    arr = arr:add_ref()
+    for i, v in ipairs(values) do
+        arr:call("SetValue(System.Object, System.Int32)", v, i - 1)
+        local back = arr:call("GetValue(System.Int32)", i - 1)
+        if not back or back:get_address() ~= v:get_address() then error("array element " .. (i - 1) .. " didn't take") end
+    end
+    return arr
+end
+
+-- A prefab on `like`'s path with mva000 changed to `name`. The path is taken from the game's, never typed: a leading
+-- "@" (a file with a platform suffix, .pfb.17.x64) must stay, or the game doesn't find the file.
+local function new_prefab(like, name)
+    local ok, p = pcall(sdk.create_instance, "via.Prefab", true)
+    p = (ok and p) and p:add_ref() or like:call("duplicate"):add_ref()
+    p:call("set_Path", sdk.create_managed_string((like:call("get_Path"):gsub("mva000/mva000", name .. "/" .. name))))
+    if not p:call("get_Exist") then error("the game doesn't see " .. p:call("get_Path") .. ": is the mod installed?") end
+    return p
+end
+
+-- ---- New sounds (remod's New sound and New movie blocks; docs/re4r_movies.md §4, proven 2026-10-07) ----
+-- A new sound is a bank of its own; its note gives the bank's path (as the game writes them, with "@") and its event.
+-- It plays through the player's sound container as the game plays its own: a copy of one of the container's trigger
+-- infos with the event changed (soundlib.SoundContainer.trigger). The bank is loaded once, as a resource the
+-- container keeps.
+local new_sounds = {}  -- name -> note (remod_sounds\<name>.json)
+local SOUNDS_DIR = "remod_sounds"
+local banks = {}       -- bank path -> {resource, holder, kept = {container address = true}}
+
+local function sound_container()
+    local cm = sdk.get_managed_singleton("chainsaw.CharacterManager")
+    local ctx = cm and cm:call("getPlayerContextRef")
+    local body = ctx and ctx:call("get_BodyGameObject")
+    local c = body and body:call("getComponent(System.Type)", sdk.typeof("chainsaw.SoundContainerApp"))
+    if not c then error("no sound container on the player (load a save first)") end
+    return c
+end
+
+-- A sound ({bank, event}) played now; gives what sound_stop takes.
+local function sound_play(s)
+    local b = banks[s.bank]
+    if not b then
+        local res = sdk.create_resource("via.simplewwise.BankResource", s.bank)
+        if not res then error("can't load " .. s.bank .. ": is the mod installed?") end
+        res = res:add_ref()
+        b = { resource = res, holder = res:create_holder("via.simplewwise.BankResourceHolder"):add_ref(), kept = {} }
+        banks[s.bank] = b
+    end
+    local c = sound_container()
+    if not b.kept[c:get_address()] then  -- a save loaded since: the player's container is a new one
+        c:call("get_BankResourceList"):call("Add", b.holder)
+        b.kept[c:get_address()] = true
+    end
+    local info = c:get_field("_TriggerInfoList"):call("get_Item", 0):call("MemberwiseClone"):add_ref()
+    info:set_field("_EventId", s.event)
+    info:set_field("_TriggerId", s.event)
+    return { container = c, request = c:call("trigger(soundlib.SoundTriggerInfo)", info), trigger = s.event }
+end
+
+-- Stops it (the game's own stop by request, else by trigger). [Not seen in game yet.]
+local function sound_stop(h)
+    local go = h.container:call("get_GameObject")
+    local ok = pcall(function()
+        sdk.find_type_definition("soundlib.SoundManager"):get_method("stopEventByRequestId"):call(nil, go, h.request, 0)
+    end)
+    if not ok then
+        pcall(h.container.call, h.container, "stopTriggered(System.UInt32, via.GameObject, System.UInt32)", h.trigger, go, 0)
+    end
+end
+
+local function register_movie(name)
+    if registered[name] then return registered[name] end
+    local mva000 = enum("chainsaw.MovieDefine.ID", "mva000")
+    local aem = instance("chainsaw.AppEventManager")
+    local list = aem:get_field("_AppEventCatalogList")
+    local used, catalog, entry = {}, nil, nil
+    for i = 0, list:call("get_Count") - 1 do
+        local c = list:call("get_Item", i)
+        if c and c:get_type_definition():get_full_name() == "chainsaw.MovieCatalog" then
+            local arr = c:call("get_ResourceArray")
+            for j = 0, arr:get_size() - 1 do
+                local e = arr:get_element(j)
+                used[e:call("get_ID")] = true
+                if e:call("get_ID") == mva000 then catalog, entry = c, e end
+            end
+        end
+    end
+    if not entry then error("mva000 isn't registered yet (load a save first)") end
+    for _, f in ipairs(sdk.find_type_definition("chainsaw.MovieDefine.ID"):get_fields()) do
+        if f:is_static() then used[f:get_data(nil)] = true end
+    end
+    -- The game's ids are 10000 + the mva number (mva924 the last): ours from 10950, the first free.
+    local id = 10950
+    while used[id] do id = id + 1 end
+
+    local base = entry:call("get_Data")
+    local res = new_object("chainsaw.MovieResource", base)
+    res:call("set_MoviePrefab", new_prefab(base:call("get_MoviePrefab"), name))
+    local extra = base:call("get_ExceptionalMoviePrefabs")
+    res:call("set_ExceptionalMoviePrefabs", new_array("via.Prefab", { new_prefab(extra:get_element(0), name) }, extra))
+    res:call("set_DisplayType", base:call("get_DisplayType"))
+    local option = new_object("chainsaw.MovieResource.OptionParam", base:call("get_Option"))
+    option:call("set_WwiseTriggerID", 0)  -- not mva000's sound: new movies are silent for now
+    res:call("set_Option", option)
+
+    local mine = new_object(entry:get_type_definition():get_full_name(), entry)
+    mine:call("set_ID", id)
+    mine:call("set_Data", res)
+    mine:call("set_FollowData", entry:call("get_FollowData"))
+    local cat = new_object("chainsaw.MovieCatalog", catalog)
+    cat:call("set_KeyName", sdk.create_managed_string("remod_movie_" .. name))
+    cat:set_field("_KeyNameHash", 0x7e3d0000 + id)
+    cat:call("set_Kind", catalog:call("get_Kind"))
+    cat:call("set_ResourceArray", new_array(mine:get_type_definition():get_full_name(), { mine },
+        catalog:call("get_ResourceArray")))
+    aem:call("registerCatalog", cat, catalog:call("get_Kind"))
+    local found = aem:call("getMovieResource", id)
+    if not found or found:get_address() ~= res:get_address() then error("the game didn't take the new movie's catalog") end
+
+    -- A load table entry like mva000's, its chapter flags off.
+    local mm = instance("chainsaw.MovieMediator")
+    if not mm:call("getLoadInfo", id) then
+        local info = mm:call("getLoadInfo", mva000):call("MemberwiseClone"):add_ref()
+        info:call("set_MovieID", id)
+        for _, f in ipairs({ "set_IsChapterStart", "set_IsChapterEnd", "set_IsEnding", "set_IsGameOver",
+                             "set_HasNextMovie" }) do info:call(f, false) end
+        mm:call("get_MovieLoadTable"):call("get_LoadInfoList"):call("Add", info)
+    end
+    registered[name] = id
+    log.info("[remod_cutscene] new movie " .. name .. " registered as id " .. id)
+    return id
+end
 
 -- What differs between games, found by remod's spikes/cutscene_probe.lua run in that game.
 local GAMES = {
@@ -32,7 +201,6 @@ local GAMES = {
         hold_player = function()
             local mgr = sdk.get_managed_singleton("chainsaw.CharacterManager")
             if not mgr then error("no CharacterManager") end
-            local function enum(t, name) return sdk.find_type_definition(t):get_field(name):get_data(nil) end
             mgr:call("requestOperationStop", enum("chainsaw.CharacterControlIndex", "Player_1"),
                 enum("chainsaw.character.PauseLayer", "Self"))
         end,
@@ -47,13 +215,50 @@ local GAMES = {
             return before
         end,
         hud_off = 0,
+        -- A game movie by its id's name (chainsaw.MovieDefine.ID, e.g. "mva000"), played as the game plays its own
+        -- (chainsaw.MovieMediator: load, then play) with the world paused. Seen with mva000 (spikes/new_movie_probe F7,
+        -- 2026-10-07): full screen, Leon's position, health and animation unchanged while it played.
+        movie_start = function(name)
+            local f = sdk.find_type_definition("chainsaw.MovieDefine.ID"):get_field(name)
+            local id
+            if f then
+                id = f:get_data(nil)
+            elseif new_movies[name] then
+                id = register_movie(name)
+            else
+                error("no movie " .. name .. ": not the game's, and no New movie block made one (in " .. MOVIES_DIR .. ")")
+            end
+            local m = { id = id, phase = "loading", since = now() }
+            event_pause(true)
+            instance("chainsaw.MovieMediator"):call("load", m.id)
+            return m
+        end,
+        -- true once it has played to the end.
+        movie_update = function(m)
+            local mm = instance("chainsaw.MovieMediator")
+            if m.phase == "loading" then
+                if mm:call("IsLoaded", m.id) then
+                    mm:call("play", m.id, nil, nil)
+                    m.phase, m.since = "starting", now()
+                elseif now() - m.since > 20 then
+                    error("not loaded after 20 s")
+                end
+            elseif m.phase == "starting" then
+                if mm:call("isPlaying") then m.phase = "playing" elseif now() - m.since > 15 then error("didn't start") end
+            elseif not mm:call("isPlaying") then
+                return true
+            end
+            return false
+        end,
+        movie_stop = function(m)
+            local mm = instance("chainsaw.MovieMediator")
+            if m.phase ~= "loading" and mm:call("isPlaying") then pcall(mm.call, mm, "requestSkip", m.id) end
+            pcall(mm.call, mm, "unload", m.id)
+            event_pause(false)
+        end,
     },
 }
 local game = GAMES[reframework:get_game_name()]
-
--- ---- Time: os.clock when REFramework's Lua has it, else frames at 60 per second ----
-local frames = 0
-local function now() return (os and os.clock) and os.clock() or frames / 60 end
 
 -- ---- Cutscene files ----
 local cutscenes = {}  -- { file, data }
@@ -78,6 +283,14 @@ local function load_all()
         end
     end
     table.sort(cutscenes, function(a, b) return a.file < b.file end)
+
+    new_movies = {}
+    local ok2, notes = pcall(fs.glob, MOVIES_DIR .. "[/\\\\].*\\.json$")
+    for _, path in ipairs(ok2 and notes or {}) do
+        local rel = path:match("[/\\]data[/\\](.*)$") or path
+        local note = json.load_file(rel)
+        if type(note) == "table" and type(note.name) == "string" then new_movies[note.name] = note end
+    end
 end
 
 -- ---- The camera ----
@@ -136,6 +349,7 @@ end
 
 local function stop()
     if not playing then return end
+    if playing.movie then try("stopping the movie", game.movie_stop, playing.movie.m) end
     if playing.fov_before then
         local cam = camera_parts()
         if cam then pcall(cam.call, cam, "set_FOV", playing.fov_before) end
@@ -158,7 +372,36 @@ local function play(data)
                 hud_before = try("hiding the HUD", game.hud, game.hud_off) }
 end
 
-local function elapsed() return playing and (now() - playing.started) or 0 end
+-- The cutscene's time; it stands still while a movie plays.
+local function elapsed()
+    if not playing then return 0 end
+    return playing.movie and playing.movie.t or (now() - playing.started)
+end
+
+-- A movie at its time: the timeline waits until it has played (or failed: reported, and the cutscene goes on).
+local function end_movie()
+    try("stopping the movie", game.movie_stop, playing.movie.m)
+    playing.started = now() - playing.movie.t
+    playing.movie = nil
+end
+
+local function run_movies(t)
+    if playing.movie then
+        local ok, done = pcall(game.movie_update, playing.movie.m)
+        if not ok then report("movie " .. playing.movie.id, done) end
+        if not ok or done then end_movie() end
+        return
+    end
+    for i, m in ipairs(playing.data.movies or {}) do
+        if not playing.fired["movie" .. i] and t >= m.t then
+            playing.fired["movie" .. i] = true
+            if not game.movie_start then return report("movie " .. m.id, "movies aren't supported in this game yet") end
+            local started = try("movie " .. m.id, game.movie_start, m.id)
+            if started then playing.movie = { t = m.t, id = m.id, m = started } end
+            return
+        end
+    end
+end
 
 -- An animation on an actor ("player" only, for now).
 local function player_layer()
@@ -284,8 +527,9 @@ re.on_frame(function()
         end
     end
     if not playing then return end
+    run_movies(elapsed())
     local t = elapsed()
-    if t >= (playing.data.length or 0) then
+    if not playing.movie and t >= (playing.data.length or 0) then
         stop()
         return
     end
@@ -295,7 +539,9 @@ re.on_frame(function()
             start_motion(m)
         end
     end
-    draw_overlays(playing.data, t)
+    -- Not over a movie once it shows (while it loads they cover the wait, e.g. a fade held black).
+    -- ponytail: so no subtitles over a movie.
+    if not (playing.movie and playing.movie.m.phase ~= "loading") then draw_overlays(playing.data, t) end
 end)
 
 re.on_draw_ui(function()
@@ -317,6 +563,17 @@ re.on_draw_ui(function()
         end
         imgui.same_line()
         imgui.text(name .. (c.data.start and c.data.start.key and ("  (" .. c.data.start.key .. ")") or ""))
+    end
+    local names = {}
+    for name in pairs(new_movies) do table.insert(names, name) end
+    table.sort(names)
+    for i, name in ipairs(names) do  -- each alone, as a cutscene of just that movie
+        local this = playing and playing.data.movie_of == name
+        if imgui.button((this and "Stop##movie" or "Play##movie") .. i) then
+            if this then stop() else play({ name = name, movie_of = name, length = 0.01, movies = { { t = 0, id = name } } }) end
+        end
+        imgui.same_line()
+        imgui.text("New movie " .. name .. (registered[name] and (" (id " .. registered[name] .. ")") or ""))
     end
     local ok, now_playing = pcall(current_motion)
     imgui.text("Leon's animation now: " .. (ok and now_playing or "unknown"))

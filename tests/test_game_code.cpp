@@ -74,7 +74,7 @@ std::string problems(const std::string& source, const remod::GameCode* code) {
 
 TEST_CASE("an SDK dump gives types, parents, fields and methods, nothing else") {
     const remod::GameCode code = dump_code();
-    REQUIRE(code.types.size() == 3);
+    REQUIRE(code.size() == 3);
     const remod::GameType& c = *code.find("app.Character");
     CHECK(c.parent.empty());
     REQUIRE(c.fields.size() == 2);  // not RSZ's "fields"
@@ -111,9 +111,14 @@ TEST_CASE("the dump is read once into a cache, and again when it changes") {
     TempDir tmp;
     const fs::path dump = tmp.path / "il2cpp_dump.json", cache = tmp.path / "cache/code.txt";
     write_file(dump, kDump);
-    CHECK(remod::load_game_code(dump, cache).types.size() == 3);
+    CHECK(remod::load_game_code(dump, cache).size() == 3);
     REQUIRE(fs::is_regular_file(cache));
-    CHECK(remod::load_game_code(dump, cache).method("app.Player", "Jump(System.Single, System.Boolean)"));
+    const remod::GameCode cached = remod::load_game_code(dump, cache);
+    CHECK(cached.method("app.Player", "Jump(System.Single, System.Boolean)"));
+    CHECK(cached.find("app.Player")->parent == "app.Character");
+    CHECK(cached.find("app.PlayerManager")->methods.size() == 1);  // the last type's block ends the file
+    CHECK(cached.find("app.Character")->fields.size() == 2);
+    CHECK(cached.names() == std::vector<std::string_view>{"app.Character", "app.Player", "app.PlayerManager"});
 
     // The cache is what's read while the dump is unchanged: put a type in it that the dump doesn't have.
     std::string text = test::read_file(cache);
@@ -121,7 +126,7 @@ TEST_CASE("the dump is read once into a cache, and again when it changes") {
     write_file(cache, text);
     CHECK(remod::load_game_code(dump, cache).find("Cached.Type"));
     write_file(cache, text.substr(0, text.find('\n') + 1) + "garbage\n");  // cut or not ours: the dump again
-    CHECK(remod::load_game_code(dump, cache).types.size() == 3);
+    CHECK(remod::load_game_code(dump, cache).size() == 3);
 
     write_file(dump, std::string(kDump) + " ");  // a new dump (another size): read again
     CHECK_FALSE(remod::load_game_code(dump, cache).find("Cached.Type"));
@@ -215,7 +220,7 @@ TEST_CASE("API and MCP: check_script and game_code") {
     TempDir tmp;
     write_file(tmp.path / "il2cpp_dump.json", kDump);
     write_file(tmp.path / "m.lua", "sdk.find_type_definition(\"app.Player\"):get_method(\"Jum\")\n");
-    remod::set_sdk_dump(tmp.path / "il2cpp_dump.json");
+    remod::set_sdk_dump(tmp.path / "il2cpp_dump.json", tmp.path / "cache");
     struct Reset {
         ~Reset() { remod::set_sdk_dump({}); }  // other tests check without a dump
     } reset;
@@ -233,7 +238,7 @@ TEST_CASE("Lua script block: a name not in the game warns, a syntax error fails 
     TempDir tmp;
     write_file(tmp.path / "il2cpp_dump.json", kDump);
     write_file(tmp.path / "m.lua", "local t = sdk.find_type_definition('app.Player')\nt:get_field('Hpp')\n");
-    remod::set_sdk_dump(tmp.path / "il2cpp_dump.json");
+    remod::set_sdk_dump(tmp.path / "il2cpp_dump.json", tmp.path / "cache");
     struct Reset {
         ~Reset() { remod::set_sdk_dump({}); }
     } reset;

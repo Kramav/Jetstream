@@ -306,6 +306,38 @@ g.link(sound, 'sound', replace, 'sounds')
 g.link(replace, 'files', pkg, 'file')
 g.save('14_replace_a_sound.json')
 
+# 15. A game movie at a moment you choose: a cutscene file (cutscenes/play_a_movie.json, below) holding a fade to black, the
+# intro movie (mva000) and a fade back. F9 in game: the HUD goes, Leon is held, the world pauses while it plays, and
+# play resumes where it was.
+g = Graph()
+cutscene = g.add('Cutscene', 'Fade out, the intro movie, fade in', cutscene='cutscenes/play_a_movie.json')
+pkg = package(g, 'Movie moment', 'Press F9 in game: the intro movie plays, then play resumes where it was')
+g.link(cutscene, 'files', pkg, 'file')
+g.save('15_play_a_game_movie.json')
+os.makedirs(os.path.join(OUT, 'cutscenes'), exist_ok=True)  # not beside the graphs: every .json there is one
+with open(os.path.join(OUT, 'cutscenes', 'play_a_movie.json'), 'w', encoding='utf-8', newline='\n') as f:
+    json.dump({'schema_version': 0, 'name': 'Play the intro movie', 'length': 1.0, 'start': {'key': 'F9'},
+               'fades': [{'t': 0.0, 'until': 0.5, 'from': 0.0, 'to': 1.0},
+                         {'t': 0.5, 'until': 1.0, 'from': 1.0, 'to': 0.0}],
+               'movies': [{'t': 0.5, 'id': 'mva000'}]}, f, indent=2)
+print('wrote cutscenes/play_a_movie.json')
+
+# 16. A movie of your own, added to the game (none of its movies replaced): New movie makes it (here a test card;
+# put your video in Your video), and a cutscene plays it by its name when you press F8.
+g = Graph()
+movie = g.add('NewMovie', 'Your new movie', name='rmd001', video='')
+cutscene = g.add('Cutscene', 'Fade out, your movie, fade in', cutscene='cutscenes/play_new_movie.json')
+pkg = package(g, 'New movie', 'Press F8 in game: your own movie plays, then play resumes where it was')
+g.link(movie, 'files', pkg, 'file')
+g.link(cutscene, 'files', pkg, 'file')
+g.save('16_insert_a_new_movie.json')
+with open(os.path.join(OUT, 'cutscenes', 'play_new_movie.json'), 'w', encoding='utf-8', newline='\n') as f:
+    json.dump({'schema_version': 0, 'name': 'Play my new movie', 'length': 1.0, 'start': {'key': 'F8'},
+               'fades': [{'t': 0.0, 'until': 0.5, 'from': 0.0, 'to': 1.0},
+                         {'t': 0.5, 'until': 1.0, 'from': 1.0, 'to': 0.0}],
+               'movies': [{'t': 0.5, 'id': 'rmd001'}]}, f, indent=2)
+print('wrote cutscenes/play_new_movie.json')
+
 
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):

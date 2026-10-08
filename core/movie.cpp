@@ -706,4 +706,29 @@ std::string MoviePlayer::error() const {
     return state_->error;
 }
 
+// ---- New movies ----
+
+std::string new_movie_name_problem(const std::string& name) {
+    if (name.size() != 6 ||
+        !std::ranges::all_of(name, [](unsigned char c) { return std::islower(c) || std::isdigit(c) || c == '_'; }))
+        return "the movie name must be 6 lowercase letters, digits or _, like the game's mva000 (it takes mva000's place "
+               "in the copied files, letter for letter)";
+    if (name.starts_with("mv")) return "names starting with mv are the game's movies: pick another, e.g. rmd001";
+    return "";
+}
+
+size_t rename_movie_paths(std::string& prefab, const std::string& from, const std::string& to) {
+    if (from.size() != to.size()) throw std::runtime_error("movie names must be the same length");
+    const auto utf16 = [](const std::string& s) {
+        std::string out;
+        for (const char c : s) out += {c, '\0'};
+        return out;
+    };
+    const auto a = utf16("mv/" + from + "/" + from), b = utf16("mv/" + to + "/" + to);
+    size_t n = 0;
+    for (auto it = prefab.begin(); (it = std::search(it, prefab.end(), a.begin(), a.end())) != prefab.end(); ++n)
+        it = std::copy(b.begin(), b.end(), it);
+    return n;
+}
+
 }  // namespace remod

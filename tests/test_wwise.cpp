@@ -472,6 +472,49 @@ TEST_CASE("listing the castle's music reads headers, not its 837 MB (set REMOD_G
     CHECK(remod::sound_wem(small, std::uint32_t(whole.streams.at(0).id)) == whole.streams.at(0).data);
 }
 
+TEST_CASE("new_sound_bank: a brand-new bank from a game one, every id it defines new, its sound ours (set REMOD_GAME)") {
+    const std::string game = game_dir();
+    if (game.empty()) SKIP("set REMOD_GAME to run");
+    const fs::path like = fs::path(game) / "_chainsaw/sound/wwise/ch_csa404_se.sbnk.1.x64";
+    if (!fs::exists(like)) SKIP("needs ch_csa404_se");
+    const std::string was = test::read_file(like);
+    const remod::NewSoundBank made = remod::new_sound_bank(
+        was, "remod_snd001", [](const remod::WemInfo& info) { return tones(info.rate * 2, std::vector<double>(info.channels, 500)); },
+        remod::find_codebooks());
+    // The ids each event data object defines (its first u32), old and new: none of the old left, references kept.
+    const auto objects = [](const remod::Bank& b) {
+        std::vector<std::pair<int, std::uint32_t>> out;
+        const std::string& h = std::ranges::find(b.chunks, std::string("HIRC"), &std::pair<std::string, std::string>::first)->second;
+        std::uint32_t count, size, id;
+        std::memcpy(&count, h.data(), 4);
+        for (size_t i = 0, at = 4; i < count; ++i, at += 5 + size) {
+            std::memcpy(&size, h.data() + at + 1, 4);
+            std::memcpy(&id, h.data() + at + 5, 4);
+            out.emplace_back(std::uint8_t(h[at]), id);
+        }
+        return std::pair{out, h};
+    };
+    const remod::Bank old_bank = remod::read_bank(was), new_bank = remod::read_bank(made.bytes);
+    const auto [old_objects, old_hirc] = objects(old_bank);
+    const auto [new_objects, new_hirc] = objects(new_bank);
+    REQUIRE(old_objects.size() == new_objects.size());
+    for (size_t i = 0; i < old_objects.size(); ++i) {
+        CHECK(old_objects[i].first == new_objects[i].first);
+        CHECK(old_objects[i].second != new_objects[i].second);
+        const std::uint32_t old_id = old_objects[i].second;
+        CHECK(new_hirc.find(std::string(reinterpret_cast<const char*>(&old_id), 4)) == std::string::npos);
+    }
+    CHECK(std::ranges::count(new_objects, std::pair<int, std::uint32_t>{4, made.event_id}) == 1);
+    REQUIRE(new_bank.media.size() == 1);
+    CHECK(new_bank.media[0].id != old_bank.media[0].id);
+    const remod::WemInfo info = remod::read_wem_info(new_bank.media[0].data);
+    CHECK(info.samples == info.rate * 2);  // ours: 2 s
+    for (const remod::BankSource& s : remod::bank_sources(new_bank))
+        if (s.media == new_bank.media[0].id) CHECK(s.memory == new_bank.media[0].data.size());
+    CHECK(remod::new_sound_bank(was, "remod_snd001", [](const remod::WemInfo& i) { return tones(i.rate, {500}); },
+                                remod::find_codebooks()).event_id == made.event_id);  // the same name, the same ids
+}
+
 TEST_CASE("the game's banks, and a streamed dialogue line replaced in step (set REMOD_GAME)") {
     const std::string game = game_dir();
     if (game.empty()) SKIP("set REMOD_GAME to run");

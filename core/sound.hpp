@@ -35,6 +35,22 @@ SoundReplacement replace_sounds(const std::filesystem::path& natives, const std:
                                 const std::set<std::uint32_t>& ids, const SoundSource& sound,
                                 const std::filesystem::path& codebooks);
 
+// A brand-new sound bank, made from `like`: a game bank holding one event and one sound stored whole in it (e.g. RE4R's
+// ch_csa404_se). Every id the bank defines (the bank's own, each event data object's, its sound's) gets a new one made
+// from `name`, so it loads beside the game's banks; its sound becomes `pcm(original's info)` in the original's form.
+// Gives the bytes and the new bank and event ids (the event is what plays it). Throws std::runtime_error.
+struct NewSoundBank {
+    std::string bytes;
+    std::uint32_t bank_id = 0, event_id = 0;
+};
+NewSoundBank new_sound_bank(std::string_view like, const std::string& name,
+                            const std::function<std::vector<std::int16_t>(const WemInfo&)>& pcm,
+                            const std::filesystem::path& codebooks);
+
+// What's wrong with a new sound's name (a New sound block's, the name cutscenes play it by), or "" if nothing:
+// 1-32 lowercase letters, digits or _.
+std::string new_sound_name_problem(const std::string& name);
+
 // The sounds in one bank or package (for a package outside streaming/, its streaming copy's), for a browser.
 struct SoundEntry {
     std::uint32_t id = 0;

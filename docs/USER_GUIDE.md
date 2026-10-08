@@ -219,6 +219,22 @@ Not known yet (needs a test in game): whether a movie of another length plays fu
 try); whether the game plays a replaced file's sound (the logos) and a replaced sound package's (example 12's
 beep); which movie plays where.
 
+### Adding a movie of your own
+
+**New movie** adds your video to the game as a movie of its own, beside the game's: none of the game's movies is
+replaced. A cutscene then plays it whenever you choose (see Cutscenes below).
+1. **Movie name:** 6 lowercase letters, digits or `_`, not starting with `mv`, e.g. `rmd001`. Each new movie in a
+   mod needs its own name. (It has to be 6 characters: the new movie's files are copies of the game's `mva000`
+   files with the name swapped in, letter for letter.)
+2. **Your video:** any video Windows plays, at its own length. Empty: a test card with the name and the seconds.
+3. Link **new movie files** into Package's **other file**, and add a **Cutscene** whose file lists the movie:
+   `"movies": [{"t": 0.5, "id": "rmd001"}]`. In game the movie also has a **Play** button in REFramework's menu
+   (Script Generated UI > remod cutscenes).
+
+It needs **Game files** set (it copies files from `mva000`), and players need REFramework. New movies are silent
+for now: the game plays its movies' sound from its sound banks, and new ones don't have any yet. Example
+`16_insert_a_new_movie` is the whole thing, with a test card and F8. How it works: `docs\re4r_movies.md`.
+
 ## Sounds
 
 The game's sounds are in Wwise sound banks (`.sbnk`) and sound packages (`.spck`) under
@@ -316,6 +332,14 @@ animation's numbers, open REFramework's menu > Script Generated UI > remod cutsc
 animation now", e.g. `bank 1000, motion 160, frame 76 of 2433`: do the action in game and note the numbers.
 The HUD is hidden through the game's own Display HUD option: if the game ever crashes during a cutscene and the HUD
 stays hidden, set it back in the game's options.
+
+**The game's movies in a cutscene** (`movies`: a time, then the movie's `id`, e.g. `{"t": 0.5, "id": "mva000"}`): the
+movie plays full screen as the game plays its own, with the game paused (enemies too) and Leon held. The cutscene's
+time waits while it plays, then goes on from that moment, so anything after it in the file happens after the movie.
+Fades and subtitles aren't drawn over the movie itself; a fade that's black when the movie starts covers its loading.
+Example `15_play_a_game_movie` fades out, plays the intro movie and fades back in. Movie ids are the game's movie names
+(`mva000`, `mva201`, ...), or the name of a movie of your own from a **New movie** block (example
+`16_insert_a_new_movie`). The game's play-time clock keeps running while a movie plays.
 
 ## Built from blocks
 

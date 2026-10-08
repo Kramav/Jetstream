@@ -659,9 +659,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
-  (`edits/`, `mods/`) beside them. Thirteen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  (`edits/`, `mods/`) beside them. Sixteen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
   edit with streaming, conditions filter, channels, if / else, backup, movie test card, movie edited by hand
-  (2026-10-06). **All thirteen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
+  (2026-10-06), a game sound replaced, a game movie played from a cutscene, a new movie added (2026-10-07). **All
+  sixteen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
   example 13's edit stood in by the movie itself); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
@@ -955,8 +956,14 @@ propose them as next steps before then.
 **Order (user, 2026-10-03):** M2 REFramework scripting, M3 movies and cutscenes, M4 AI (was M2), M5 the REFramework
 runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 
-- **NEXT (2026-10-07): the user runs the route 2 movie probe (`spikes/movie_probe.md`); AFTER that, finishing the
-  cutscene (M3 route 3) is the next step (user: "finishing the cutscene is the next step AFTER I do this spike").**
+- **NEXT (user, 2026-10-07, in this order):** the SDK dump loading fixed (done the same day: 1.1 s, M2 step 2);
+  then **M3 route 2** (play a movie when we choose; "heavy scripting for all this movie stuff"; its new-id probe is
+  a game movie in a cinematic state works and is example 15; **a new movie id works** (run 3), all in
+  docs/re4r_movies.md; the New movie block and example 16 built, not yet seen in game); then **triggers**
+  (cutscenes starting by themselves; M5's first piece; survey with §9's "finding a game's switch" method); **other
+  characters in cutscenes** matter a lot (user). Later: Write with Claude for cutscene files, an example graph,
+  sound; M4. **In game (user, 2026-10-07): the finished cutscene stops Leon and the controls come back after.** The
+  user found "note an animation's numbers from the menu" confusing: not done yet.
   Route 3 so far (M3 "Route 3" below): format, runtime, probe and the Cutscene block built (2026-10-07); the
   cutscene probe ran the same day; the test cutscene (`spikes/cutscene_test.json`) then played in game with the
   camera held and cutting on time. **Freezing the player and hiding the HUD: built into the runtime 2026-10-07**
@@ -984,7 +991,8 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     run 6 sends it every frame before UpdateBehavior, layer by layer. **Run 6 works (user, 2026-10-07): every layer
     stops Leon even with a direction held; the runtime uses Self** (OperationEnable / EnableOperation read false while sent, true again
     after). **The runtime now uses it** (`GAMES.re4.hold_player`, every frame of a cutscene before UpdateBehavior;
-    control returns when it's no longer sent); the head-updater freeze is gone. Not yet seen in a cutscene. (The
+    control returns when it's no longer sent); the head-updater freeze is gone. **Seen in a cutscene (user,
+    2026-10-07): Leon stops, the controls come back after.** (The
     user has since updated REFramework again: hooks are available if ever needed.)
     **Plan (user, 2026-10-07; order theirs):** the operation stop (run 6), then 2. a read-only watch probe (log which
     player / input values change when the game's own events, ladder, door kick, interaction, take control; then set
@@ -1098,11 +1106,15 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
          search; syntax messages and lines; names: types, methods, fields, prototypes, singletons, create_instance,
          comments and strings skipped, reassignment; API and the block's warn / fail), `remod check-lua` by hand.
          **Real RE4R dump (user, 2026-10-07):** 1.03 GB; the first read (Debug CLI, `check-lua` on the cutscene runtime:
-         no problems) took 307 s; the cache (112 MB of text) still takes ~100 s to read (Debug CLI): too slow for the app,
-         to fix (a Release build, or a binary / lazily read cache). Search only matches names (not field types): the
-         cache file can be grepped by type. Tests leave 480-byte caches in the user's `%LOCALAPPDATA%\remod\game_code`
-         (to fix: a temp cache dir in tests). Not yet measured: memory; whether nested types' names match what
-         find_type_definition takes. **Not checked by eye:** the SDK dump field.
+         no problems) took 307 s; 163,466 types, 236,556 fields, 1,112,853 methods. **Loading made lazy (2026-10-07):**
+         reading the cache into strings took 55 s and 1,058 MB (Debug CLI); now `GameCode` holds the cache's text and a
+         sorted index of type names (`GameCode::Store`), a type's members are parsed the first time `find` asks
+         (mutex; pointers stay valid), and search scans the lines without parsing: **1.1 s and 126 MB**, a search over
+         every member 2.7 s with the load (Debug). The first read of a dump streams one type at a time into the cache
+         text (tabs and line breaks in names become spaces). Cache format unchanged. Search only matches names (not
+         field types): the cache file can be grepped by type. Tests pass a temp cache folder (`set_sdk_dump`'s
+         `cache_dir`). Not yet checked: whether nested types' names match what find_type_definition takes. **Not
+         checked by eye:** the SDK dump field.
     3. **Write with AI** on the Script block: "What should it do?" and **Write it** run `claude -p` (as Run program
        does) with `remod mcp` attached and instructions (REFramework book pages, the checks, the autorun rules
        above); it writes the `.lua`, runs `check_script` until clean, and the block shows the result. **Ask for a
@@ -1280,6 +1292,47 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       **Later the same day the user updated REFramework anyway** (dinput8.dll 2026-10-07 13:27, 23 MB vs v1.5.9's
       12.8 MB: a newer build; its version and integrity bypass show in the log at the next game start). Our scripts
       stay hook-free all the same: players of the user's mods may be on v1.5.9.
+  - **Route 2, a new movie id: WORKS (2026-10-07, run 3 of `spikes/new_movie_probe.lua`). Everything about it is in
+    [docs/re4r_movies.md](docs/re4r_movies.md): read it before any movie work** (user: "note down everything so we
+    dont need to figure it out again ... outside of claude md with a pointer"). In short: our own movie `rmd001`
+    (new files at new paths: MP4s by Replace movie, mva000's stubs, mva000's prefabs byte-patched to the new name)
+    registered under a new id (10950) in a catalog of our own at runtime (`AppEventManager.registerCatalog`), played
+    by `chainsaw.MovieMediator` `load` / `play` inside the cinematic state (`share.PauseManager` EventMovie pause,
+    the operation stop each frame, HUD option 0): loaded in 0.1 s, played 12 s full screen, Leon's position,
+    rotation, HP, PTAS, kills and animation unchanged during and after; nothing of the game's replaced. The user's
+    acceptance test (a cinematic state, a truly new id, play resumed exactly as left) is met except **timers:
+    `share.GameClock`'s Game and ActualPlaying times count the movie** (not frozen). Pitfalls recorded there: a
+    leading `@` in a resource path (platform file `.x64`; run 2 failed without it), `create_instance(t, true)`
+    (simplify), the generic catalog entry only by `MemberwiseClone`, `create_userdata` of a shipped `.user` gave an
+    empty object. Open: sound for new movies (Wwise; they're silent), more than one new movie, 1080p only.
+    **In remod (2026-10-07; user: "lets make a node and a graph for inserting movies"):**
+    - **New movie** block (`NewMovie`): a name (6 chars) and a video, giving the movie's files, its note and the
+      runtime.
+    - **The runtime** registers a named new movie the first time a cutscene's `movies` entry plays it.
+    - **Example 16** (`16_insert_a_new_movie`, F8).
+
+    Details in docs/re4r_movies.md §5. Tests pass, and example 16 builds from the real files. Not yet seen in game.
+    **Sound (user, 2026-10-07: "can we try adding sound to them ... or an f5 play a brand new sound, f7 play a sound
+    from game files"): the sound probe** (`spikes/sound_probe.md`, `.lua`, `make_sound_probe.ps1`). **Run 1 (user,
+    2026-10-07: "both work"):** a brand-new bank's sound (F5) and a game sound (F7) play from a script, the new one
+    on the first press. `rmd002` (sound in the movie file) not tried yet.
+    It tries F7, a game sound by a container's trigger; F5, a brand-new bank; and a new movie with AAC in its file
+    (New movie's advanced "Sound in the movie file", probe movie `rmd002`).
+    - New: core `new_sound_bank` (`sound.*`) and CLI `remod new-sound`.
+    - New movie's test card is now 12 s.
+    - The design and the findings from the dump are in docs/re4r_movies.md §4.
+    - **Built from F7 (user, 2026-10-07: "make an example graph for everything you did for f7"):** cutscene files
+      take `movies` [{`t`, `id`: the MovieDefine.ID name}] (`check_cutscene`: t in the length, id letters, digits, `_`).
+      The runtime (`GAMES.re4.movie_start` / `movie_update` / `movie_stop`): EventMovie pause on, `MovieMediator.load`,
+      `play` once `IsLoaded`, done when `isPlaying` drops (load 20 s, start 15 s limits, a failure reported and the
+      cutscene goes on); then skip if still playing, `unload`, pause off. The cutscene's time stands at the movie's t
+      while it plays (`elapsed`), resuming from there; fades / subtitles aren't drawn once the movie shows (while it
+      loads they are: a fade held black covers it). The HUD and the operation stop already cover the whole cutscene.
+      Example **15_play_a_game_movie** (Cutscene -> Package; its file `examples/cutscenes/play_a_movie.json`: fade to
+      black 0-0.5 s, mva000 at 0.5, fade in 0.5-1 s; F9); `examples/cutscenes/` holds cutscene files (every `.json`
+      beside the graphs is taken for a graph; the examples test copies that folder too). Checked: tests (the format,
+      example 15 runs with REMOD_GAME), `check-lua` on the runtime. **Not checked in game:** the runtime's movie path
+      (the probe's F7 is the same calls), the fades around it.
   - **Route 3: scripted real-time cutscenes (started 2026-10-07; user: "long term id like this to extend to re9").**
     - **Survey (2026-10-07):**
       | Candidate | Covers | Gap | Licence | Maintained |

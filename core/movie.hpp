@@ -45,6 +45,16 @@ std::string encode_movie(const std::filesystem::path& video, const MovieInfo& li
 std::vector<std::int16_t> read_sound(const std::filesystem::path& video, unsigned rate, unsigned channels,
                                      std::uint64_t frames, std::string* what = nullptr);
 
+// ---- New movies (docs/re4r_movies.md): our own movie under a new id, made like the game's mva000 ----
+
+// What's wrong with a new movie's name, or "" if nothing: 6 lowercase letters, digits or _ (it replaces "mva000" in
+// the game's prefabs byte for byte, so it must be as long), not starting "mv" (the game's own names).
+std::string new_movie_name_problem(const std::string& name);
+
+// A prefab's bytes with each UTF-16 "mv/<from>/<from>" (its paths to its movie) made "mv/<to>/<to>"; the names must be
+// the same length. Returns how many it changed.
+size_t rename_movie_paths(std::string& prefab, const std::string& from, const std::string& to);
+
 // Plays a video for a preview (any file Windows plays; game movies named .mov.1.x64 too): frames are decoded on a
 // thread of its own (Windows' Media Foundation), scaled to fit `max_side` (keeping the shape), as 32-bit BGRA. It
 // opens paused on the first frame. Front ends call take() each frame and draw what it gives.
