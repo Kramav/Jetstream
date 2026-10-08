@@ -191,6 +191,39 @@ TEST_CASE("Use recording: the recorded camera into a cutscene, keeping the rest"
     CHECK_THROWS_WITH(remod::use_recording(cut, rec), Catch::Matchers::ContainsSubstring("isn't readable JSON"));
 }
 
+TEST_CASE("Triggers: checked, and Make a trigger here's file put into a cutscene") {
+    const auto with = [](const std::string& trigger) {
+        return remod::check_cutscene(R"({"schema_version": 0, "length": 2, "trigger": )" + trigger + "}");
+    };
+    CHECK(with(R"({"near": {"position": [1, 2, 3], "radius": 2}, "chapter": "chap01_01", "delay": 0.5, "once": false})").empty());
+    CHECK(with(R"({"stage": "st40_100"})").empty());
+    CHECK(with("{}") == std::vector<std::string>{"trigger needs a condition: near, stage, area, location or chapter"});
+    CHECK(with(R"({"near": {"position": [1, 2], "radius": 0}, "chapter": 3, "delay": -1, "once": "yes"})") ==
+          std::vector<std::string>{
+              "trigger.near.position must be [x, y, z] (from Make a trigger here, never typed)",
+              "trigger.near.radius must be a number of metres above 0",
+              "trigger.chapter must be the game's name for it (as the menu's Now line shows)",
+              "trigger.delay must be seconds, 0 or more", "trigger.once must be true or false"});
+
+    test::TempDir tmp;
+    const fs::path trig = tmp.path / "game/reframework/data/remod_cutscenes/trigger.json";
+    const fs::path cut = tmp.path / "cutscenes/door.json";
+    CHECK_THROWS_WITH(remod::use_trigger(cut, trig), Catch::Matchers::ContainsSubstring("Make a trigger here"));
+    test::write_file(trig, R"({"near": {"position": [186.6, 28.0, 42.2], "radius": 2}, "chapter": "chap01_01", "stage": "st40_100"})");
+    remod::use_trigger(cut, trig);  // a new cutscene with it
+    auto c = nlohmann::json::parse(test::read_file(cut));
+    CHECK(c["trigger"]["stage"] == "st40_100");
+    CHECK(remod::check_cutscene(test::read_file(cut)).empty());
+    c["subtitles"] = {{{"t", 1}, {"until", 2}, {"text", "Hello"}}};  // an existing one keeps the rest
+    test::write_file(cut, c.dump());
+    test::write_file(trig, R"({"near": {"position": [0, 0, 0], "radius": 2}})");
+    remod::use_trigger(cut, trig);
+    const auto again = nlohmann::json::parse(test::read_file(cut));
+    CHECK(again["subtitles"][0]["text"] == "Hello");
+    CHECK_FALSE(again["trigger"].contains("stage"));  // replaced, not merged
+    CHECK(fs::exists(fs::path(cut) += ".bak"));
+}
+
 TEST_CASE("Cutscene blocks into Package: the runtime once, the run fails on a bad file") {
     test::TempDir tmp;
     test::write_file(tmp.path / "a.json", test::read_file(REMOD_SCHEMAS_DIR "/cutscene.v0.example.json"));

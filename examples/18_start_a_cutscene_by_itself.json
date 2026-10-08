@@ -1,0 +1,37 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "cutscenes/started_by_itself.json",
+        "title": "Starts when you get there"
+      }
+    },
+    {
+      "id": 2,
+      "type": "PackageMod",
+      "params": {
+        "name": "Trigger test",
+        "out": "mods",
+        "version": "1.0",
+        "description": "Walk to the spot: a cutscene starts by itself",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "files"
+      ],
+      "to": [
+        2,
+        "file"
+      ]
+    }
+  ]
+}

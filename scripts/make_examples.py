@@ -352,6 +352,21 @@ with open(os.path.join(OUT, 'cutscenes', 'play_new_sound.json'), 'w', encoding='
                'sounds': [{'t': 0.0, 'id': 'beeps'}]}, f, indent=2)
 print('wrote cutscenes/play_new_sound.json')
 
+# 18. A cutscene that starts by itself: its trigger is a spot (3 m around it). The spot is a real one, recorded in game
+# (the cutscene probe's camera, 2026-10-07, in chapter 1's village), not invented; make your own with REFramework's
+# menu > remod cutscenes > Make a trigger here, then the Cutscene block's Use trigger.
+g = Graph()
+cutscene = g.add('Cutscene', 'Starts when you get there', cutscene='cutscenes/started_by_itself.json')
+pkg = package(g, 'Trigger test', 'Walk to the spot: a cutscene starts by itself')
+g.link(cutscene, 'files', pkg, 'file')
+g.save('18_start_a_cutscene_by_itself.json')
+with open(os.path.join(OUT, 'cutscenes', 'started_by_itself.json'), 'w', encoding='utf-8', newline='\n') as f:
+    json.dump({'schema_version': 0, 'name': 'Started by itself', 'length': 4.0, 'letterbox': 0.12,
+               'trigger': {'near': {'position': [186.647, 28.059, 42.236], 'radius': 3.0}},
+               'subtitles': [{'t': 0.5, 'until': 3.5, 'text': 'remod: this cutscene started by itself'}],
+               'fades': [{'t': 3.5, 'until': 4.0, 'from': 0.0, 'to': 1.0}]}, f, indent=2)
+print('wrote cutscenes/started_by_itself.json')
+
 
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):

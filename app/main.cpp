@@ -2999,6 +2999,22 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                     hovered_hint = "Put the camera keys you recorded in game (F10 at each shot) into this cutscene file; "
                                    "its subtitles, fades and the rest stay.";
                 ImGui::SameLine();
+                if (ImGui::Button("Use trigger")) {
+                    try {
+                        if (s.game_dir.empty()) throw remod::PackageError("set the Game folder first (in the Pipeline panel)");
+                        if (file.empty()) throw remod::PackageError("type the cutscene's file name first, e.g. cutscenes\\door.json");
+                        remod::use_trigger(file, std::filesystem::path(unquote(s.game_dir)) / "reframework" / "data" /
+                                                     "remod_cutscenes" / "trigger.json");
+                        s.status = "The cutscene now starts by itself where you made the trigger (" +
+                                   file.filename().string() + (exists ? "; the previous version is its .bak)." : ").");
+                    } catch (const std::exception& e) {
+                        s.status = std::string("Couldn't use the trigger: ") + e.what();
+                    }
+                }
+                if (ImGui::IsItemHovered())
+                    hovered_hint = "Make this cutscene start by itself where you stood when you clicked Make a trigger "
+                                   "here in game (REFramework's menu > remod cutscenes); the rest of the file stays.";
+                ImGui::SameLine();
                 ImGui::BeginDisabled(!exists);
                 if (ImGui::Button("Open in editor")) {
                     const std::filesystem::path program(unquote(remod::known_value(s.graph, n.id, "editor")));

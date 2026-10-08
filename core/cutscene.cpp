@@ -75,6 +75,33 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
     if (c.contains("letterbox") && !(c["letterbox"].is_number() && c["letterbox"].get<double>() >= 0 &&
                                      c["letterbox"].get<double>() < 0.5))
         p.push_back("letterbox must be a number from 0 to below 0.5 (each bar's share of the screen's height)");
+    // The cutscene starts by itself when every condition its trigger names becomes true.
+    if (c.contains("trigger")) {
+        const json& t = c["trigger"];
+        if (!t.is_object()) {
+            p.push_back("trigger must be an object (near, stage, area, location, chapter, delay, once)");
+        } else {
+            bool any = false;
+            if (t.contains("near")) {
+                any = true;
+                const json& n = t["near"];
+                if (!n.is_object() || !n.contains("position") || !numbers(n["position"], 3))
+                    p.push_back("trigger.near.position must be [x, y, z] (from Make a trigger here, never typed)");
+                if (!n.is_object() || !n.contains("radius") || !n["radius"].is_number() || n["radius"].get<double>() <= 0)
+                    p.push_back("trigger.near.radius must be a number of metres above 0");
+            }
+            for (const char* key : {"stage", "area", "location", "chapter"})
+                if (t.contains(key)) {
+                    any = true;
+                    if (!t[key].is_string() || t[key].get<std::string>().empty())
+                        p.push_back(std::string("trigger.") + key + " must be the game's name for it (as the menu's Now line shows)");
+                }
+            if (!any) p.push_back("trigger needs a condition: near, stage, area, location or chapter");
+            if (t.contains("delay") && !(t["delay"].is_number() && t["delay"].get<double>() >= 0))
+                p.push_back("trigger.delay must be seconds, 0 or more");
+            if (t.contains("once") && !t["once"].is_boolean()) p.push_back("trigger.once must be true or false");
+        }
+    }
 
     // Each list: entries with a time `t` (and `until`, for spans) inside the cutscene.
     const auto list = [&](const char* name) -> const json* {
@@ -190,6 +217,31 @@ void use_recording(const fs::path& cutscene, const fs::path& recording) {
     }
     c["camera"] = rec["camera"];
     c["length"] = std::max(c.value("length", 0.0), last + 1.0);  // a second on the last shot
+    if (cutscene.has_parent_path()) fs::create_directories(cutscene.parent_path());
+    std::ofstream out(cutscene, std::ios::binary);
+    out << c.dump(2) << "\n";
+    if (!out.flush()) throw PackageError("couldn't write " + cutscene.string());
+}
+
+void use_trigger(const fs::path& cutscene, const fs::path& trigger) {
+    std::error_code ec;
+    if (!fs::is_regular_file(trigger, ec))
+        throw PackageError("no trigger yet: in game, stand where it should start and click Make a trigger here in "
+                           "REFramework's menu (remod cutscenes) (" + trigger.string() + ")");
+    const json t = json::parse(read_text(trigger), nullptr, false);
+    if (t.is_discarded() || !t.is_object() || !t.contains("near"))
+        throw PackageError("not a trigger the runtime made: " + trigger.string());
+    json c;
+    if (fs::is_regular_file(cutscene, ec)) {
+        c = json::parse(read_text(cutscene), nullptr, false);
+        if (c.is_discarded() || !c.is_object())
+            throw PackageError(cutscene.filename().string() + " isn't readable JSON: fix it first (Open in editor)");
+        fs::copy_file(cutscene, fs::path(cutscene) += ".bak", fs::copy_options::overwrite_existing);
+    } else {
+        c = {{"schema_version", 0}, {"name", cutscene.stem().string()}, {"length", 5.0}, {"subtitles", json::array()},
+             {"fades", json::array()}, {"motions", json::array()}};
+    }
+    c["trigger"] = t;
     if (cutscene.has_parent_path()) fs::create_directories(cutscene.parent_path());
     std::ofstream out(cutscene, std::ios::binary);
     out << c.dump(2) << "\n";

@@ -180,6 +180,20 @@ local function register_movie(name)
     return id
 end
 
+-- An enum value's name (an enum's static fields), e.g. a ChapterID's "chap01_01"; the number if none.
+local enum_names = {}
+local function enum_name(type_name, value)
+    local names = enum_names[type_name]
+    if not names then
+        names = {}
+        for _, f in ipairs(sdk.find_type_definition(type_name):get_fields()) do
+            if f:is_static() then names[f:get_data(nil)] = f:get_name() end
+        end
+        enum_names[type_name] = names
+    end
+    return names[value] or tostring(value)
+end
+
 -- What differs between games, found by remod's spikes/cutscene_probe.lua run in that game.
 local GAMES = {
     re4 = {
@@ -253,6 +267,20 @@ local GAMES = {
                 return true
             end
             return false
+        end,
+        -- Where the player is, by the game's names [dump: chainsaw.CampaignManager]: its chapter (ChapterID), and its
+        -- StageIdentifier's location (LocID), area (AreaID) and stage (StageID). For triggers. [Not seen in game yet.]
+        where = function()
+            local cm = instance("chainsaw.CampaignManager")
+            local si = cm:call("get_CurrentStageIdentifier")
+            return { chapter = enum_name("chainsaw.ChapterID", cm:call("get_CurrentChapter")),
+                     location = enum_name("chainsaw.LocID", si:get_field("_Location")),
+                     area = enum_name("chainsaw.AreaID", si:get_field("_Area")),
+                     stage = enum_name("chainsaw.StageID", si:get_field("_Stage")) }
+        end,
+        -- The game is busy with something a trigger shouldn't start over: its own movie, or a pause (menus).
+        busy = function()
+            return instance("chainsaw.MovieMediator"):call("isPlaying") or instance("share.PauseManager"):call("isPaused()")
         end,
         movie_stop = function(m)
             local mm = instance("chainsaw.MovieMediator")
@@ -494,6 +522,68 @@ local function record_key()
     json.dump_file(DIR .. "/recording.json", { schema_version = 0, name = "Recording", length = last, camera = recording.keys })
 end
 
+-- ---- Triggers: a cutscene starts by itself (its file's "trigger") ----
+-- Every condition it names must hold: near (Leon within radius metres of a spot), and the game's names for where he
+-- is (chapter, location, area, stage, as the menu's Now line shows). It starts when they become true and have held
+-- for `delay` seconds; not again until they've stopped holding; with `once` (the default), once per game session.
+-- Never while a cutscene plays or the game is busy (its own movie, a pause). Checked 5 times a second.
+local trigger_state = {}  -- cutscene file -> {held, since, fired, done}
+local next_check = 0
+
+local function player_position()
+    local body = game.player()
+    return body and body:call("get_Transform"):call("get_Position")
+end
+
+local function holds(t, where, pos)
+    if t.near then
+        if not pos then return false end
+        local p = t.near.position
+        local dx, dy, dz = pos.x - p[1], pos.y - p[2], pos.z - p[3]
+        if dx * dx + dy * dy + dz * dz > t.near.radius * t.near.radius then return false end
+    end
+    for _, key in ipairs({ "chapter", "location", "area", "stage" }) do
+        if t[key] and (not where or where[key] ~= t[key]) then return false end
+    end
+    return true
+end
+
+local function check_triggers()
+    if playing or not game.where or now() < next_check then return end
+    next_check = now() + 0.2
+    local busy_ok, busy = pcall(game.busy)
+    if busy_ok and busy then return end
+    local where_ok, where = pcall(game.where)
+    local pos = select(2, pcall(player_position))
+    for _, c in ipairs(cutscenes) do
+        local t = c.data.trigger
+        if type(t) == "table" then
+            local s = trigger_state[c.file] or {}
+            trigger_state[c.file] = s
+            local now_holds = holds(t, where_ok and where or nil, type(pos) == "userdata" and pos or nil)
+            if now_holds and not s.held then s.since = now() end
+            s.held = now_holds
+            if not now_holds then s.done = false end
+            if now_holds and not s.done and now() - s.since >= (t.delay or 0) and not (t.once ~= false and s.fired) then
+                s.fired, s.done = true, true
+                log.info("[remod_cutscene] " .. (c.data.name or c.file) .. " triggered")
+                play(c.data)
+                return
+            end
+        end
+    end
+end
+
+-- "Make a trigger here": Leon's spot (2 m around him) and the game's names for where he is, into
+-- remod_cutscenes\trigger.json; remod's Use trigger puts it into a cutscene file.
+local function make_trigger()
+    local pos = player_position()
+    if not pos then error("no player (load a save first)") end
+    local where = game.where()
+    json.dump_file(DIR .. "/trigger.json", { near = { position = { pos.x, pos.y, pos.z }, radius = 2.0 },
+                                             chapter = where.chapter, stage = where.stage })
+end
+
 -- ---- Each frame: keys, motions, letterbox, fades, subtitles ----
 local key_down = {}
 local function pressed(vk)
@@ -538,6 +628,7 @@ re.on_frame(function()
             if playing and playing.data == c.data then stop() else play(c.data) end
         end
     end
+    check_triggers()
     if not playing then return end
     run_movies(elapsed())
     local t = elapsed()
@@ -588,7 +679,9 @@ re.on_draw_ui(function()
             if this then stop() else play(c.data) end
         end
         imgui.same_line()
-        imgui.text(name .. (c.data.start and c.data.start.key and ("  (" .. c.data.start.key .. ")") or ""))
+        local s = trigger_state[c.file]
+        imgui.text(name .. (c.data.start and c.data.start.key and ("  (" .. c.data.start.key .. ")") or "") ..
+            (c.data.trigger and ("  starts by itself" .. (s and s.fired and " (did this session)" or "")) or ""))
     end
     local names = {}
     for name in pairs(new_movies) do table.insert(names, name) end
@@ -611,6 +704,17 @@ re.on_draw_ui(function()
     end
     local ok, now_playing = pcall(current_motion)
     imgui.text("Leon's animation now: " .. (ok and now_playing or "unknown"))
+    -- Where he is, for triggers.
+    local wok, w = pcall(game.where)
+    local bok, busy = pcall(game.busy)
+    imgui.text(wok and string.format("Now: chapter %s, location %s, area %s, stage %s%s", w.chapter, w.location, w.area,
+        w.stage, bok and busy and " (busy: triggers wait)" or "") or ("Now: unknown (" .. tostring(w) .. ")"))
+    if imgui.button("Make a trigger here") then
+        local mok, err = pcall(make_trigger)
+        problem = mok and nil or ("making the trigger: " .. tostring(err))
+    end
+    imgui.same_line()
+    imgui.text("Leon's spot and where he is, into " .. DIR .. "\\trigger.json (remod: Use trigger)")
     imgui.text("F10: add the camera as a key to " .. DIR .. "\\recording.json" ..
         (recording and (" (" .. #recording.keys .. " keys)") or ""))
     if recording and imgui.button("Start a new recording") then recording = nil end

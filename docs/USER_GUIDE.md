@@ -359,6 +359,22 @@ Example `15_play_a_game_movie` fades out, plays the intro movie and fades back i
 **Sounds in a cutscene** (`sounds`: a time and a **New sound** block's name, e.g. `{"t": 2, "id": "door_creak"}`):
 the sound starts at that time, beside everything else, and stops when the cutscene ends.
 
+**Cutscenes that start by themselves** (`trigger`): the cutscene starts when everything its trigger names is true.
+1. In game, stand where it should start and click **Make a trigger here** (REFramework's menu > Script Generated UI
+   > remod cutscenes). It saves Leon's spot, plus the game's names for the chapter and stage he's in.
+2. In remod, click **Use trigger** on the Cutscene block: the trigger goes into the cutscene file (the rest stays;
+   the previous version is kept as `.bak`).
+
+The trigger's parts, all optional but at least one needed:
+- `near`: the spot and a `radius` in metres;
+- `chapter`, `stage`, `area`, `location`: the game's names, as the menu's **Now** line shows them where you stand;
+- `delay`: seconds the conditions must hold first;
+- `once`: true by default, meaning once per game session (reloading the game lets it start again).
+
+It doesn't start while another cutscene plays, the game plays one of its own movies, or the game is paused. It
+starts when the conditions become true, and not again until they've stopped being true. Example
+`18_start_a_cutscene_by_itself` starts at a spot in chapter 1's village.
+
 ## Built from blocks
 
 Some blocks are made of other blocks, such as **Convert with streaming copy**. They're listed in the Nodes panel under

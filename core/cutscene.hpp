@@ -31,4 +31,9 @@ std::vector<std::string> check_cutscene(const std::string& json_text);
 // has no keys.
 void use_recording(const std::filesystem::path& cutscene, const std::filesystem::path& recording);
 
+// The runtime's "Make a trigger here" (remod_cutscenes/trigger.json: Leon's spot and the game's names for where he is)
+// into `cutscene` as its "trigger", replacing any; the rest kept (the previous file as .bak). A new file (named after
+// it, 5 s long) if it doesn't exist yet. Throws PackageError if the trigger file is missing or not one.
+void use_trigger(const std::filesystem::path& cutscene, const std::filesystem::path& trigger);
+
 }  // namespace remod

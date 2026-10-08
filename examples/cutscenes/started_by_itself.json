@@ -1,0 +1,31 @@
+{
+  "schema_version": 0,
+  "name": "Started by itself",
+  "length": 4.0,
+  "letterbox": 0.12,
+  "trigger": {
+    "near": {
+      "position": [
+        186.647,
+        28.059,
+        42.236
+      ],
+      "radius": 3.0
+    }
+  },
+  "subtitles": [
+    {
+      "t": 0.5,
+      "until": 3.5,
+      "text": "remod: this cutscene started by itself"
+    }
+  ],
+  "fades": [
+    {
+      "t": 3.5,
+      "until": 4.0,
+      "from": 0.0,
+      "to": 1.0
+    }
+  ]
+}

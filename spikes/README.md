@@ -10,6 +10,7 @@ callbacks (`re.on_frame`, `re.on_pre_application_entry`) are fine. (The user upd
 |---|---|---|---|
 | Movie probe | Can Lua start the game's movie player on our video? (M3 route 2) | [movie_probe.md](movie_probe.md) | Run 2026-10-07: data captured; the game then crashed (old REFramework, see the guide) |
 | New movie probe | Our movie under a new movie id, in a cinematic state (paused, player locked, state unchanged after) (M3 route 2) | [new_movie_probe.md](new_movie_probe.md) | Done 2026-10-07 (run 3): our movie under a new id plays in the cinematic state; everything in [docs/re4r_movies.md](../docs/re4r_movies.md) |
+| Trigger test | Cutscenes that start by themselves: the Now line, example 18's spot, Make a trigger here + Use trigger | [trigger_test.md](trigger_test.md) | Built 2026-10-08, not run |
 | Character probe | Other characters in cutscenes: find them, take them over (the game's cutscene lock), animate and place them | [character_probe.md](character_probe.md) | Built 2026-10-07, not run |
 | Sound probe | A game sound on command, a brand-new sound (our own bank), and a new movie's in-file sound | [sound_probe.md](sound_probe.md) | Run 1, 2026-10-07: a game sound on command and a brand-new sound both play; the movie with in-file sound not tried yet |
 | Cutscene probe | Camera hook, finding Leon, animations from Lua (M3 route 3) | [cutscene_probe.md](cutscene_probe.md) | Run 2026-10-07: all four answered (see the guide); not needed again |

@@ -659,10 +659,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
-  (`edits/`, `mods/`) beside them. Seventeen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  (`edits/`, `mods/`) beside them. Eighteen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
   edit with streaming, conditions filter, channels, if / else, backup, movie test card, movie edited by hand
   (2026-10-06), a game sound replaced, a game movie played from a cutscene, a new movie added, a new sound added
-  (2026-10-07). **All seventeen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
+  (2026-10-07), a cutscene that starts by itself (2026-10-08). **All eighteen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
   example 13's edit stood in by the movie itself); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
@@ -959,7 +959,8 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 - **NEXT (user, 2026-10-07, in this order):** the SDK dump loading fixed (done the same day: 1.1 s, M2 step 2);
   then **M3 route 2** (play a movie when we choose; "heavy scripting for all this movie stuff"; its new-id probe is
   a game movie in a cinematic state works and is example 15; **a new movie id works** (run 3), all in
-  docs/re4r_movies.md; the New movie block and example 16 built, not yet seen in game); then **triggers**
+  docs/re4r_movies.md; the New movie block and example 16 built, not yet seen in game); then **triggers** (built 2026-10-08,
+  not run: M3 route 3 "Triggers")
   (cutscenes starting by themselves; M5's first piece; survey with §9's "finding a game's switch" method); **other
   characters in cutscenes** matter a lot (user). Later: Write with Claude for cutscene files, an example graph,
   sound; M4. **In game (user, 2026-10-07): the finished cutscene stops Leon and the controls come back after.** The
@@ -1323,6 +1324,26 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 
     All mono (no stereo one-sound bank to copy). Details in docs/re4r_movies.md §5. Not seen in game yet; zips
     built in `examples\mods` (git-ignored).
+  - **Triggers, M5's first piece (user, 2026-10-08: "do triggers next"): built into the runtime, not run**
+    (`spikes/trigger_test.md`).
+    - **The game's names [dump]:** `chainsaw.CampaignManager` (AppSingleton) `get_CurrentChapter()` (`ChapterID`: 86,
+      e.g. `chap01_01`, `Chp01`) and `get_CurrentStageIdentifier()` (`StageIdentifier` {`_Area` AreaID, `_Location`
+      LocID, `_Stage` StageID: 834, e.g. `st40_100`}); names from the enums' static fields (`enum_name`). Other
+      places that name stages: `SoundSpaceManager.get_CurrentStage`, `StreamingTextureManager.get_CurrentActiveStage`.
+    - **Story flags exist but aren't used yet:** `chainsaw.ScenarioFlagManager.checkFlag(System.Guid)` (also
+      `checkFlag(Int32, Int32)`). Their names aren't in the dump; they'd need reading from the game's flag files.
+    - **Format:** `trigger` {`near` {`position`, `radius`}, `chapter`, `location`, `area`, `stage`, `delay`, `once`
+      (default true: per game session)}, checked by `check_cutscene`.
+    - **Runtime:** `check_triggers` every 0.2 s. A trigger fires when its conditions become true, once they've held
+      for `delay`; not again until they stop holding, and with `once` only once per session. Never while a cutscene
+      plays or `GAMES.re4.busy()` (MovieMediator `isPlaying`, PauseManager `isPaused()`).
+    - **Menu:** a **Now:** line (chapter, location, area, stage, "(busy)"); **Make a trigger here** writes
+      `remod_cutscenes/trigger.json` (Leon's spot, radius 2, chapter, stage). Core `use_trigger` (the app's **Use
+      trigger** on the Cutscene block) puts it into the cutscene file.
+    - **Example 18:** `18_start_a_cutscene_by_itself`, a real spot (the cutscene probe's camera position), radius 3.
+    - **Checked:** tests (the checks, use_trigger new / existing / missing), `check-lua`, example 18 built.
+    - **Not used:** `OccupiedMediator.checkBusy()` (meaning unknown).
+    - **Not done:** persisting "once" per save, flags, "after the game's movie / event X", enemy-count triggers.
   - **Other characters in cutscenes (user's 4): the character probe is built, not run** (`spikes/character_probe.md`,
     `.lua`; installed by a Lua script block's Test in game).
     - **Finding them [dump]:** `chainsaw.CharacterManager` `get_PlayerContextList` / `get_PartnerContextList` /
