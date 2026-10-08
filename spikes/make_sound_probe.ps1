@@ -2,12 +2,12 @@
 # the game's is replaced, and no game file is committed):
 #   - remod_snd001.sbnk.1.x64: a brand-new sound bank, `remod new-sound` from ch_csa404_se (one event, one sound):
 #     every id new, 3 s of beeps; its note reframework/data/remod_sounds/remod_snd001.json (path and event id);
-#   - rmd002: a New movie (12 s test card) with its sound in the movie file (a beep each second), with the cutscene
-#     runtime that plays it from REFramework's menu;
+#   - rmd002: a New movie (12 s test card; run 1 had its beeps in the movie file, unheard; New movie now makes a bank
+#     for them instead), with the cutscene runtime that plays it from REFramework's menu;
 #   - the probe script.
 #   powershell -ExecutionPolicy Bypass -File spikes\make_sound_probe.ps1 [-Out folder]
 param(
-    [string]$Out = "$env:USERPROFILE\Documents\remod\spikes",
+    [string]$Out = "$PSScriptRoot\out",  # git-ignored
     [string]$Natives = "",
     [string]$Remod = "$PSScriptRoot\..\build\cli\remod.exe"
 )
@@ -31,7 +31,7 @@ New-Item -ItemType Directory -Force $work | Out-Null
 $graph = @{
     schema_version = 0; profile = "re4r"
     nodes = @(
-        @{ id = 1; type = "NewMovie"; params = @{ name = "rmd002"; video = ""; sound = "true" } },
+        @{ id = 1; type = "NewMovie"; params = @{ name = "rmd002"; video = "" } },
         @{ id = 2; type = "PackageMod"; params = @{ name = $name; out = $Out; version = "1"; replace = "true";
             description = "remod spike: play sounds on command (F7 a game sound, F5 a brand-new one)" } }
     )

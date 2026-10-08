@@ -13,7 +13,7 @@
 # Without -Video: a 12 s test pattern made with ffmpeg (if installed).
 param(
     [string]$Video = "",
-    [string]$Out = "$env:USERPROFILE\Documents\remod\spikes",
+    [string]$Out = "$PSScriptRoot\out",  # git-ignored
     [string]$Natives = "",
     [string]$Remod = "$PSScriptRoot\..\build\cli\remod.exe"
 )

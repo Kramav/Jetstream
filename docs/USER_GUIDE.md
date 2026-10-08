@@ -231,9 +231,24 @@ replaced. A cutscene then plays it whenever you choose (see Cutscenes below).
    `"movies": [{"t": 0.5, "id": "rmd001"}]`. In game the movie also has a **Play** button in REFramework's menu
    (Script Generated UI > remod cutscenes).
 
-It needs **Game files** set (it copies files from `mva000`), and players need REFramework. New movies are silent
-for now: the game plays its movies' sound from its sound banks, and new ones don't have any yet. Example
-`16_insert_a_new_movie` is the whole thing, with a test card and F8. How it works: `docs\re4r_movies.md`.
+It needs **Game files** set (it copies files from `mva000`), and players need REFramework. The video's sound plays
+with the movie, in mono, from a sound bank the block makes. The game doesn't play sound inside a new movie's own
+file. Example `16_insert_a_new_movie` is the whole thing, with a test card and F8. How it works:
+`docs\re4r_movies.md`.
+
+### Adding a sound of your own
+
+**New sound** adds your audio to the game as a sound of its own, beside the game's: none of its sounds is replaced.
+1. **Sound name:** 1 to 32 lowercase letters, digits or `_`, e.g. `door_creak`. Each new sound in a mod needs its
+   own name.
+2. **Your audio:** anything Windows plays (wav, mp3, m4a, wma, flac, or a video's sound), at its own length.
+   Empty: 3 seconds of beeps.
+3. Link **new sound files** into Package's **other file**, and list the sound in a cutscene:
+   `"sounds": [{"t": 0, "id": "door_creak"}]`. It starts at that time and stops when the cutscene ends, so make the
+   cutscene at least as long as the sound. In game each new sound also has a **Play** button in REFramework's menu.
+
+New sounds play in mono for now: they're made from one of the game's own one-sound banks, and no stereo one exists
+to copy. Example `17_add_a_new_sound` plays `beep.wav` when you press F7.
 
 ## Sounds
 
@@ -340,6 +355,9 @@ Fades and subtitles aren't drawn over the movie itself; a fade that's black when
 Example `15_play_a_game_movie` fades out, plays the intro movie and fades back in. Movie ids are the game's movie names
 (`mva000`, `mva201`, ...), or the name of a movie of your own from a **New movie** block (example
 `16_insert_a_new_movie`). The game's play-time clock keeps running while a movie plays.
+
+**Sounds in a cutscene** (`sounds`: a time and a **New sound** block's name, e.g. `{"t": 2, "id": "door_creak"}`):
+the sound starts at that time, beside everything else, and stops when the cutscene ends.
 
 ## Built from blocks
 

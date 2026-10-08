@@ -19,7 +19,7 @@ methods.
 
 ## What's in the mod
 
-`C:\Users\<you>\Documents\remod\spikes\remod sound probe.zip`, built by `spikes\make_sound_probe.ps1` from your
+`spikes\out\remod sound probe.zip`, built by `spikes\make_sound_probe.ps1` from your
 extracted game files. It holds:
 - **`remod_snd001`, a new sound bank.** It's a copy of the game's `ch_csa404_se` bank, which has one event and one
   sound. Every id inside it is new, and its sound is 3 seconds of beeps (made by `remod new-sound`). A small note

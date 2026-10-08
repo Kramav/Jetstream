@@ -81,7 +81,9 @@ TEST_CASE("cutscene runtime: the camera between its keys") {
 
 TEST_CASE("cutscene runtime and probe: Lua 5.4 syntax; the example cutscene's shape") {
     for (const char* file : {REMOD_RUNTIME_DIR "/remod_cutscene.lua", REMOD_RUNTIME_DIR "/../spikes/cutscene_probe.lua",
-                             REMOD_RUNTIME_DIR "/../spikes/new_movie_probe.lua"}) {
+                             REMOD_RUNTIME_DIR "/../spikes/new_movie_probe.lua",
+                             REMOD_RUNTIME_DIR "/../spikes/sound_probe.lua",
+                             REMOD_RUNTIME_DIR "/../spikes/character_probe.lua"}) {
         const std::string source = test::read_file(file);
         REQUIRE_FALSE(source.empty());
         CHECK(remod::check_lua(source, fs::path(file).filename().string(), nullptr).empty());

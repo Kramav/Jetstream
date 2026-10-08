@@ -338,6 +338,20 @@ with open(os.path.join(OUT, 'cutscenes', 'play_new_movie.json'), 'w', encoding='
                'movies': [{'t': 0.5, 'id': 'rmd001'}]}, f, indent=2)
 print('wrote cutscenes/play_new_movie.json')
 
+# 17. A sound of your own, added to the game (none of its sounds replaced): New sound makes it from beep.wav, and a
+# cutscene plays it by its name when you press F7.
+g = Graph()
+sound = g.add('NewSound', 'Your new sound', name='beeps', audio='beep.wav')
+cutscene = g.add('Cutscene', 'Play your sound', cutscene='cutscenes/play_new_sound.json')
+pkg = package(g, 'New sound', 'Press F7 in game: your own sound plays')
+g.link(sound, 'files', pkg, 'file')
+g.link(cutscene, 'files', pkg, 'file')
+g.save('17_add_a_new_sound.json')
+with open(os.path.join(OUT, 'cutscenes', 'play_new_sound.json'), 'w', encoding='utf-8', newline='\n') as f:
+    json.dump({'schema_version': 0, 'name': 'Play my new sound', 'length': 2.0, 'start': {'key': 'F7'},
+               'sounds': [{'t': 0.0, 'id': 'beeps'}]}, f, indent=2)
+print('wrote cutscenes/play_new_sound.json')
+
 
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):

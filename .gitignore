@@ -13,6 +13,8 @@ out/
 vcpkg_installed/
 build-*/
 
+# Built probe mods and their work folders (spikes/make_*.ps1): spikes/out/, ignored by out/ above
+
 # Outputs of running the examples
 examples/edits/
 examples/mods/

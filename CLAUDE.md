@@ -659,10 +659,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
-  (`edits/`, `mods/`) beside them. Sixteen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  (`edits/`, `mods/`) beside them. Seventeen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
   edit with streaming, conditions filter, channels, if / else, backup, movie test card, movie edited by hand
-  (2026-10-06), a game sound replaced, a game movie played from a cutscene, a new movie added (2026-10-07). **All
-  sixteen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
+  (2026-10-06), a game sound replaced, a game movie played from a cutscene, a new movie added, a new sound added
+  (2026-10-07). **All seventeen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
   example 13's edit stood in by the movie itself); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
@@ -1315,7 +1315,25 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     **Sound (user, 2026-10-07: "can we try adding sound to them ... or an f5 play a brand new sound, f7 play a sound
     from game files"): the sound probe** (`spikes/sound_probe.md`, `.lua`, `make_sound_probe.ps1`). **Run 1 (user,
     2026-10-07: "both work"):** a brand-new bank's sound (F5) and a game sound (F7) play from a script, the new one
-    on the first press. `rmd002` (sound in the movie file) not tried yet.
+    on the first press. `rmd002` (AAC in the movie file): **no sound** (user), so the in-file route is dropped.
+    **Built from it (user, 2026-10-07: "then do 1,2,4"):**
+    - New movie's video sound now plays from a bank of its own.
+    - **New sound** block (`NewSound`) and cutscene `sounds` [{t, id}].
+    - Example **17_add_a_new_sound** (F7).
+
+    All mono (no stereo one-sound bank to copy). Details in docs/re4r_movies.md §5. Not seen in game yet; zips
+    built in `examples\mods` (git-ignored).
+  - **Other characters in cutscenes (user's 4): the character probe is built, not run** (`spikes/character_probe.md`,
+    `.lua`; installed by a Lua script block's Test in game).
+    - **Finding them [dump]:** `chainsaw.CharacterManager` `get_PlayerContextList` / `get_PartnerContextList` /
+      `get_DollNpcContextList` / `get_EnemyContextList` (each a `CharacterContext`: `get_BodyGameObject`, `get_ID`
+      (`chainsaw.ContextID`, `get_DisplayName`), `get_KindID`).
+    - **Taking them over:** the game's own cutscene lock, `chainsaw.OccupiedMediator.requestLock(ContextID user,
+      ContextID[] targets, OccupiedMediatorPriority, Action, Action, LockRequestOption)`, with priority `CUT_SCENE`
+      (also MOVIE, MINI_DEMO, GMK_DEMO...); it returns an `UnlockParam` for `requestUnlock`. Read back with
+      `Context.isLocked()`.
+    - **The keys:** F2 next character, F3 lock / unlock (Leon as the one asking), F4 restart its animation, F6 put it
+      1.5 m in front of Leon (transform position and rotation).
     It tries F7, a game sound by a container's trigger; F5, a brand-new bank; and a new movie with AAC in its file
     (New movie's advanced "Sound in the movie file", probe movie `rmd002`).
     - New: core `new_sound_bank` (`sound.*`) and CLI `remod new-sound`.

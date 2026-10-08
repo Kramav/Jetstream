@@ -228,7 +228,7 @@ local GAMES = {
             else
                 error("no movie " .. name .. ": not the game's, and no New movie block made one (in " .. MOVIES_DIR .. ")")
             end
-            local m = { id = id, phase = "loading", since = now() }
+            local m = { id = id, phase = "loading", since = now(), sound = not f and new_movies[name].sound }
             event_pause(true)
             instance("chainsaw.MovieMediator"):call("load", m.id)
             return m
@@ -240,6 +240,10 @@ local GAMES = {
                 if mm:call("IsLoaded", m.id) then
                     mm:call("play", m.id, nil, nil)
                     m.phase, m.since = "starting", now()
+                    if m.sound then  -- a new movie's own sound; if it fails, the movie plays on without it
+                        local ok, h = pcall(sound_play, m.sound)
+                        if ok then m.playing_sound = h else m.sound_error = h end
+                    end
                 elseif now() - m.since > 20 then
                     error("not loaded after 20 s")
                 end
@@ -253,6 +257,7 @@ local GAMES = {
         movie_stop = function(m)
             local mm = instance("chainsaw.MovieMediator")
             if m.phase ~= "loading" and mm:call("isPlaying") then pcall(mm.call, mm, "requestSkip", m.id) end
+            if m.playing_sound then sound_stop(m.playing_sound) end
             pcall(mm.call, mm, "unload", m.id)
             event_pause(false)
         end,
@@ -284,12 +289,14 @@ local function load_all()
     end
     table.sort(cutscenes, function(a, b) return a.file < b.file end)
 
-    new_movies = {}
-    local ok2, notes = pcall(fs.glob, MOVIES_DIR .. "[/\\\\].*\\.json$")
-    for _, path in ipairs(ok2 and notes or {}) do
-        local rel = path:match("[/\\]data[/\\](.*)$") or path
-        local note = json.load_file(rel)
-        if type(note) == "table" and type(note.name) == "string" then new_movies[note.name] = note end
+    for dir, into in pairs({ [MOVIES_DIR] = {}, [SOUNDS_DIR] = {} }) do
+        local ok2, notes = pcall(fs.glob, dir .. "[/\\\\].*\\.json$")
+        for _, path in ipairs(ok2 and notes or {}) do
+            local rel = path:match("[/\\]data[/\\](.*)$") or path
+            local note = json.load_file(rel)
+            if type(note) == "table" and type(note.name) == "string" then into[note.name] = note end
+        end
+        if dir == MOVIES_DIR then new_movies = into else new_sounds = into end
     end
 end
 
@@ -350,6 +357,7 @@ end
 local function stop()
     if not playing then return end
     if playing.movie then try("stopping the movie", game.movie_stop, playing.movie.m) end
+    for _, h in ipairs(playing.sounds or {}) do pcall(sound_stop, h) end  -- the cutscene's sounds end with it
     if playing.fov_before then
         local cam = camera_parts()
         if cam then pcall(cam.call, cam, "set_FOV", playing.fov_before) end
@@ -389,6 +397,10 @@ local function run_movies(t)
     if playing.movie then
         local ok, done = pcall(game.movie_update, playing.movie.m)
         if not ok then report("movie " .. playing.movie.id, done) end
+        if playing.movie.m.sound_error then
+            report("movie " .. playing.movie.id .. "'s sound", playing.movie.m.sound_error)
+            playing.movie.m.sound_error = nil
+        end
         if not ok or done then end_movie() end
         return
     end
@@ -539,6 +551,20 @@ re.on_frame(function()
             start_motion(m)
         end
     end
+    for i, s in ipairs(playing.data.sounds or {}) do  -- New sound blocks' sounds, by name
+        if not playing.fired["sound" .. i] and t >= s.t then
+            playing.fired["sound" .. i] = true
+            if not new_sounds[s.id] then
+                report("sound " .. s.id, "no New sound block made it (in " .. SOUNDS_DIR .. ")")
+            else
+                local h = try("sound " .. s.id, sound_play, new_sounds[s.id].sound)
+                if h then
+                    playing.sounds = playing.sounds or {}
+                    table.insert(playing.sounds, h)
+                end
+            end
+        end
+    end
     -- Not over a movie once it shows (while it loads they cover the wait, e.g. a fade held black).
     -- ponytail: so no subtitles over a movie.
     if not (playing.movie and playing.movie.m.phase ~= "loading") then draw_overlays(playing.data, t) end
@@ -574,6 +600,14 @@ re.on_draw_ui(function()
         end
         imgui.same_line()
         imgui.text("New movie " .. name .. (registered[name] and (" (id " .. registered[name] .. ")") or ""))
+    end
+    local sound_names = {}
+    for name in pairs(new_sounds) do table.insert(sound_names, name) end
+    table.sort(sound_names)
+    for i, name in ipairs(sound_names) do
+        if imgui.button("Play##sound" .. i) then try("sound " .. name, sound_play, new_sounds[name].sound) end
+        imgui.same_line()
+        imgui.text("New sound " .. name)
     end
     local ok, now_playing = pcall(current_motion)
     imgui.text("Leon's animation now: " .. (ok and now_playing or "unknown"))

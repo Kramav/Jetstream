@@ -1,6 +1,8 @@
 #include "graph.hpp"
 #include "movie.hpp"
 #include "package.hpp"
+#include "sound.hpp"
+#include "wwise.hpp"
 
 #include "helpers.hpp"
 
@@ -40,6 +42,45 @@ std::string track(const std::string& handler, const std::string& codec, unsigned
     return box("trak", box("tkhd", tkhd) +
                            box("mdia", box("mdhd", mdhd) + box("hdlr", hdlr) +
                                            box("minf", box("stbl", box("stsd", stsd) + box("stts", stts)))));
+}
+
+template <class T>
+void put(std::string& b, T v) {
+    b.append(reinterpret_cast<const char*>(&v), sizeof v);
+}
+
+// A stand-in for the game's ch_csa404_se: a bank with one Event (4) -> Action (3) -> Sound (2) and its one sound, a
+// silent mono Wwise Opus WEM (as the game's banks hold them, CLAUDE.md §10).
+std::string fake_sound_bank() {
+    const auto riff_chunk = [](const char* tag, const std::string& body) {
+        std::string out = tag;
+        put(out, std::uint32_t(body.size()));
+        return out + body;
+    };
+    std::string fmt;
+    put(fmt, std::uint16_t(0x3041)), put(fmt, std::uint16_t(1)), put(fmt, std::uint32_t(48000)), put(fmt, std::uint32_t(8000));
+    put(fmt, std::uint32_t(0)), put(fmt, std::uint16_t(16));
+    put(fmt, std::uint16_t(960)), put(fmt, std::uint32_t(0x4101)), put(fmt, std::uint32_t(1)), put(fmt, std::uint32_t(0));
+    put(fmt, std::uint16_t(312)), fmt += char(1), fmt += char(0);
+    const std::string wave = "WAVE" + riff_chunk("fmt ", fmt) + riff_chunk("seek", "") + riff_chunk("data", std::string(1, '\0'));
+    std::string like = "RIFF";
+    put(like, std::uint32_t(wave.size()));
+    const std::string wem = remod::encode_wem(like + wave, std::vector<std::int16_t>(4800), {});
+    std::string hirc, o;
+    put(hirc, std::uint32_t(3));
+    put(o, std::uint32_t(301)), put(o, std::uint32_t(0x00040001)), o += char(0), put(o, std::uint32_t(401)),
+        put(o, std::uint32_t(wem.size())), o += char(0), o += std::string(10, '\x7f');  // the Sound and its source
+    hirc += char(2), put(hirc, std::uint32_t(o.size())), hirc += o, o.clear();
+    put(o, std::uint32_t(201)), put(o, std::uint16_t(0x0403)), put(o, std::uint32_t(301)), o += std::string(4, '\0');
+    hirc += char(3), put(hirc, std::uint32_t(o.size())), hirc += o, o.clear();  // the Action, playing the Sound
+    put(o, std::uint32_t(101)), o += char(1), put(o, std::uint32_t(201));
+    hirc += char(4), put(hirc, std::uint32_t(o.size())), hirc += o;  // the Event, doing the Action
+    remod::Bank bank;
+    std::string bkhd;
+    put(bkhd, std::uint32_t(140)), put(bkhd, std::uint32_t(11)), put(bkhd, std::uint32_t(0));
+    bank.chunks = {{"BKHD", bkhd}, {"DIDX", ""}, {"DATA", ""}, {"HIRC", hirc}};
+    bank.media = {{401, wem}};
+    return remod::write_bank(bank);
 }
 
 }  // namespace
@@ -216,6 +257,7 @@ TEST_CASE("New movie: our own movie at new paths, made like mva000; its name che
     test::write_file(base / "mva000_fhd.mov.1.x64", "REMV stub");
     test::write_file(base / "mva000.pfb.17.x64", before);
     test::write_file(base / "mva000_fhd.pfb.17", "x" + utf16("@_Chainsaw/Movie/mv/mva000/mva000_FHD.mov"));
+    test::write_file(natives / "_chainsaw/sound/wwise/ch_csa404_se.sbnk.1.x64", fake_sound_bank());
     remod::set_game_files_dir(natives);
     struct Reset {
         ~Reset() { remod::set_game_files_dir({}); }
@@ -247,12 +289,40 @@ TEST_CASE("New movie: our own movie at new paths, made like mva000; its name che
     CHECK(test::read_file(mv / "rmd001_fhd.mov.1.x64") == "REMV stub");
     CHECK(test::read_file(mv / "rmd001.pfb.17.x64") == pfb);
     CHECK(test::read_file(mv / "rmd001_fhd.pfb.17").find(utf16("mv/rmd001/rmd001_FHD.mov")) != std::string::npos);
-    CHECK_THAT(test::read_file(mod / "reframework/data/remod_movies/rmd001.json"), ContainsSubstring("\"rmd001\""));
+    const std::string note = test::read_file(mod / "reframework/data/remod_movies/rmd001.json");
+    CHECK_THAT(note, ContainsSubstring("\"rmd001\""));
     CHECK(fs::exists(mod / "reframework/autorun/remod_cutscene.lua"));
+    // Its sound: a bank of its own, as long as the movie (a 12 s test card), named in the note with its event.
+    const remod::Bank sound = remod::read_bank(test::read_file(mod / "natives/STM/_chainsaw/sound/wwise/remod_mv_rmd001.sbnk.1.x64"));
+    REQUIRE(sound.media.size() == 1);
+    const double movie_seconds =
+        remod::read_mp4_info(mod / "natives/STM/streaming/_chainsaw/movie/mv/rmd001/rmd001.mov.1.x64").seconds;
+    CAPTURE(movie_seconds);
+    CHECK_THAT(remod::read_wem_info(sound.media[0].data).samples / 48000.0, WithinAbs(movie_seconds, 0.05));
+    CHECK_THAT(note, ContainsSubstring("\"bank\": \"@_Chainsaw/Sound/Wwise/remod_mv_rmd001.sbnk\", \"event\": "));
     CHECK_THAT(remod::run_graph(g, opt).nodes.at(1).message, ContainsSubstring("unchanged"));  // nothing encoded again
 
     g.find(1)->params["name"] = "mva001";
     CHECK_THROWS_WITH(remod::run_graph(g, opt), ContainsSubstring("the game's movies"));
+
+    // New sound: its bank (3 s of beeps without audio) and note, into a package.
+    remod::Graph s;
+    s.add_node("NewSound").params["name"] = "door_creak";  // 1
+    auto& spack = s.add_node("PackageMod").params;            // 2
+    spack["name"] = "NewSoundTest";
+    spack["out"] = "mods";
+    spack["replace"] = "true";
+    REQUIRE(s.connect({1, "files", 2, "file"}) == "");
+    CHECK_THAT(remod::run_graph(s, opt).nodes.at(1).message, ContainsSubstring("3 s of beeps"));
+    const fs::path smod = dir.path / "mods/NewSoundTest";
+    const remod::Bank beeps =
+        remod::read_bank(test::read_file(smod / "natives/STM/_chainsaw/sound/wwise/remod_snd_door_creak.sbnk.1.x64"));
+    CHECK(remod::read_wem_info(beeps.media.at(0).data).samples == 3 * 48000);
+    CHECK_THAT(test::read_file(smod / "reframework/data/remod_sounds/door_creak.json"),
+               ContainsSubstring("\"bank\": \"@_Chainsaw/Sound/Wwise/remod_snd_door_creak.sbnk\""));
+    CHECK(fs::exists(smod / "reframework/autorun/remod_cutscene.lua"));
+    s.find(1)->params["name"] = "Door Creak";
+    CHECK_THROWS_WITH(remod::run_graph(s, opt), ContainsSubstring("lowercase"));
 }
 
 TEST_CASE("encode_movie: same_length cuts a longer video and holds a shorter one's last frame") {

@@ -215,6 +215,24 @@ Then play it as the game's own (section 1), inside the cinematic state (section 
 - **The cutscene runtime** (`runtime/remod_cutscene.lua`) loads the notes. A cutscene's `movies` entry naming one
   registers it the first time it plays (`register_movie`: section 3's steps, from 10950 up, one catalog per movie).
   It then plays like a game movie. The menu lists each new movie with a Play button.
+- **Sound (built 2026-10-07, after the sound probe):**
+  - **New movie** also makes a bank `remod_mv_<name>` holding the video's sound (a test card: a beep each second),
+    as long as the movie. The bank path and event go in the movie's note under `"sound"`.
+  - **New sound** (`NewSound`: a name of 1-32 `[a-z0-9_]` and an audio file, empty = 3 s of beeps) makes a bank
+    `remod_snd_<name>` and a note `reframework/data/remod_sounds/<name>.json`.
+  - Both use the helper `make_sound_bank` (`new_sound_bank` on `{game}`'s ch_csa404_se; cached).
+  - **The runtime** loads a bank on first use, as F5 did: `create_resource`, a holder, then
+    `BankResourceList:Add` on the player's container, added again after a save loads. It plays through a cloned
+    trigger info (`sound_play`). A new movie's sound starts when `play` is called. A cutscene's `sounds`
+    [{`t`, `id`}] start at their time. All stop when the movie or cutscene stops, through
+    `soundlib.SoundManager.stopEventByRequestId`, else `stopTriggered`.
+  - **Not seen in game yet:** the sound during the EventMovie pause (the world is paused; the sound posts through
+    Leon's container), and stopping a sound early.
+  - **ponytail: mono.** No one-sound stereo bank exists in RE4R to copy; the only multichannel one is the 12-channel
+    `ch_startup`.
+  - The in-file route is dropped: `rmd002`'s AAC wasn't heard (user, 2026-10-07).
+- **Example `17_add_a_new_sound`:** New sound `beeps` (`beep.wav`) and a Cutscene
+  (`examples/cutscenes/play_new_sound.json`, F7), both into Package.
 - **Example `16_insert_a_new_movie`:** New movie (rmd001, a test card) and a Cutscene
   (`examples/cutscenes/play_new_movie.json`: fade out, rmd001, fade in; F8), both into Package.
 - **Checked:**

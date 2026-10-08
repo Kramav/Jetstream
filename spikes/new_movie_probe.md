@@ -60,7 +60,7 @@ It hooks no game methods.
 
 ## What's in the mod
 
-`C:\Users\<you>\Documents\remod\spikes\remod new movie probe.zip`. It's already built; to build it again, run
+`spikes\out\remod new movie probe.zip`. It's already built; to build it again, run
 `spikes\make_new_movie.ps1`. It holds:
 - **The movie `rmd001`**, at new paths beside the game's movies:
   - a 12 s test pattern at the game's 4K size, plus its 1080p copy;

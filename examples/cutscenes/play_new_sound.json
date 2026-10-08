@@ -1,0 +1,14 @@
+{
+  "schema_version": 0,
+  "name": "Play my new sound",
+  "length": 2.0,
+  "start": {
+    "key": "F7"
+  },
+  "sounds": [
+    {
+      "t": 0.0,
+      "id": "beeps"
+    }
+  ]
+}
