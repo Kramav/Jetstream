@@ -38,6 +38,17 @@ game's own cutscenes do, play their animations, and put them where a shot needs 
     Reset Scripts (which remove the puppets), F8 built him again and the game crashed 18 ms later.
 - **Run 9 (ready):** F11 removes the puppets without a Reset Scripts, to find which of the two causes it (steps
   below).
+  - **First try (2026-10-08):** F8 built Luis, but he couldn't be seen: no animation was playing, so he had no pose.
+    In part 1 you pressed F7 right after. F8 now starts his idle by itself.
+  - **Second try (2026-10-08):** F8, F11 (destroy), F8 built rmc001 and crashed 10 ms later. With the Reset
+    Scripts crash, it's building after a destroy.
+- **Run 10 (2026-10-08):** no crash. F11, reuse, F7, F4 and F6 all work. But F8's puppet can't be seen until F5,
+  whose copy (same mesh, handed over a moment later) is visible.
+- **Run 11 (2026-10-08):** still not visible. Parts made from files the game had already loaded (rmc001's head and
+  hair, which are Ashley's) were ready at once. The others (all of Luis, rmc001's blue body) never were, whatever
+  was tried on them. A fresh part made later with the same files (F5) works.
+- **Run 12 (2026-10-08): works.** A part not ready after 1 s is swapped for a fresh one with the same files.
+  Every stuck part needed one swap, so Luis and rmc001 appear about a second after F8, with no F5 needed.
   - Part 2: a new character mod. "rmc001" is Ashley in blue at new paths, with nothing of the game's replaced,
     installed through Fluffy and built by F8 from the definition the mod ships.
 
@@ -88,17 +99,26 @@ The probe changed, so click **Test in game** again first, then Reset Scripts. Th
    really uses, which I'll compare with the definitions. Pressing **F8** again builds the next definition: after
    Luis, her written-down one.
 
-## Run 9: what crashes a second F8
+## Run 12: visible straight after F8
 
-Click **Test in game** again (the top line should say "run 9"). In remod's Pipeline panel, open **Scripts in the
-game** and remove anything you don't want running; the probe should be the only one. Don't press Reset Scripts
-during these steps unless one says to.
+Click **Test in game** again (top line "run 12"). Then **F8**, and wait 5 seconds without pressing anything else
+(no F5). Does Luis appear, and after about how long? Then **F8** for rmc001, the same way. The "last:" line names
+each part as it becomes ready.
 
-1. **F8** (Luis appears), then **F11** (he's removed), then **F8** again. Does the game crash?
-2. If it didn't: **F8** twice more without F11 (two Luises, then rmc001 if the mod is installed). Crash?
-3. If it still didn't: Reset Scripts once, then **F8**. Crash?
+## Run 10: puppets put away and reused, never destroyed
 
-Tell me the first step that crashed, if any.
+Run 9 crashed the game whenever F8 built after a puppet had been destroyed (by F11, or by Reset Scripts). Now
+nothing is destroyed: F11 and Reset Scripts hide a puppet, and the next F8 for it shows it again.
+
+Click **Test in game** again (the top line should say "run 10"). Keep the rmc001 mod installed.
+
+1. **F8**: Luis appears, already standing in his idle (no F7 needed).
+2. **F8** again: rmc001 (the blue Ashley) appears beside him.
+3. **F11**: both disappear. **F8**, **F8**: they come back. The line should say "reused ... put away earlier".
+4. **F11**, then **Reset Scripts**, then **F8**: Luis comes back, "found in the scene after a reset".
+5. Then F7, F4 and F6 on each, as before (F2 selects).
+
+Tell me the first step that went wrong, and whether rmc001 is blue and has her hair.
 
 ## Run 8, part 2: a new character, as a mod
 

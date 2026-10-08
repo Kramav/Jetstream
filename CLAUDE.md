@@ -1462,7 +1462,49 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
           (no reset) were fine.
         - The installed scripts were the probe and `remod_cutscene.lua`; the latter wasn't loaded that session.
           `cutscene_test.json`'s key is F9, which clashes with the probe's F9.
-        - **Run 9 (ready):** F11 destroys the puppets without a reset. The guide's order is F8, F11, F8; then F8 twice;
+        - **Run 9 (user, 2026-10-08): "f8 does not build luis".** The notes say F8 built him with no problems and
+          drawn, but his root layer had no motion (bank 0, motion 4294967295) and F7 was never pressed. In part 1, F7
+          came 8 s after F8. Inferred: layers with no motion give no pose, so nothing is seen (run 6's copy with no
+          layers was seen). F8 now starts the definition's `idle` (default 1000 / 160) at once.
+        - **Run 9, second try (user, 2026-10-08):** in one session, F8 (Luis), F11 (`GameObject.destroy` on him), then
+          F8 built rmc001 and crashed (`c0000005`) 10 ms after. **Both crashes are a build after a destroy** (none
+          without one). Cause not seen from Lua. Inferred: the destroy frees something the next build shares
+          (`ch2CommonBank.motbank`?).
+        - **Run 10 (ready): puppets are never destroyed.**
+          - F11 and Reset Scripts put them away (`DrawSelf` and `UpdateSelf` false over the tree).
+          - F8 reuses one by its root's name, `remod_puppet_<name>`: the session's table, else
+            `via.SceneManager.get_CurrentScene()` (static) `.findGameObject(String)` after a reset.
+          - F8 starts the idle. **The runtime's actors should do the same** (build once per session, then put away
+            and reuse).
+        - **Run 10 (user, 2026-10-08): no crash.** F11, reuse, F7, F4 and F6 work.
+          - But "f8 builds the character, but it is not visible until I press f5". The puppet animates (frames
+            advance) and is drawn, and F5's copy of it is visible, even with no motion.
+          - F5's copy shares the same mesh and material holders, set later. Inferred: F8 set a mesh that was still
+            streaming in, and the Mesh never takes it up. So the idle theory was wrong. (In part 1 Luis was seen.
+            Timing?)
+        - **Run 11 (ready):** after F8 each Mesh is watched with `get_ReadyToDraw` (also `get_MeshReady` /
+          `get_MaterialReady`). Not ready at 1 s: `setMesh` and `set_Material` again with its own holders. At 2 s:
+          `set_Enabled` false then true. The notes say which made it ready.
+        - **Run 11 (user, 2026-10-08): still not seen without F5.** The notes:
+          - Parts whose files the game already had loaded were `ReadyToDraw` at once: rmc001's head, hair and
+            `ac2100_10`, which the live Ashley uses.
+          - The rest never were (`MeshReady` / `MaterialReady` false for 10 s): all of Luis (puppets from run 10, found
+            after a reset) and rmc001's new body. Setting the mesh again and `set_Enabled` off / on didn't help.
+          - F5's fresh parts with the same holders were seen.
+          - **So a Mesh handed a resource that hasn't loaded yet stays broken; a new one made after it has loaded
+            works.** Holders have no load state [dump: `via.ResourceHolder` only `get_ResourcePath`].
+            `ResourceManager.get_Loading` (static) is global.
+        - **Run 12 (ready):** a part not `ReadyToDraw` after 1 s is replaced by a fresh object, the way F5 builds one.
+          The stuck one is hidden and renamed `remod_stuck_part`, never destroyed. Up to 5 tries; the notes say how many
+          it took.
+        - **Run 12 (user, 2026-10-08): "takes about a second, works well now".** Luis's three parts and rmc001's
+          body each needed exactly 1 fresh part, `ReadyToDraw` the moment it was made. rmc001's head, hair and
+          accessory were ready by themselves. Both puppets had been put away and were found after a reset.
+          **So a file's resources load in under a second. Request them first, make the Mesh parts after.**
+          - **For the runtime's actors:** `create_resource` every file a cutscene's actors use when the cutscene
+            loads (well before it plays), build the puppet when it plays, and keep the watch-and-replace as the safety
+            net. Never destroy; put away and reuse (run 10).
+        - **Run 9 as built:** F11 destroys the puppets without a reset. The guide's order is F8, F11, F8; then F8 twice;
           then reset and F8. Not found yet.
       - **Scripts in the game (built 2026-10-08; user: scripts left installed by accident, "we should have the
         ability to see all currently inserted scripts in remod").**

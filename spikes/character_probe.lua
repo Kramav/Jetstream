@@ -16,12 +16,11 @@
 --   F8  build the next puppet from a definition: game file paths only, no live character needed (run 8, see
 --       from_files): Luis (built in), then each reframework\data\remod_puppets\*.json (a mod's new character)
 --   F9  write down the selected live character's definition (the files it really uses) into the results
---   F11 remove every puppet (destroy), as Reset Scripts does. Run 9: run 8's second F8 crashed the game 18 ms after
---       building Luis again, after several Reset Scripts had destroyed the first one (part 1 built twice in one
---       session with no reset, fine). F11 then F8 tells "destroyed then rebuilt" from "the script restarted".
+--   F11 put every puppet away (hidden, not updating), as Reset Scripts does; F8 reuses it. Puppets are never
+--       destroyed: run 9 crashed the game building after a destroy, twice (see build_next).
 -- Results: reframework\data\remod_character_probe.json and the log.
 
-local RUN = 9
+local RUN = 12
 local TAG = "[remod character probe] "
 
 -- Keep the last run's notes: a crash means a relaunch, and loading again would write over them (run 1 lost F2's).
@@ -373,6 +372,11 @@ local function holder(rtype, path)
     return h:add_ref()
 end
 
+-- A puppet's root object is named after its definition, so a put-away one can be found again after Reset Scripts.
+local function key_of(def)
+    return "remod_puppet_" .. (tostring(def.name):gsub("[^%w]", "_"))
+end
+
 local function from_files(def)
     local rec = { name = def.name, problems = {}, parts = {} }
     local function load(rtype, path, what)
@@ -409,7 +413,7 @@ local function from_files(def)
     end
 
     local pos, rot = front_of_leon()
-    local root = new(def.name)
+    local root = create:call(nil, sdk.create_managed_string(key_of(def))):add_ref()
     local rx = root:call("get_Transform")
     rx:call("set_Position", pos)
     rx:call("set_Rotation", rot)
@@ -451,20 +455,122 @@ local function from_files(def)
     rec.dynamic_banks = #dynamic
     results.from_files = results.from_files or {}
     table.insert(results.from_files, rec)
-    local p = { body = root, what = "puppet: " .. def.name }
+    return rec, root
+end
+
+-- Run 9: building again after a puppet was destroyed crashed the game twice (Luis after Reset Scripts, rmc001 after
+-- F11), 10-18 ms after the build; building twice with nothing destroyed was fine. So puppets are never destroyed:
+-- put away (hidden, not updating), and reused by the next F8 of the same definition, found by name after a reset.
+local put_away = {}  -- key -> root GameObject
+local function set_active(go, on)
+    for _, o in ipairs(tree(go)) do
+        o:call("set_DrawSelf", on)
+        o:call("set_UpdateSelf", on)
+    end
+end
+local function scene_find(name)
+    local scene = sdk.find_type_definition("via.SceneManager"):get_method("get_CurrentScene"):call(nil)
+    return scene and scene:call("findGameObject(System.String)", name)
+end
+
+-- Run 10: F8's puppet animates and is drawn but isn't seen; F5's copy of it, new parts given the same mesh and
+-- material holders later, is. Run 11: parts whose files the game already had (rmc001's head, hair, accessory: the
+-- live Ashley's) were ready to draw at once; the others (all of Luis, rmc001's new body) never were (get_MeshReady
+-- false), not after setting the mesh again nor switching the part off and on. So a Mesh handed a resource that
+-- hasn't loaded yet stays broken, and a fresh one made once it has works (F5). Holders have no load state [dump]. So
+-- each part is watched: not ready after 1 s, a fresh part takes its place (the stuck one hidden, renamed, never
+-- destroyed: run 9), up to 5 times.
+local STUCK = "remod_stuck_part"
+local watching = {}  -- { mesh, go, name, t0, tries }
+local function watch_meshes(root, label)
+    for _, go in ipairs(tree(root)) do
+        local m = component(go, "via.render.Mesh")
+        local name = tostring(go:call("get_Name"))
+        if m and name ~= STUCK then
+            table.insert(watching, { mesh = m, go = go, name = label .. "/" .. name, t0 = os.clock(), tries = 0 })
+        end
+    end
+end
+local function fresh_part(go, m)
+    local x = go:call("get_Transform")
+    local create = sdk.find_type_definition("via.GameObject"):get_method("create(System.String)")
+    local new = create:call(nil, sdk.create_managed_string(tostring(go:call("get_Name")))):add_ref()
+    local nm = new:call("createComponent(System.Type)", sdk.typeof("via.render.Mesh"))
+    nm:call("setMesh", m:call("getMesh"))
+    local mat = m:call("get_Material")
+    if mat then nm:call("set_Material", mat) end
+    share_motion(go, new)
+    local nx = new:call("get_Transform")
+    nx:call("set_Parent", x:call("get_Parent"))
+    nx:call("set_LocalPosition", x:call("get_LocalPosition"))
+    nx:call("set_LocalRotation", x:call("get_LocalRotation"))
+    local pj = x:call("get_ParentJoint")
+    if pj and tostring(pj) ~= "" then nx:call("set_ParentJoint", pj) end
+    nx:call("set_SameJointsConstraint", x:call("get_SameJointsConstraint"))
+    set_active(go, false)
+    go:call("set_Name", STUCK)
+    return new, nm
+end
+local function check_meshes()
+    for i = #watching, 1, -1 do
+        local w = watching[i]
+        local age = os.clock() - w.t0
+        if try(w.mesh.call, w.mesh, "get_ReadyToDraw") then
+            table.remove(watching, i)
+            note(string.format("%s: ready to draw %s (%.1f s)", w.name,
+                w.tries == 0 and "by itself" or ("after " .. w.tries .. " fresh part(s)"), age))
+        elseif age > 1 and w.tries >= 5 then
+            table.remove(watching, i)
+            note(string.format("%s: never ready to draw, %d fresh parts tried (mesh ready %s, material ready %s)", w.name,
+                w.tries, tostring(try(w.mesh.call, w.mesh, "get_MeshReady")),
+                tostring(try(w.mesh.call, w.mesh, "get_MaterialReady"))))
+        elseif age > 1 then
+            w.go, w.mesh = fresh_part(w.go, w.mesh)
+            w.tries, w.t0 = w.tries + 1, os.clock()
+        end
+    end
+end
+
+-- Shown in front of Leon, selected, and in its idle: run 9 built Luis but he wasn't seen until F7, as his layers had
+-- no motion (bank 0, motion -1), so no pose (run 8's part 1 pressed F7 8 s after F8).
+local function show_puppet(root, def)
+    local pos, rot = front_of_leon()
+    local x = root:call("get_Transform")
+    x:call("set_Position", pos)
+    x:call("set_Rotation", rot)
+    local p = { body = root, what = "puppet: " .. def.name, key = key_of(def) }
     table.insert(puppets, p)
     list, index = characters(), 0
     for i, c in ipairs(list) do if c == p then index = i end end  -- select it, ready for F7 / F4 / F6
-    return rec
+    watch_meshes(root, def.name)
+    local idle = type(def.idle) == "table" and def.idle or { bank = 1000, motion = 160 }
+    local layer = motion_layer(p)
+    if not layer then return "no animation layer" end
+    layer:call("changeMotion(System.UInt32, System.UInt32, System.Single, System.Single, via.motion.InterpolationMode, via.motion.InterpolationCurve)",
+        idle.bank, idle.motion, 0.0, 0.0, 1, 0)
+    return string.format("idle %d / %d started", idle.bank, idle.motion)
 end
 
 local def_index = 0
 local function build_next()
     local defs = definitions()
     def_index = def_index % #defs + 1
-    local rec = from_files(defs[def_index])
-    note(string.format("F8: built %s from files (%d of %d definitions), %d problem(s)%s; %s", rec.name, def_index, #defs,
-        #rec.problems, #rec.problems > 0 and (": " .. table.concat(rec.problems, "; ")) or "", table.concat(rec.parts, "; ")))
+    local def = defs[def_index]
+    local key = key_of(def)
+    for _, p in ipairs(puppets) do
+        if p.key == key then return note("F8: " .. def.name .. " is already out (F11 puts it away)") end
+    end
+    local root, how = put_away[key], "put away earlier"
+    if not root then root, how = try(scene_find, key), "found in the scene after a reset" end
+    if root then
+        put_away[key] = nil
+        set_active(root, true)
+        return note(string.format("F8: reused %s (%s, nothing built); %s", def.name, how, show_puppet(root, def)))
+    end
+    local rec, built = from_files(def)
+    note(string.format("F8: built %s from files (%d of %d definitions), %d problem(s)%s; %s; %s", rec.name, def_index,
+        #defs, #rec.problems, #rec.problems > 0 and (": " .. table.concat(rec.problems, "; ")) or "",
+        table.concat(rec.parts, "; "), show_puppet(built, def)))
 end
 
 -- The files a live character uses, as a definition F8 can build (compare with the hand-written ones).
@@ -515,9 +621,13 @@ end
 
 -- ---- Keys and screen ----
 
+-- Hides every puppet out now, for F8 to reuse (never destroyed: see build_next). F5's copies have no key: hidden only.
 local function remove_puppets()
     local n = #puppets
-    for _, c in ipairs(puppets) do pcall(function() c.body:call("destroy", c.body) end) end
+    for _, c in ipairs(puppets) do
+        pcall(set_active, c.body, false)
+        if c.key then put_away[c.key] = c.body end
+    end
     puppets, list, index = {}, {}, 0
     return n
 end
@@ -525,7 +635,7 @@ end
 local KEYS = { F2 = 0x71, F3 = 0x72, F4 = 0x73, F5 = 0x74, F6 = 0x75, F7 = 0x76, F8 = 0x77, F9 = 0x78, F11 = 0x7A }
 local ACTIONS = { F2 = next_character, F3 = toggle_hide, F4 = replay, F5 = spawn_puppet, F6 = bring, F7 = idle,
                   F8 = build_next, F9 = capture,
-                  F11 = function() note(string.format("F11: removed %d puppet(s)", remove_puppets())) end }
+                  F11 = function() note(string.format("F11: put away %d puppet(s)", remove_puppets())) end }
 local down = {}
 local function pressed(name)
     local is = reframework:is_key_down(KEYS[name])
@@ -535,6 +645,8 @@ local function pressed(name)
 end
 
 re.on_frame(function()
+    local ok, err = pcall(check_meshes)
+    if not ok then watching = {}; note("watching the meshes failed: " .. tostring(err)) end
     for key, f in pairs(ACTIONS) do
         if pressed(key) then
             local ok, err = pcall(f)
@@ -552,7 +664,7 @@ re.on_frame(function()
     for i, line in ipairs(lines) do draw.text(line, 40, 20 + 18 * i, 0xFFFFFFFF) end
 end)
 
-re.on_script_reset(function()  -- show what we hid, remove what we spawned
+re.on_script_reset(function()  -- show what we hid, put away our puppets (the next F8 finds them by name)
     for _, c in pairs(hidden) do pcall(set_drawn, c, true) end
     remove_puppets()
     hidden = {}
