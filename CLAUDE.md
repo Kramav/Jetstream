@@ -1312,7 +1312,8 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     - **The runtime** registers a named new movie the first time a cutscene's `movies` entry plays it.
     - **Example 16** (`16_insert_a_new_movie`, F8).
 
-    Details in docs/re4r_movies.md §5. Tests pass, and example 16 builds from the real files. Not yet seen in game.
+    Details in docs/re4r_movies.md §5. Tests pass, and example 16 builds from the real files. **Works in game (user, 2026-10-08)**, with its
+    sound (below).
     **Sound (user, 2026-10-07: "can we try adding sound to them ... or an f5 play a brand new sound, f7 play a sound
     from game files"): the sound probe** (`spikes/sound_probe.md`, `.lua`, `make_sound_probe.ps1`). **Run 1 (user,
     2026-10-07: "both work"):** a brand-new bank's sound (F5) and a game sound (F7) play from a script, the new one
@@ -1322,10 +1323,11 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     - **New sound** block (`NewSound`) and cutscene `sounds` [{t, id}].
     - Example **17_add_a_new_sound** (F7).
 
-    All mono (no stereo one-sound bank to copy). Details in docs/re4r_movies.md §5. Not seen in game yet; zips
-    built in `examples\mods` (git-ignored).
-  - **Triggers, M5's first piece (user, 2026-10-08: "do triggers next"): built into the runtime, not run**
-    (`spikes/trigger_test.md`).
+    All mono (no stereo one-sound bank to copy). Details in docs/re4r_movies.md §5. **Examples 16 and 17 work in
+    game (user, 2026-10-08).** Their zips are built in `examples\mods` (git-ignored).
+  - **Triggers, M5's first piece (user, 2026-10-08: "do triggers next"): built into the runtime.**
+    **In game (user, 2026-10-08), example 18 started by itself.** Part 2 of `spikes/trigger_test.md` (Make a trigger
+    here, then Use trigger) hasn't been tried yet.
     - **The game's names [dump]:** `chainsaw.CampaignManager` (AppSingleton) `get_CurrentChapter()` (`ChapterID`: 86,
       e.g. `chap01_01`, `Chp01`) and `get_CurrentStageIdentifier()` (`StageIdentifier` {`_Area` AreaID, `_Location`
       LocID, `_Stage` StageID: 834, e.g. `st40_100`}); names from the enums' static fields (`enum_name`). Other
@@ -1344,8 +1346,97 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     - **Checked:** tests (the checks, use_trigger new / existing / missing), `check-lua`, example 18 built.
     - **Not used:** `OccupiedMediator.checkBusy()` (meaning unknown).
     - **Not done:** persisting "once" per save, flags, "after the game's movie / event X", enemy-count triggers.
-  - **Other characters in cutscenes (user's 4): the character probe is built, not run** (`spikes/character_probe.md`,
-    `.lua`; installed by a Lua script block's Test in game).
+  - **Other characters in cutscenes (user's 4): character probe** (`spikes/character_probe.md`, `.lua`; installed by
+    a Lua script block's Test in game).
+    - **Run 1 (2026-10-08): the game crashed on F3, the lock.** The probe passed `nil` for `LockRequestOption`, a
+      class the game reads (`WithCamera`, `WaitOccupy`, `Affix`...). A null passed to a game method crashes the game
+      rather than failing in Lua.
+    - **Run 2 (user, 2026-10-08):**
+      - F2 found Leon (player, `ch0a0z0_body`) and Ashley (partner, kind 200030, `ch2a1z0_body`).
+      - F4's `changeMotion` restarts her animation; while she runs it jitters, since her AI re-picks.
+      - F6 (transform position and rotation) puts her in front of Leon, and she stays there, but she follows him
+        again when he moves.
+      - The F3 lock, with a real option, returned an `UnlockParam`, but `isLocked` stayed false and she kept
+        moving. `requestUnlock` threw ("Invoke threw an exception") and the game crashed.
+      - **So the OccupiedMediator lock reserves a character and doesn't stop one.** Ashley's head updater has
+        `onLockTrigger` / `onLockRelease`. The lock is dropped from the probe.
+    - **Run 3 (user, 2026-10-08): the think switch didn't stop her following.** The read-back wasn't recorded.
+    - **Run 4 (ready): the game's own way [dump].**
+      - The game's cutscenes don't drive the live characters. An event has **puppets** (`chainsaw.TimelineEventPuppetChara`
+        : `TimelineEventPuppetBase`, managed by `TimelineEventMediator.get_PuppetManager`), which copy the character's
+        costume and accessories (`requestCostumeChange`, `updateAccessory`, `PartsOffItem`, `PhysicsOffItem`).
+      - They're built from event meshes: `_chainsaw/event/resource/mesh/mesh07/ch2a1z0_00__body.pfb` (also `__head`,
+        `__cloth`, `__body_clear`).
+      - Run 4:
+        - F3 hides the live one (`set_DrawSelf` over its transform tree);
+        - F5 spawns that body prefab (`via.Prefab` `set_Path`, `set_Standby`, `instantiate(vec3, Quaternion)` once
+          `get_Ready`) and records its components and children;
+        - F4 / F6 / F7 animate and place it.
+      - That would make the design: hide the real character, show a puppet that the cutscene drives.
+    - **Run 4 (user, 2026-10-08):**
+      - **F3 hides all of Ashley (13 objects) and shows her again.**
+      - The event body prefab spawned with only `via.Transform` + `chainsaw.TimelineEventMeshSettings`, which is
+        mesh-swap data (`_MeshID`, `_MeshChangeObjectName`, `_MeshInfoList` {Mesh, Material, Fur holders,
+        `UseGameMesh`...}), so nothing showed.
+      - The real puppets are objects in each event's `.scn`. For example, `cs/csa024/flow/fl00/chara_mini.scn` names
+        `.fbxskel`, `.mesh` / `.mdf2`, `.chain`, `.jmap` and the event's `.motlist` per character.
+    - **Run 5 (ready):** F5 builds a copy of the selected character:
+      - `via.GameObject.create(name)`, then `createComponent(via.render.Mesh)` with `setMesh(getMesh())` and
+        `set_Material` for each part that has a mesh;
+      - on the body, a `via.motion.Motion` sharing its `DynamicMotionBank`s and `MotionBankAsset`. Joints come from
+        the mesh (`Animation.onJointsConstructed`; no skeleton setter);
+      - parts parented at their local offsets;
+      - it records every part's parent, components, mesh and material (`parts_of`), which shows how the live parts
+        follow the body.
+    - **Run 5 (user, 2026-10-08): no puppet**, because F5 needed a mesh on the root.
+      - **Ashley's layout [game]:** the root `ch2a1z0_body` has no mesh. It holds `via.motion.Motion`,
+        `via.motion.DummySkeleton`, `ActorMotion`, `MotionFsm2`, the AI and `chainsaw.TimelineEventMeshChanger` /
+        `TimelineEventActorPlayer`.
+      - Her children each have a `via.render.Mesh`, a `Motion` of their own and `chainsaw.PartsAttacher`: `body`
+        (cha103_00.mesh, plus `via.motion.Chain` and `JointConstraints`), `head` (cha100_10, `ParentMotionSyncForFacial`),
+        `hair` (cha103_21, `via.render.Strands`; its child `raytrace_mesh`), and `ac2100_10`. There are also lights
+        and markers.
+      - `via.Transform` has `SameJointsConstraint` and `ParentJoint`; `DummySkeleton` has `SkeletonResourceHandle`.
+    - **Run 6 (ready):** F5 builds that layout:
+      - a root with a `DummySkeleton` (her skeleton) and a `Motion` sharing her banks;
+      - each mesh part (not `raytrace`) under its copied parent, sharing its mesh, material and motion banks, at its
+        offsets, with the live part's `SameJointsConstraint` and `ParentJoint`;
+      - `parts_of` records those two per part.
+    - **Run 6 (user, 2026-10-08): a visible copy of Ashley**, in front of Leon, and F6 places it. It had no animation
+      layer (a new `Motion` has none) and no hair (strand hair is `via.render.Strands`, not the hair mesh).
+    - **Run 7 (user, 2026-10-08): THE PUPPET WORKS.** With the live Ashley hidden (F3), the copy:
+      - stands in her idle on F7 (`changeMotion(1000, 160)` on the root's layer 0) and restarts on F4;
+      - moves its head and clothes with the body, and F6 places it;
+      - has her hair, which stays on the copy. **The shade is slightly off (user: "not a huge deal, but something to
+        note").**
+      - The record:
+        - the root got 13 layers; head 5; the `body` part's live `Motion` has 0;
+        - `head`, `body` and `hair` follow through `SameJointsConstraint` = true, and `ac2100_10` through
+          `ParentJoint` = `Head`;
+        - Strands: 89 settings copied, 0 failed;
+        - `get_StrandTargetMesh` returned nil, so the target wasn't repointed, and the hair follows anyway.
+      - **Shade suspects:** settings set by plain methods (`setShadingQuality`, `setMultipleScattering`,
+        `setBeautyMaskChannel`), the parent `via.render.RenderEntity`'s settings (not copied for any mesh or the
+        Strands), and the skipped `raytrace_mesh` (a ray-tracing stand-in).
+      - **So the design is:** hide the live character, build a puppet from its own parts, and drive the puppet
+        (animation, place). That's how the game's events do it too.
+    - **Run 7 as built:**
+      - each copied `Motion` gets the live one's layer count (`setLayerCount`, then `setLayer(i, new
+        via.motion.TreeLayer)` where missing);
+      - `Strands` is created and every `set_X` with a `get_X` copied from the live one (`copy_properties`, through
+        the type definition's methods);
+      - `StrandTargetMesh` (a `via.GameObjectRef` value, `.ctor(GameObject)`) is pointed at the copy of its target,
+        or of the target's parent if that part wasn't copied.
+    - **Run 3 as built:**
+      - F3 is the game's think switch, held false each frame before UpdateBehavior, with the read-back on screen:
+        `PartnerBaseContext.set_ThinkEnable` (Ashley, Luis; `PartnerBaseContext` derives from `PlayerBaseContext`)
+        and `EnemyHeadUpdater.set_ThinkEnable` (enemies, via `CharacterContext.get_HeadUpdater`).
+      - `PartnerNpcSpawnParam.ThinkEnable` suggests levels spawn partners with thinking off.
+      - F5 plays the standing idle (1000 / 160, Leon's and Ashley's).
+    - **Next candidates if think isn't enough:**
+      - `CharacterManager.requestControl(ContextID, CharacterControlIndex, priority)`, perhaps with the operation
+        stop on that index;
+      - `TimelineEventWork.setPuppetList`, how the game's own timeline events take characters.
     - **Finding them [dump]:** `chainsaw.CharacterManager` `get_PlayerContextList` / `get_PartnerContextList` /
       `get_DollNpcContextList` / `get_EnemyContextList` (each a `CharacterContext`: `get_BodyGameObject`, `get_ID`
       (`chainsaw.ContextID`, `get_DisplayName`), `get_KindID`).
