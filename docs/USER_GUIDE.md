@@ -291,7 +291,9 @@ installed.
 2. To try it without packaging: set **Game folder** in the Pipeline panel (where the game is installed), click
    **Test in game**, then in game press **Reset Scripts** in REFramework's menu (Insert). REFramework doesn't reload
    a changed script by itself: after each change, Test in game and Reset Scripts again. **Remove from game** takes
-   it out. REFramework's log is `re2_framework_log.txt` in the game's folder (for every game).
+   it out. **Scripts in the game**, under Game folder, lists every script the game runs, whoever installed it, with
+   **Remove** (to the Recycle Bin, with its folder); a script a mod manager installed is better uninstalled there.
+   REFramework's log is `re2_framework_log.txt` in the game's folder (for every game).
    **Game errors** reads your script's errors from that log since Test in game and shows them under the block; **Fix
    with Claude** asks Claude to fix them (or fix them yourself: **Open in editor**). REFramework only writes Lua errors
    to its log with **Log Lua Errors to Disk** on, in its ScriptRunner menu (off until you turn it on, once). The log

@@ -6,6 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <array>
@@ -348,6 +349,47 @@ void remove_from_game(const std::vector<PackageFile>& files, const fs::path& gam
         for (p = p.parent_path(); p != autorun && p.native().size() > autorun.native().size() && fs::is_empty(p, ec) && !ec;
              p = p.parent_path())
             fs::remove(p, ec);
+    }
+}
+
+std::vector<InstalledScript> installed_scripts(const fs::path& game_dir) {
+    const fs::path autorun = game_dir / "reframework" / "autorun";
+    std::vector<InstalledScript> out;
+    std::error_code ec;
+    for (auto it = fs::directory_iterator(autorun, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        const fs::path& p = it->path();
+        if (!it->is_regular_file(ec) || lower(p.extension().string()) != ".lua") continue;
+        InstalledScript s{.name = p.stem().string(), .file = p, .time = it->last_write_time(ec)};
+        s.modules = fs::is_directory(autorun / p.stem(), ec);
+        out.push_back(std::move(s));
+    }
+    std::ranges::sort(out, {}, [](const InstalledScript& s) { return lower(s.name); });
+    return out;
+}
+
+void to_recycle_bin(const fs::path& path) {
+    if (path.native().size() >= MAX_PATH) throw PackageError(path.string() + " is too long a path for the Recycle Bin");
+    std::wstring from = path.native();
+    from.push_back(L'\0');  // the list ends with two nulls
+    SHFILEOPSTRUCTW op{};
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT | FOF_WANTNUKEWARNING;
+    if (SHFileOperationW(&op) != 0 || op.fAnyOperationsAborted)
+        throw PackageError("couldn't move " + path.string() + " to the Recycle Bin");
+}
+
+void remove_installed_script(const fs::path& game_dir, const std::string& name, bool recycle) {
+    if (name.empty() || fs::path(name).filename().string() != name || name == "." || name == "..")
+        throw PackageError("\"" + name + "\" isn't a script's name");
+    const fs::path autorun = game_dir / "reframework" / "autorun";
+    for (const fs::path& p : {autorun / (name + ".lua"), autorun / name}) {
+        std::error_code ec;
+        if (!fs::exists(p, ec)) continue;
+        if (recycle)
+            to_recycle_bin(p);
+        else
+            fs::remove_all(p, ec);
     }
 }
 

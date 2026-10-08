@@ -75,6 +75,26 @@ void install_in_game(const std::vector<PackageFile>& files, const fs::path& game
 // itself). Missing files are fine. ponytail: a module deleted from the script's folder since it was installed stays.
 void remove_from_game(const std::vector<PackageFile>& files, const fs::path& game_dir);
 
+// Every script REFramework runs from the game's folder (user, 2026-10-08: scripts left installed by accident, and
+// no way to see them): each top-level .lua in reframework\autorun, whoever put it there (remod's Test in game, a mod
+// manager, by hand), sorted by name. Empty if there's no autorun folder.
+struct InstalledScript {
+    std::string name;      // the .lua's stem
+    fs::path file;
+    bool modules = false;  // a <name>\ folder beside it (its modules)
+    fs::file_time_type time;
+};
+std::vector<InstalledScript> installed_scripts(const fs::path& game_dir);
+
+// Takes one out of the game: <name>.lua and its <name>\ folder, to the Recycle Bin (the copy in the game may be the
+// only one), or deleted for good with `recycle` false (tests). Missing is fine. Throws PackageError if a name isn't a
+// plain file name, or the Recycle Bin refuses.
+void remove_installed_script(const fs::path& game_dir, const std::string& name, bool recycle = true);
+
+// Into the Recycle Bin, without asking; Windows only asks if the drive has none (it would delete for good). Throws
+// PackageError on failure or a path past MAX_PATH (the Recycle Bin's limit).
+void to_recycle_bin(const fs::path& path);
+
 // REFramework's log, <game>\re2_framework_log.txt, emptied each time the game starts [official, REFramework.cpp].
 fs::path framework_log(const fs::path& game_dir);
 

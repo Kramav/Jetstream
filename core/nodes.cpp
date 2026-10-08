@@ -2170,18 +2170,14 @@ NodeSpec rename_file() {
     };
 }
 
-// Into the Recycle Bin, without asking; Windows only asks if the drive has none (it would delete for good).
 void recycle(const fs::path& file) {
     if (file.native().size() >= MAX_PATH)
         throw GraphError(file.string() + " is too long a path for the Recycle Bin; untick To Recycle Bin to delete it");
-    std::wstring from = file.native();
-    from.push_back(L'\0');  // the list ends with two nulls
-    SHFILEOPSTRUCTW op{};
-    op.wFunc = FO_DELETE;
-    op.pFrom = from.c_str();
-    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT | FOF_WANTNUKEWARNING;
-    if (SHFileOperationW(&op) != 0 || op.fAnyOperationsAborted)
-        throw GraphError("couldn't move " + file.string() + " to the Recycle Bin");
+    try {
+        to_recycle_bin(file);
+    } catch (const PackageError& e) {
+        throw GraphError(e.what());
+    }
 }
 
 NodeSpec delete_file() {

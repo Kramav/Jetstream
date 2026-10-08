@@ -36,6 +36,7 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <format>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -479,6 +480,9 @@ struct State {
     // Test in game, and the script's errors read from it since (shown under the block; not saved).
     std::map<int, std::uintmax_t> log_from;
     std::map<int, std::string> game_errors;
+    // The Pipeline panel's "Scripts in the game" list, read again every 2 s while it's open.
+    std::vector<remod::InstalledScript> game_scripts;
+    double game_scripts_read = -10;
     std::map<int, remod::NodeStatus> statuses;  // where each node got to in the last run (badges on the nodes)
     // Link drawing: pin centres (canvas coordinates) recorded while drawing the nodes, and the routes, recomputed
     // only when a block or pin moves. routed[i] = the graph link that routes.paths[i] belongs to.
@@ -926,6 +930,47 @@ std::vector<remod::PackageFile> game_files_of(const State& s, int node) {
     return remod::script_files(script);
 }
 
+// The Pipeline panel's list of every script REFramework runs from the game's folder (user, 2026-10-08: scripts left
+// installed by accident, with no way to see or remove them), each with Remove (to the Recycle Bin).
+void game_scripts_list(State& s) {
+    if (s.game_dir.empty()) return;
+    const std::filesystem::path game(unquote(s.game_dir));
+    if (ImGui::GetTime() - s.game_scripts_read > 2) {  // a folder listing: cheap, and catches Fluffy's installs too
+        s.game_scripts = remod::installed_scripts(game);
+        s.game_scripts_read = ImGui::GetTime();
+    }
+    const std::string label = "Scripts in the game (" + std::to_string(s.game_scripts.size()) + ")###gamescripts";
+    if (!ImGui::TreeNode(label.c_str())) return;
+    if (s.game_scripts.empty()) ImGui::TextDisabled("None: reframework\\autorun has no scripts.");
+    std::string remove;
+    for (const auto& script : s.game_scripts) {
+        ImGui::PushID(script.name.c_str());
+        if (ImGui::SmallButton("Remove")) remove = script.name;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Moves it%s to the Recycle Bin.\nIf a mod manager (Fluffy) installed it, uninstall that "
+                              "mod there instead.", script.modules ? " and its folder" : "");
+        ImGui::SameLine();
+        ImGui::Text("%s.lua%s", script.name.c_str(), script.modules ? " + its folder" : "");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", script.file.string().c_str());
+        const auto when = std::chrono::floor<std::chrono::minutes>(
+            std::chrono::clock_cast<std::chrono::system_clock>(script.time));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", std::format("{:%d %b %H:%M}", std::chrono::zoned_time(std::chrono::current_zone(), when)).c_str());
+        ImGui::PopID();
+    }
+    if (!remove.empty()) {
+        try {
+            remod::remove_installed_script(game, remove);
+            s.status = "Moved " + remove + ".lua (and its folder, if any) to the Recycle Bin. Press Reset Scripts in "
+                       "REFramework's menu (or restart the game) to unload it.";
+        } catch (const std::exception& e) {
+            s.status = "Couldn't remove " + remove + ".lua: " + e.what();
+        }
+        s.game_scripts_read = -10;
+    }
+    ImGui::TreePop();
+}
+
 // A Lua script block's Test in game (or, `remove`, Remove from game): its script and modules into (out of) the game's
 // reframework\autorun; the outcome goes to the status line.
 void script_in_game(State& s, int node, bool remove) {
@@ -1286,6 +1331,7 @@ void draw_side_panel(State& s) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Where the game is installed (the folder with its .exe), e.g. under steamapps\\common.\n"
                               "A Lua script's Test in game copies the script into its reframework\\autorun folder.");
+        game_scripts_list(s);
 
         // REFramework's SDK dump: the game's names scripts are checked against.
         ImGui::InputTextWithHint("##sdkdump", "il2cpp_dump.json (REFramework's Dump SDK)", &s.sdk_dump);

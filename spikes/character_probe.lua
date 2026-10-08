@@ -13,9 +13,15 @@
 --   F5  build a puppet copy of it 1.5 m in front of Leon (see spawn_puppet), and write down its parts
 --   F6  bring it 1.5 m in front of Leon, facing him
 --   F7  play the standing idle (bank 1000 motion 160, Leon's and Ashley's)
+--   F8  build the next puppet from a definition: game file paths only, no live character needed (run 8, see
+--       from_files): Luis (built in), then each reframework\data\remod_puppets\*.json (a mod's new character)
+--   F9  write down the selected live character's definition (the files it really uses) into the results
+--   F11 remove every puppet (destroy), as Reset Scripts does. Run 9: run 8's second F8 crashed the game 18 ms after
+--       building Luis again, after several Reset Scripts had destroyed the first one (part 1 built twice in one
+--       session with no reset, fine). F11 then F8 tells "destroyed then rebuilt" from "the script restarted".
 -- Results: reframework\data\remod_character_probe.json and the log.
 
-local RUN = 7
+local RUN = 9
 local TAG = "[remod character probe] "
 
 -- Keep the last run's notes: a crash means a relaunch, and loading again would write over them (run 1 lost F2's).
@@ -321,10 +327,205 @@ local function idle()
     change(c, 1000, 160, "F7")
 end
 
+-- ---- Run 8: puppets from files ----
+-- Run 7's copy shares a live character's resources. Every setter it used takes a resource holder [dump]
+-- (Mesh.setMesh / set_Material, DummySkeleton.set_SkeletonResourceHandle, Motion.set_MotionBankAsset,
+-- DynamicMotionBank.set_MotionBank, Strands.set_Strand / set_StrandBindingData), and sdk.create_resource(type, path)
+-- loads one from the game's files [REFramework book], so a definition (paths) is enough: any character, loaded in
+-- the level or not. Luis's parts are the ones the game's event csa012 builds its ch2a3z0 puppet from; his motion
+-- banks are his body prefab's (appsystem/character/ch2a3z0).
+
+local G = "_Chainsaw/Character/ch/cha3/cha300/"
+local DEFINITIONS = {
+    { name = "luis (cha300)", skeleton = "_Chainsaw/Character/ch/cha3/cha3.fbxskel",
+      motion_bank = "_Chainsaw/AppSystem/Character/ch2Common/Motion/ch2CommonBank.motbank",
+      dynamic_banks = { "_Chainsaw/Animation/ch/cha3/motbank/cha3.motbank" }, layers = 13,
+      parts = { { name = "body", mesh = G .. "00/cha300_00.mesh", material = G .. "00/cha300_00.mdf2" },
+                { name = "head", mesh = G .. "10/cha300_10.mesh", material = G .. "10/cha300_10.mdf2" },
+                { name = "hair", mesh = G .. "20/cha300_20.mesh", material = G .. "20/cha300_20.mdf2" } } },
+}
+local PUPPET_DIR = "remod_puppets"  -- under reframework\data: a mod ships its characters' definitions there
+local captured = {}  -- F9's definitions, buildable by F8 too
+
+local function definitions()
+    local out = {}
+    for _, d in ipairs(DEFINITIONS) do table.insert(out, d) end
+    local ok, files = pcall(fs.glob, PUPPET_DIR .. "[/\\\\].*\\.json$")
+    for _, path in ipairs(ok and files or {}) do
+        local def = json.load_file(path:match("[/\\]data[/\\](.*)$") or path)
+        if type(def) == "table" and type(def.parts) == "table" then
+            def.name = tostring(def.name or path)
+            table.insert(out, def)
+        end
+    end
+    for _, d in ipairs(captured) do table.insert(out, d) end
+    return out
+end
+
+-- A resource holder for a file, or nil and why. Never hand a nil to a game method: that crashes the game (run 1).
+local function holder(rtype, path)
+    if type(path) ~= "string" or path == "" then return nil, "no path" end
+    local res = sdk.create_resource(rtype, path)
+    if not res then return nil, "not loaded: " .. path end
+    res:add_ref()
+    local h = res:create_holder(rtype .. "Holder")
+    if not h then return nil, "no holder: " .. path end
+    return h:add_ref()
+end
+
+local function from_files(def)
+    local rec = { name = def.name, problems = {}, parts = {} }
+    local function load(rtype, path, what)
+        local ok, h, why = pcall(holder, rtype, path)
+        if ok and h then return h end
+        table.insert(rec.problems, what .. ": " .. tostring(ok and why or h))
+    end
+    local create = sdk.find_type_definition("via.GameObject"):get_method("create(System.String)")
+    local new = function(name) return create:call(nil, sdk.create_managed_string("remod_puppet_" .. name)):add_ref() end
+    local add = function(go, t) return go:call("createComponent(System.Type)", sdk.typeof(t)) end
+
+    local bank = def.motion_bank and load("via.motion.MotionBankResource", def.motion_bank, "motion bank")
+    local dynamic = {}
+    for _, path in ipairs(def.dynamic_banks or {}) do
+        local h = load("via.motion.MotionBankResource", path, "dynamic bank")
+        local d = h and (sdk.create_instance("via.motion.DynamicMotionBank") or sdk.create_instance("via.motion.DynamicMotionBank", true))
+        if d then
+            d = d:add_ref()
+            d:call("set_MotionBank", h)
+            table.insert(dynamic, d)
+        elseif h then
+            table.insert(rec.problems, "couldn't make a DynamicMotionBank")
+        end
+    end
+    local function add_motion(go, layers)
+        local m = add(go, "via.motion.Motion")
+        if bank then m:call("set_MotionBankAsset", bank) end
+        m:call("setDynamicMotionBankCount", #dynamic)
+        for i, d in ipairs(dynamic) do m:call("setDynamicMotionBank", i - 1, d) end
+        m:call("setLayerCount", layers)
+        for l = 0, layers - 1 do
+            if not m:call("getLayer", l) then m:call("setLayer", l, sdk.create_instance("via.motion.TreeLayer"):add_ref()) end
+        end
+    end
+
+    local pos, rot = front_of_leon()
+    local root = new(def.name)
+    local rx = root:call("get_Transform")
+    rx:call("set_Position", pos)
+    rx:call("set_Rotation", rot)
+    local skel = load("via.motion.SkeletonResource", def.skeleton, "skeleton")
+    if skel then add(root, "via.motion.DummySkeleton"):call("set_SkeletonResourceHandle", skel) end
+    add_motion(root, tonumber(def.layers) or 13)
+
+    for _, part in ipairs(def.parts) do
+        local name = tostring(part.name or "part")
+        local go = new(name)
+        local mesh = load("via.render.MeshResource", part.mesh, name .. " mesh")
+        local mat = load("via.render.MeshMaterialResource", part.material, name .. " material")
+        if mesh then
+            local m = add(go, "via.render.Mesh")
+            m:call("setMesh", mesh)
+            if mat then m:call("set_Material", mat) end
+        end
+        add_motion(go, 0)  -- run 7: the live body part's Motion has no layers and follows all the same
+        local s = part.strands
+        if type(s) == "table" then
+            local strand = load("via.render.StrandsResource", s.strand, name .. " strands")
+            local binding = load("via.render.StrandsBindingResource", s.binding, name .. " strand binding")
+            local smat = load("via.render.MeshMaterialResource", s.material, name .. " strand material")
+            if strand then
+                local c = add(go, "via.render.Strands")
+                c:call("set_Strand", strand)
+                if binding then c:call("set_StrandBindingData", binding) end
+                if smat then c:call("set_Material", smat) end
+            end
+        end
+        local x = go:call("get_Transform")
+        x:call("set_Parent", rx)
+        x:call("set_LocalPosition", Vector3f.new(0, 0, 0))
+        x:call("set_LocalRotation", Quaternion.new(1, 0, 0, 0))
+        if part.parent_joint then x:call("set_ParentJoint", tostring(part.parent_joint)) else x:call("set_SameJointsConstraint", true) end
+        table.insert(rec.parts, string.format("%s: mesh %s, material %s%s", name, mesh and "loaded" or "missing",
+            mat and "loaded" or "missing", s and ", strands" or ""))
+    end
+    rec.dynamic_banks = #dynamic
+    results.from_files = results.from_files or {}
+    table.insert(results.from_files, rec)
+    local p = { body = root, what = "puppet: " .. def.name }
+    table.insert(puppets, p)
+    list, index = characters(), 0
+    for i, c in ipairs(list) do if c == p then index = i end end  -- select it, ready for F7 / F4 / F6
+    return rec
+end
+
+local def_index = 0
+local function build_next()
+    local defs = definitions()
+    def_index = def_index % #defs + 1
+    local rec = from_files(defs[def_index])
+    note(string.format("F8: built %s from files (%d of %d definitions), %d problem(s)%s; %s", rec.name, def_index, #defs,
+        #rec.problems, #rec.problems > 0 and (": " .. table.concat(rec.problems, "; ")) or "", table.concat(rec.parts, "; ")))
+end
+
+-- The files a live character uses, as a definition F8 can build (compare with the hand-written ones).
+local function path_of(h)
+    local p = h and try(h.call, h, "get_ResourcePath")
+    return (p and tostring(p) ~= "") and tostring(p) or nil
+end
+local function capture()
+    local c = selected()
+    if not c or not c.ctx then return note("F9: pick a live character first (F2)") end
+    local def = { name = "live " .. tostring(c.body:call("get_Name")), parts = {}, dynamic_banks = {} }
+    local skel = component(c.body, "via.motion.DummySkeleton")
+    def.skeleton = skel and path_of(skel:call("get_SkeletonResourceHandle"))
+    local m = component(c.body, "via.motion.Motion")
+    if m then
+        def.motion_bank = path_of(m:call("get_MotionBankAsset"))
+        def.layers = m:call("getLayerCount")
+        for b = 0, m:call("getDynamicMotionBankCount") - 1 do
+            local d = m:call("getDynamicMotionBank", b)
+            local p = d and (path_of(try(d.call, d, "get_MotionBank")) or path_of(try(d.call, d, "get_MotionList")))
+            table.insert(def.dynamic_banks, p or "?")
+        end
+    end
+    for i, go in ipairs(tree(c.body)) do
+        local mesh = component(go, "via.render.Mesh")
+        local name = tostring(go:call("get_Name"))
+        if i > 1 and mesh and not name:find("raytrace") then
+            local x = go:call("get_Transform")
+            local part = { name = name, mesh = path_of(mesh:call("getMesh")), material = path_of(mesh:call("get_Material")) }
+            if not x:call("get_SameJointsConstraint") then
+                local pj = x:call("get_ParentJoint")
+                if pj and tostring(pj) ~= "" then part.parent_joint = tostring(pj) end
+            end
+            local s = component(go, "via.render.Strands")
+            if s then
+                part.strands = { strand = path_of(try(s.call, s, "get_Strand")),
+                                 binding = path_of(try(s.call, s, "get_StrandBindingData")),
+                                 material = path_of(try(s.call, s, "get_Material")) }
+            end
+            table.insert(def.parts, part)
+        end
+    end
+    table.insert(captured, def)
+    results.captured = captured
+    note(string.format("F9: wrote down %s: skeleton %s, motion bank %s, %d dynamic banks, %d parts", def.name,
+        tostring(def.skeleton), tostring(def.motion_bank), #def.dynamic_banks, #def.parts))
+end
+
 -- ---- Keys and screen ----
 
-local KEYS = { F2 = 0x71, F3 = 0x72, F4 = 0x73, F5 = 0x74, F6 = 0x75, F7 = 0x76 }
-local ACTIONS = { F2 = next_character, F3 = toggle_hide, F4 = replay, F5 = spawn_puppet, F6 = bring, F7 = idle }
+local function remove_puppets()
+    local n = #puppets
+    for _, c in ipairs(puppets) do pcall(function() c.body:call("destroy", c.body) end) end
+    puppets, list, index = {}, {}, 0
+    return n
+end
+
+local KEYS = { F2 = 0x71, F3 = 0x72, F4 = 0x73, F5 = 0x74, F6 = 0x75, F7 = 0x76, F8 = 0x77, F9 = 0x78, F11 = 0x7A }
+local ACTIONS = { F2 = next_character, F3 = toggle_hide, F4 = replay, F5 = spawn_puppet, F6 = bring, F7 = idle,
+                  F8 = build_next, F9 = capture,
+                  F11 = function() note(string.format("F11: removed %d puppet(s)", remove_puppets())) end }
 local down = {}
 local function pressed(name)
     local is = reframework:is_key_down(KEYS[name])
@@ -344,7 +545,7 @@ re.on_frame(function()
     local now = c and try(describe, c) or "none (F2)"
     local lines = {
         "remod character probe (run " .. RUN .. "): F2 next, F3 hide/show, F4 restart its animation, " ..
-            "F5 build a puppet copy, F6 bring in front of Leon, F7 stand idle",
+            "F5 build a puppet copy, F6 bring in front of Leon, F7 stand idle, F8 build from files, F9 write down, F11 remove puppets",
         string.format("selected %d of %d: %s", index, #list, tostring(now)),
         "last: " .. (results.notes[#results.notes] or "-"),
     }
@@ -353,8 +554,8 @@ end)
 
 re.on_script_reset(function()  -- show what we hid, remove what we spawned
     for _, c in pairs(hidden) do pcall(set_drawn, c, true) end
-    for _, c in ipairs(puppets) do pcall(function() c.body:call("destroy", c.body) end) end
-    hidden, puppets = {}, {}
+    remove_puppets()
+    hidden = {}
 end)
 
 note("loaded (run " .. RUN .. ")")

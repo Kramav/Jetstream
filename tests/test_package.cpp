@@ -272,6 +272,32 @@ TEST_CASE("Test in game copies a script into REFramework's autorun, Remove takes
     CHECK(fs::is_directory(game / "reframework/autorun"));
 }
 
+TEST_CASE("The scripts in the game are listed, and one can be taken out with its modules") {
+    TempDir tmp;
+    const fs::path game = tmp.path / "game", autorun = game / "reframework/autorun";
+    CHECK(remod::installed_scripts(game).empty());  // no autorun folder
+    write_file(autorun / "zeta.lua", "z");
+    write_file(autorun / "Alpha.lua", "a");
+    write_file(autorun / "alpha/util.lua", "m");
+    write_file(autorun / "notes.txt", "-");
+    write_file(autorun / "folder_only/x.lua", "-");  // REFramework doesn't run subfolders' scripts
+
+    const auto list = remod::installed_scripts(game);
+    REQUIRE(list.size() == 2);
+    CHECK(list[0].name == "Alpha");
+    CHECK(list[0].modules);  // the alpha\ folder (Windows ignores case)
+    CHECK(list[1].name == "zeta");
+    CHECK_FALSE(list[1].modules);
+
+    remod::remove_installed_script(game, "Alpha", false);
+    CHECK_FALSE(fs::exists(autorun / "Alpha.lua"));
+    CHECK_FALSE(fs::exists(autorun / "alpha"));
+    CHECK(fs::exists(autorun / "zeta.lua"));
+    remod::remove_installed_script(game, "Alpha", false);  // gone already: fine
+    CHECK_THROWS_AS(remod::remove_installed_script(game, "../zeta", false), PackageError);
+    CHECK_THROWS_AS(remod::remove_installed_script(game, "", false), PackageError);
+}
+
 TEST_CASE("Game errors: a script's errors in REFramework's log, since Test in game") {
     TempDir tmp;
     const fs::path game = tmp.path / "game", log = remod::framework_log(game);

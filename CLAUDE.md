@@ -1420,6 +1420,60 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
         Strands), and the skipped `raytrace_mesh` (a ray-tracing stand-in).
       - **So the design is:** hide the live character, build a puppet from its own parts, and drive the puppet
         (animation, place). That's how the game's events do it too.
+    - **Run 8 (ready; user, 2026-10-08: "render luis even if he isnt near my character or loaded", and a NEW
+      character "at a mod level, not a script level"): puppets from files.**
+      - Every setter the puppet uses takes a resource holder [dump]: `Mesh.setMesh` / `set_Material`,
+        `DummySkeleton.set_SkeletonResourceHandle`, `Motion.set_MotionBankAsset`, `DynamicMotionBank.set_MotionBank`,
+        `Strands.set_Strand` / `set_StrandBindingData` / `set_Material`.
+      - `sdk.create_resource(type, path)` loads a resource, and `:create_holder(type .. "Holder")` wraps it
+        [REFramework book]. Paths have no `natives/STM` and no suffix (`_Chainsaw/Character/ch/cha3/cha3.fbxskel`).
+        The probe never hands on a nil.
+      - **A puppet definition** (JSON): `name`, `skeleton`, `motion_bank`, `dynamic_banks` [], `layers`, `parts`
+        [{`name`, `mesh`, `material`, `strands` {`strand`, `binding`, `material`}, `parent_joint` (else
+        SameJointsConstraint)}].
+        - F8 builds the next one in front of Leon: Luis built in, then `reframework\data\remod_puppets\*.json`, then
+          F9's.
+        - F9 writes down a live character's real files (`get_ResourcePath` on each holder) into the results.
+      - **Luis [game data]:** `ch2a3z0`. His parts are the ones the event `csa012`'s `chara_mini.scn` builds him from:
+        `cha3/cha300/00`, `10` and `20` (`.mesh` + `.mdf2`). His skeleton `cha3/cha3.fbxskel` and his banks
+        (`ch2Common/Motion/ch2CommonBank.motbank`, `Animation/ch/cha3/motbank/cha3.motbank`) come from his body
+        prefab, `appsystem/character/ch2a3z0/ch2a3z0_body.pfb`. His hair also has strands (`cha300/21`, `22`); the
+        event uses the `20` mesh. Each character has such a prefab there (`ch2a1z0` Ashley; `ch2a200`, `ch2a3z1`).
+      - **A new character as a mod: `spikes/make_new_character.ps1`** (rmc001, Ashley in blue):
+        - Ashley's body mesh is copied to `cha1/rmc001/00/rmc001_00.mesh`.
+        - Her `cha103_00.mdf2` becomes `rmc001_00.mdf2`, with the outfit's 6 colour textures (18 references) repointed
+          from `/cha103/00/` to `/rmc001/00/` (same length).
+        - Those textures and their streaming copies are recoloured by a remod graph: red and green from a copy
+          darkened 45%, alpha kept. Her near-white blouse barely changed under a hue shift.
+        - The definition goes in `reframework/data/remod_puppets/rmc001.json`; head, hair and skeleton are the game's.
+        - Nothing is replaced. The mod is data; the probe (later the runtime) builds it.
+        - Live Ashley's body uses `cha103_00c.mdf2`, which isn't in the extracted files (a later pak, probably).
+      - Not tried: chains (`.chain` physics; run 7 didn't copy them either), the head's `.jmap` / facial banks.
+      - **Run 8 part 1 (user, 2026-10-08): Luis built from files works**, and "his hair actually works".
+        - Every resource loaded, with no problems recorded. F7's idle (1000 / 160) plays and F6 places him.
+        - F9 on Ashley wrote down exactly the hand-written definition (skeleton `cha1.fbxskel`, `ch2CommonBank` +
+          `cha1_NPC`, 13 layers, hair with Strands, head, body, `ac2100_10` on `Head`), except the body material
+          `cha103_00c.mdf2`.
+        - F8 built her from that, with no problems, but her **Strands hair from files doesn't work**. So rmc001's hair is
+          now her plain hair mesh `cha103/20` (the live "raytrace_mesh"; `Character_Hair.mmtr`, as Luis's `20`).
+        - **Part 2's try (user, 2026-10-08) crashed the game.** The log: the first F8 built Luis with no problems.
+          Several Reset Scripts followed (each destroys the puppets). The next F8 built him again, then an access
+          violation (`c0000005`, null) 18 ms later in the game's update, not in Lua. Part 1's two F8s in one session
+          (no reset) were fine.
+        - The installed scripts were the probe and `remod_cutscene.lua`; the latter wasn't loaded that session.
+          `cutscene_test.json`'s key is F9, which clashes with the probe's F9.
+        - **Run 9 (ready):** F11 destroys the puppets without a reset. The guide's order is F8, F11, F8; then F8 twice;
+          then reset and F8. Not found yet.
+      - **Scripts in the game (built 2026-10-08; user: scripts left installed by accident, "we should have the
+        ability to see all currently inserted scripts in remod").**
+        - Core `installed_scripts(game_dir)` lists each top-level `.lua` in `reframework\autorun` (whoever put it
+          there), with whether a `<name>\` modules folder sits beside it and its time.
+        - Core `remove_installed_script` moves the `.lua` and the folder to the Recycle Bin. `to_recycle_bin` is now
+          shared with Delete file.
+        - App: the Pipeline panel's **Scripts in the game (N)** under Game folder, read every 2 s, with Remove on each.
+          The tooltip says to uninstall a mod manager's install there instead.
+        - Checked: a test (sorting, modules folder, a subfolder's script not listed, remove, bad names). **Not checked
+          by eye.**
     - **Run 7 as built:**
       - each copied `Motion` gets the live one's layer count (`setLayerCount`, then `setLayer(i, new
         via.motion.TreeLayer)` where missing);
