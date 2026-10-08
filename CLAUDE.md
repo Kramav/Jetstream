@@ -795,6 +795,15 @@ try them one per run. Instead:
 5. **Check the probe that ran is the one written:** its "loaded (run N)" log line and the installed file's time (a
    test once ran the previous version).
 
+**Objects a script hands to the game must be `add_ref_permanent()` (lesson, 2026-10-08: three game crashes).**
+REFramework frees what a script made (`sdk.create_instance`, `create_holder`, `MemberwiseClone`, `GameObject.create`,
+arrays) once the script no longer refers to it, and all of it when the script resets (Reset Scripts, or the load at
+game start), unless `add_ref_permanent()` [REFramework book, REManagedObject]. Plain `add_ref()` is managed too.
+- The game kept using freed resource holders, motion banks and layers, and crashed (`c0000005`), at the same address
+  twice.
+- Use the runtime's `keep(o)` for anything handed to the game.
+- A resource (`sdk.create_resource`) isn't managed: its `add_ref()` is the game's own count.
+
 **Every spike gets a step-by-step guide (user, 2026-10-07: "whenever we have a spike, make a guide for doing it in the
 spikes folder"):** `spikes/<name>.md`, written for the user (what it answers, time, what's needed, numbered steps in
 remod and the game, taking it out, where the result lands, what to do if something goes wrong), listed in
@@ -1504,7 +1513,39 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
           - **For the runtime's actors:** `create_resource` every file a cutscene's actors use when the cutscene
             loads (well before it plays), build the puppet when it plays, and keep the watch-and-replace as the safety
             net. Never destroy; put away and reuse (run 10).
-        - **Run 9 as built:** F11 destroys the puppets without a reset. The guide's order is F8, F11, F8; then F8 twice;
+        - **Run 9 as built:** F11 destroys the puppets without a reset.
+    - **Actors in the cutscene runtime (built 2026-10-08; user: "cutscene actors at runtime would be great for a
+      cutscene test"). Not run in game yet: `spikes/actor_test.md`.**
+      - **Format:** `actors` [{`name` (plain, not "player"; motions' `actor`), `puppet` (a definition in
+        `reframework/data/remod_puppets/<puppet>.json`, one actor each), `offset` [right, up, forward] m from the
+        player (default [0, 0, 1.5], facing him) or `position` + `rotation` (from the menu's **Write down Leon's
+        spot**, `remod_cutscenes/spot.json`), `hides`: "partner"}].
+        - `motions[].actor` is "player" or an actor's name. `check_cutscene` names every problem.
+      - **Runtime:**
+        - **Loading:** `load_puppets` (after `load_all`) reads the definitions and requests every actor's files then
+          (`preload`).
+        - **On play:** `start_actor` reuses a put-away root (`put_away`, else `scene_find("remod_puppet_<puppet>")`),
+          else `build_puppet` from the preloaded holders. It then places it (`actor_place`), starts its idle, and
+          watches its parts. A part not `ReadyToDraw` after 1 s gets `fresh_part`, up to 5 times.
+        - **On stop:** actors are put away, never destroyed. Partners hidden by `hides` are shown again
+          (`GAMES.re4.partners`). Strands and chains aren't built.
+        - Unchecked: `offset`'s right is the player's +x turned by his yaw, not seen in game.
+      - **remod's definitions:** `runtime/puppets/luis.json` and `ashley.json` (game paths only; Ashley's from F9, with
+        the plain hair `cha103/20` and the live `cha103_00c.mdf2`). `cutscene_files` adds those a cutscene's actors
+        name (`reframework/data/remod_puppets/`). Others come from the mod adding the character (rmc001).
+      - Test cutscene: `spikes/actor_test.json` (F11; Luis left, rmc001 right hiding the partner; no camera keys).
+      - Checked: tests (the checks, the definitions packaged, remod's definitions' shape), `check-lua` on the runtime.
+      - **First try (user, 2026-10-08): F11 crashed the game**, at `RIP 7ff615150fd3`, the same address as the probe's
+        F8 after Reset Scripts. The runtime had loaded at game start and again at Reset Scripts. Each requested the
+        actors' files, and the build used holders, banks and layers made with plain `add_ref()`.
+        - **Cause** [REFramework book]: objects a script made are freed when the script resets or stops referring to
+          them, unless `add_ref_permanent()`. That also explains the probe's crashes better than "destroy" did.
+        - Now everything the runtime hands the game goes through `keep()` (`add_ref_permanent`): puppets, holders,
+          banks, layers, and the movie / sound objects (catalog entries, prefabs, trigger infos, bank holders).
+        - Never destroying stays.
+      - **Second try (user, 2026-10-08): "working".** The actor test played on F11 with no problems logged.
+        **Actors in cutscenes work in game.** Not confirmed separately: each actor's side and facing, the partner
+        hidden and shown again, and a second play. The guide's order is F8, F11, F8; then F8 twice;
           then reset and F8. Not found yet.
       - **Scripts in the game (built 2026-10-08; user: scripts left installed by accident, "we should have the
         ability to see all currently inserted scripts in remod").**

@@ -1,0 +1,14 @@
+{
+  "name": "Ashley",
+  "skeleton": "_Chainsaw/Character/ch/cha1/cha1.fbxskel",
+  "motion_bank": "_Chainsaw/AppSystem/Character/ch2Common/Motion/ch2CommonBank.motbank",
+  "dynamic_banks": ["_Chainsaw/Animation/ch/cha1/motbank/cha1_NPC.motbank"],
+  "layers": 13,
+  "idle": {"bank": 1000, "motion": 160},
+  "parts": [
+    {"name": "body", "mesh": "_Chainsaw/Character/ch/cha1/cha103/00/cha103_00.mesh", "material": "_Chainsaw/Character/ch/cha1/cha103/00/cha103_00c.mdf2"},
+    {"name": "head", "mesh": "_Chainsaw/Character/ch/cha1/cha100/10/cha100_10.mesh", "material": "_Chainsaw/Character/ch/cha1/cha100/10/cha100_10.mdf2"},
+    {"name": "hair", "mesh": "_Chainsaw/Character/ch/cha1/cha103/20/cha103_20.mesh", "material": "_Chainsaw/Character/ch/cha1/cha103/20/cha103_20.mdf2"},
+    {"name": "ac2100_10", "mesh": "_Chainsaw/Character/ac/ac00/ac2100/_10/ac2100_10.mesh", "material": "_Chainsaw/Character/ac/ac00/ac2100/_10/ac2100_10.mdf2", "parent_joint": "Head"}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Luis",
+  "skeleton": "_Chainsaw/Character/ch/cha3/cha3.fbxskel",
+  "motion_bank": "_Chainsaw/AppSystem/Character/ch2Common/Motion/ch2CommonBank.motbank",
+  "dynamic_banks": ["_Chainsaw/Animation/ch/cha3/motbank/cha3.motbank"],
+  "layers": 13,
+  "idle": {"bank": 1000, "motion": 160},
+  "parts": [
+    {"name": "body", "mesh": "_Chainsaw/Character/ch/cha3/cha300/00/cha300_00.mesh", "material": "_Chainsaw/Character/ch/cha3/cha300/00/cha300_00.mdf2"},
+    {"name": "head", "mesh": "_Chainsaw/Character/ch/cha3/cha300/10/cha300_10.mesh", "material": "_Chainsaw/Character/ch/cha3/cha300/10/cha300_10.mdf2"},
+    {"name": "hair", "mesh": "_Chainsaw/Character/ch/cha3/cha300/20/cha300_20.mesh", "material": "_Chainsaw/Character/ch/cha3/cha300/20/cha300_20.mdf2"}
+  ]
+}

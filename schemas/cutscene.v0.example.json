@@ -17,7 +17,13 @@
     { "t": 0.0, "until": 0.5, "from": 1.0, "to": 0.0 },
     { "t": 7.5, "until": 8.0, "from": 0.0, "to": 1.0 }
   ],
-  "motions": [],
+  "actors": [
+    { "name": "luis", "puppet": "luis", "offset": [0.0, 0.0, 1.5] },
+    { "name": "ashley", "puppet": "ashley", "position": [1.0, 0.0, 2.0], "rotation": [0.0, 1.0, 0.0, 0.0], "hides": "partner" }
+  ],
+  "motions": [
+    { "t": 2.0, "actor": "luis", "bank": 1000, "motion": 160, "frame": 0.0, "blend": 10.0 }
+  ],
   "movies": [
     { "t": 6.0, "id": "mva000" }
   ]

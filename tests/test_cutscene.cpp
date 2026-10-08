@@ -152,11 +152,57 @@ TEST_CASE("check_cutscene names every problem") {
         "fade 1: from must be from 0 (clear) to 1 (black)",
         "motion 1: bank must be a whole number, 0 or more",
         "motion 1: motion must be a whole number, 0 or more",
-        "motion 1: actor can only be \"player\" for now",
+        "motion 1: actor must be \"player\" or one of the actors' names",
         "movie 1: t 6 is past the length (5)",
         "movie 2: id must be the movie's name, e.g. \"mva000\"",
     };
     CHECK(p == want);
+}
+
+TEST_CASE("Actors: checked, motions name them, and remod's own puppet definitions go with the cutscene") {
+    CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/../spikes/actor_test.json")).empty());
+    const std::vector<std::string> p = remod::check_cutscene(R"({
+        "schema_version": 0, "length": 5,
+        "actors": [
+            {"name": "luis", "puppet": "luis"},
+            {"name": "luis", "puppet": "luis", "position": [1, 2], "offset": [0, 0, 1]},
+            {"name": "player", "puppet": "../x", "position": [1, 2, 3], "rotation": [0, 0, 0, 3], "hides": "everyone"},
+            {"name": "a", "puppet": "ashley", "offset": [1, 2]},
+            "nope"
+        ],
+        "motions": [{"t": 1, "bank": 1000, "motion": 160, "actor": "luis"},
+                    {"t": 1, "bank": 1000, "motion": 160, "actor": "nobody"}]
+    })");
+    const std::vector<std::string> want{
+        "actor 2: name luis is already another actor's",
+        "actor 2: puppet luis is already another actor (one actor per puppet for now)",
+        "actor 2: position must be [x, y, z] (from Write down Leon's spot, never typed)",
+        "actor 2: rotation must be a unit quaternion [x, y, z, w] (from Write down Leon's spot)",
+        "actor 2: give a position or an offset, not both",
+        "actor 3: name must be letters, digits or _ (not \"player\"): motions name the actor by it",
+        "actor 3: puppet must be a definition's name in remod_puppets, e.g. \"luis\"",
+        "actor 3: rotation must be a unit quaternion [x, y, z, w] (from Write down Leon's spot)",
+        "actor 3: hides can only be \"partner\" (the real partner, hidden while it plays)",
+        "actor 4: offset must be [right, up, forward], metres from the player",
+        "actor 5 must be an object",
+        "motion 2: actor must be \"player\" or one of the actors' names",
+    };
+    CHECK(p == want);
+
+    // luis is remod's (runtime/puppets), rmc001 comes from the mod that adds it: only luis's definition goes along.
+    const auto files = remod::cutscene_files(REMOD_SCHEMAS_DIR "/../spikes/actor_test.json", REMOD_RUNTIME_DIR);
+    REQUIRE(files.size() == 3);
+    CHECK(files[1].game_path == "reframework/data/remod_cutscenes/actor_test.json");
+    CHECK(files[2].game_path == "reframework/data/remod_puppets/luis.json");
+    CHECK(files[2].source == fs::path(REMOD_RUNTIME_DIR) / "puppets/luis.json");
+    for (const char* def : {"luis", "ashley"}) {  // remod's definitions: game paths, as the runtime reads them
+        const auto d = nlohmann::json::parse(test::read_file(fs::path(REMOD_RUNTIME_DIR) / "puppets" / (std::string(def) + ".json")));
+        CHECK(d.at("skeleton").get<std::string>().starts_with("_Chainsaw/"));
+        for (const auto& part : d.at("parts")) {
+            CHECK(part.at("mesh").get<std::string>().ends_with(".mesh"));
+            CHECK(part.at("material").get<std::string>().ends_with(".mdf2"));
+        }
+    }
 }
 
 TEST_CASE("Use recording: the recorded camera into a cutscene, keeping the rest") {

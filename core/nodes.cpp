@@ -1250,7 +1250,8 @@ NodeSpec cutscene_node() {
     return {
         .type = "Cutscene",
         .title = "Cutscene",
-        .summary = "A real-time cutscene the game plays: camera shots, subtitles, letterbox, fades, Leon's animations "
+        .summary = "A real-time cutscene the game plays: camera shots, subtitles, letterbox, fades, Leon's animations, "
+                   "other characters (actors: puppets built from game files, e.g. Luis, anywhere) "
                    "and the game's movies, from a cutscene file (.json). Connect to Package's 'other file': the mod gets remod's cutscene "
                    "script too, and needs REFramework. Record camera shots in game with F10, then Use recording.",
         .inputs = {{.name = "cutscene", .label = "Cutscene file", .type = Path, .widget = Widget::Path, .required = true,

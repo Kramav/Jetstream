@@ -339,6 +339,19 @@ edit by hand (the format: `schemas\cutscene.v0.example.json`). Players need REFr
 
 A Run checks the cutscene file and names every problem in it.
 
+**Other characters (actors).** A cutscene's `actors` list puts other characters in it, such as Luis, even where the
+level hasn't loaded them. Each is a copy (a "puppet") built from the game's files; the real one isn't touched.
+Each actor has:
+- a `name`, which `motions` use to animate it (`"actor": "luis"`);
+- a `puppet`: a definition in `reframework\data\remod_puppets`. remod ships `luis` and `ashley` and packages the
+  ones a cutscene uses; a mod that adds a new character ships its own;
+- where it stands: either `offset` [right, up, forward] metres from Leon, facing him (default 1.5 m in front), or
+  `position` and `rotation` from **Write down Leon's spot** in the remod cutscenes menu
+  (`remod_cutscenes\spot.json`);
+- optionally `"hides": "partner"`, which hides the real partner while it plays.
+
+The actors appear when the cutscene starts and are put away when it ends. Not tested in game yet.
+
 The cutscene probe (`spikes\cutscene_probe.md`, run 2026-10-07) showed the camera holds still and Leon's animations
 play from the script in RE4R. While a cutscene plays, Leon stands still and the HUD is hidden; both come back when it
 ends or you stop it. While it plays the game ignores your controls for Leon (as it does while its own menus are

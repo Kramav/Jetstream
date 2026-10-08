@@ -17,7 +17,9 @@ std::filesystem::path runtime_dir();
 PackageFile cutscene_runtime(const std::filesystem::path& runtime = runtime_dir());
 
 // What a mod ships for a cutscene: the runtime at reframework/autorun/remod_cutscene.lua, then the cutscene at
-// reframework/data/remod_cutscenes/<file name>. Throws PackageError if either is missing or the file isn't .json.
+// reframework/data/remod_cutscenes/<file name>, then each of its actors' puppet definitions that remod ships
+// (<runtime>/puppets/<puppet>.json at reframework/data/remod_puppets/; others come from the mod adding that
+// character). Throws PackageError if the runtime or the cutscene is missing or the file isn't .json.
 std::vector<PackageFile> cutscene_files(const std::filesystem::path& cutscene,
                                         const std::filesystem::path& runtime = runtime_dir());
 

@@ -34,6 +34,19 @@ bool numbers(const json& j, size_t n) {
     return j.is_array() && j.size() == n && std::ranges::all_of(j, is_number);
 }
 
+// [x, y, z, w] of length about 1.
+bool unit_rotation(const json& j) {
+    if (!numbers(j, 4)) return false;
+    double len = 0;
+    for (const auto& v : j) len += v.get<double>() * v.get<double>();
+    return len >= 0.5 && len <= 1.5;
+}
+
+// Letters, digits and _: a name that's also a file name and a Lua key.
+bool plain_name(const std::string& s) {
+    return !s.empty() && std::ranges::all_of(s, [](unsigned char ch) { return std::isalnum(ch) || ch == '_'; });
+}
+
 }  // namespace
 
 fs::path runtime_dir() {
@@ -54,7 +67,20 @@ std::vector<PackageFile> cutscene_files(const fs::path& cutscene, const fs::path
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (ext != ".json" || !fs::is_regular_file(cutscene, ec))
         throw PackageError("not a cutscene file (.json): " + cutscene.string());
-    return {cutscene_runtime(runtime), {cutscene, "reframework/data/remod_cutscenes/" + cutscene.filename().string()}};
+    std::vector<PackageFile> files{cutscene_runtime(runtime),
+                                   {cutscene, "reframework/data/remod_cutscenes/" + cutscene.filename().string()}};
+    // Its actors' definitions that remod ships (runtime/puppets: game file paths only). Others come from the mod that
+    // adds the character (e.g. a new character's own definition).
+    const json c = json::parse(read_text(cutscene), nullptr, false);
+    if (c.is_object() && c.contains("actors") && c["actors"].is_array())
+        for (const json& a : c["actors"]) {
+            const std::string puppet = a.is_object() ? a.value("puppet", std::string()) : "";
+            const fs::path def = runtime / "puppets" / (puppet + ".json");
+            if (plain_name(puppet) && fs::is_regular_file(def, ec) &&
+                std::ranges::find(files, def, &PackageFile::source) == files.end())
+                files.push_back({def, "reframework/data/remod_puppets/" + puppet + ".json"});
+        }
+    return files;
 }
 
 std::vector<std::string> check_cutscene(const std::string& json_text) {
@@ -140,13 +166,10 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                 p.push_back(where + ": t " + num(t) + " isn't after the key before it (" + num(before) + ")");
             if (t >= 0) before = t;
             if (!k.contains("position") || !numbers(k["position"], 3)) p.push_back(where + ": position must be [x, y, z]");
-            if (!k.contains("rotation") || !numbers(k["rotation"], 4)) {
+            if (!k.contains("rotation") || !numbers(k["rotation"], 4))
                 p.push_back(where + ": rotation must be [x, y, z, w]");
-            } else {
-                double len = 0;
-                for (const auto& v : k["rotation"]) len += v.get<double>() * v.get<double>();
-                if (len < 0.5 || len > 1.5) p.push_back(where + ": rotation isn't a unit quaternion");
-            }
+            else if (!unit_rotation(k["rotation"]))
+                p.push_back(where + ": rotation isn't a unit quaternion");
             if (k.contains("fov") && !(k["fov"].is_number() && k["fov"].get<double>() > 1 && k["fov"].get<double>() < 179))
                 p.push_back(where + ": fov must be degrees, above 1 and below 179");
             if (k.contains("ease")) {
@@ -171,6 +194,45 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                 if (!f.contains(key) || !f[key].is_number() || f[key].get<double>() < 0 || f[key].get<double>() > 1)
                     p.push_back(where + ": " + key + " must be from 0 (clear) to 1 (black)");
         }
+    // Other characters, as puppets built from a definition in remod_puppets (spikes/character_probe.md): where each
+    // stands, from a written-down spot or an offset from the player.
+    std::vector<std::string> actor_names;
+    if (const json* actors = list("actors")) {
+        std::vector<std::string> puppets;
+        for (size_t i = 0; i < actors->size(); ++i) {
+            const json& a = (*actors)[i];
+            const std::string where = "actor " + std::to_string(i + 1);
+            if (!a.is_object()) {
+                p.push_back(where + " must be an object");
+                continue;
+            }
+            const std::string name = a.contains("name") && a["name"].is_string() ? a["name"].get<std::string>() : "";
+            if (!plain_name(name) || name == "player")
+                p.push_back(where + ": name must be letters, digits or _ (not \"player\"): motions name the actor by it");
+            else if (std::ranges::find(actor_names, name) != actor_names.end())
+                p.push_back(where + ": name " + name + " is already another actor's");
+            else
+                actor_names.push_back(name);
+            const std::string puppet = a.contains("puppet") && a["puppet"].is_string() ? a["puppet"].get<std::string>() : "";
+            if (!plain_name(puppet))
+                p.push_back(where + ": puppet must be a definition's name in remod_puppets, e.g. \"luis\"");
+            else if (std::ranges::find(puppets, puppet) != puppets.end())
+                p.push_back(where + ": puppet " + puppet + " is already another actor (one actor per puppet for now)");
+            else
+                puppets.push_back(puppet);
+            if (a.contains("position") || a.contains("rotation")) {
+                if (!a.contains("position") || !numbers(a["position"], 3))
+                    p.push_back(where + ": position must be [x, y, z] (from Write down Leon's spot, never typed)");
+                if (!a.contains("rotation") || !unit_rotation(a["rotation"]))
+                    p.push_back(where + ": rotation must be a unit quaternion [x, y, z, w] (from Write down Leon's spot)");
+                if (a.contains("offset")) p.push_back(where + ": give a position or an offset, not both");
+            }
+            if (a.contains("offset") && !numbers(a["offset"], 3))
+                p.push_back(where + ": offset must be [right, up, forward], metres from the player");
+            if (a.contains("hides") && a["hides"] != "partner")
+                p.push_back(where + ": hides can only be \"partner\" (the real partner, hidden while it plays)");
+        }
+    }
     if (const json* motions = list("motions"))
         for (size_t i = 0; i < motions->size(); ++i) {
             const json& m = (*motions)[i];
@@ -179,7 +241,9 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
             for (const char* key : {"bank", "motion"})
                 if (!m.contains(key) || !m[key].is_number_integer() || m[key].get<long long>() < 0)
                     p.push_back(where + ": " + key + " must be a whole number, 0 or more");
-            if (m.contains("actor") && m["actor"] != "player") p.push_back(where + ": actor can only be \"player\" for now");
+            if (m.contains("actor") && m["actor"] != "player" &&
+                !(m["actor"].is_string() && std::ranges::find(actor_names, m["actor"].get<std::string>()) != actor_names.end()))
+                p.push_back(where + ": actor must be \"player\" or one of the actors' names");
         }
     // A game movie by its id's name (RE4R: chainsaw.MovieDefine.ID, e.g. "mva000") or a New movie's; the timeline
     // waits while it plays. A New sound's name: it plays from then on, beside the rest.

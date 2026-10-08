@@ -3,8 +3,9 @@
 -- reframework\data\remod_cutscenes\<name>.json (the format: schemas/cutscene.v0.example.json in remod).
 --
 -- A cutscene: a length; an optional start key; camera keys (time, position, rotation x y z w, FOV, ease) the camera
--- follows; subtitles; a letterbox; fades; motions (one of the game's animations, by motion bank and id, on the player);
--- movies (one of the game's, by id, full screen with the world paused; the cutscene's time waits while it plays).
+-- follows; subtitles; a letterbox; fades; actors (other characters, as puppets built from the game's files: see
+-- "Actors" below); motions (one of the game's animations, by motion bank and id, on the player or an actor); movies
+-- (one of the game's, by id, full screen with the world paused; the cutscene's time waits while it plays).
 -- REFramework's menu > Script Generated UI > remod cutscenes: play or stop each, reload, and record camera keys: F10
 -- adds the camera as it is now as a key to remod_cutscenes\recording.json (the time between presses becomes the time
 -- between keys). Frame shots with REFramework's free camera, then press F10.
@@ -19,6 +20,16 @@ local function now() return (os and os.clock) and os.clock() or frames / 60 end
 local function enum(t, name) return sdk.find_type_definition(t):get_field(name):get_data(nil) end
 -- An AppSingleton`1 of the game's, by its get_Instance (on the parent).
 local function instance(t) return sdk.find_type_definition(t):get_method("get_Instance"):call(nil) end
+
+-- Kept for good. REFramework frees what a script made once the script no longer refers to it, and all of it when the
+-- script resets (Reset Scripts, or loading again at game start), unless add_ref_permanent [REFramework book,
+-- REManagedObject]. Everything handed to the game gets it: the game went on using freed resource holders, motion banks
+-- and layers and crashed (2026-10-08: the character probe's F8 after Reset Scripts, the actor test's first play).
+-- ponytail: never released; each is made once per game session, so it's a few small objects.
+local function keep(o)
+    o:add_ref_permanent()
+    return o
+end
 
 -- The game's pause for event movies, so the world stands still while one plays (RE4R).
 local function event_pause(on)
@@ -40,7 +51,7 @@ local function new_object(type_name, like)
     local ok, o = pcall(sdk.create_instance, type_name, true)
     if not (ok and o) then o = like and like:call("MemberwiseClone") end
     if not o then error("can't make a " .. type_name) end
-    return o:add_ref()
+    return keep(o)
 end
 
 -- An array holding `values`: created, else a copy of `like` (as long); each set read back.
@@ -48,7 +59,7 @@ local function new_array(elem_type, values, like)
     local ok, arr = pcall(sdk.create_managed_array, elem_type, #values)
     if not (ok and arr) and like and like:get_size() == #values then arr = like:call("Clone") end
     if not arr then error("can't make an array of " .. elem_type) end
-    arr = arr:add_ref()
+    arr = keep(arr)
     for i, v in ipairs(values) do
         arr:call("SetValue(System.Object, System.Int32)", v, i - 1)
         local back = arr:call("GetValue(System.Int32)", i - 1)
@@ -61,7 +72,7 @@ end
 -- "@" (a file with a platform suffix, .pfb.17.x64) must stay, or the game doesn't find the file.
 local function new_prefab(like, name)
     local ok, p = pcall(sdk.create_instance, "via.Prefab", true)
-    p = (ok and p) and p:add_ref() or like:call("duplicate"):add_ref()
+    p = keep((ok and p) and p or like:call("duplicate"))
     p:call("set_Path", sdk.create_managed_string((like:call("get_Path"):gsub("mva000/mva000", name .. "/" .. name))))
     if not p:call("get_Exist") then error("the game doesn't see " .. p:call("get_Path") .. ": is the mod installed?") end
     return p
@@ -92,7 +103,7 @@ local function sound_play(s)
         local res = sdk.create_resource("via.simplewwise.BankResource", s.bank)
         if not res then error("can't load " .. s.bank .. ": is the mod installed?") end
         res = res:add_ref()
-        b = { resource = res, holder = res:create_holder("via.simplewwise.BankResourceHolder"):add_ref(), kept = {} }
+        b = { resource = res, holder = keep(res:create_holder("via.simplewwise.BankResourceHolder")), kept = {} }
         banks[s.bank] = b
     end
     local c = sound_container()
@@ -100,7 +111,7 @@ local function sound_play(s)
         c:call("get_BankResourceList"):call("Add", b.holder)
         b.kept[c:get_address()] = true
     end
-    local info = c:get_field("_TriggerInfoList"):call("get_Item", 0):call("MemberwiseClone"):add_ref()
+    local info = keep(c:get_field("_TriggerInfoList"):call("get_Item", 0):call("MemberwiseClone"))
     info:set_field("_EventId", s.event)
     info:set_field("_TriggerId", s.event)
     return { container = c, request = c:call("trigger(soundlib.SoundTriggerInfo)", info), trigger = s.event }
@@ -169,7 +180,7 @@ local function register_movie(name)
     -- A load table entry like mva000's, its chapter flags off.
     local mm = instance("chainsaw.MovieMediator")
     if not mm:call("getLoadInfo", id) then
-        local info = mm:call("getLoadInfo", mva000):call("MemberwiseClone"):add_ref()
+        local info = keep(mm:call("getLoadInfo", mva000):call("MemberwiseClone"))
         info:call("set_MovieID", id)
         for _, f in ipairs({ "set_IsChapterStart", "set_IsChapterEnd", "set_IsEnding", "set_IsGameOver",
                              "set_HasNextMovie" }) do info:call(f, false) end
@@ -207,6 +218,18 @@ local GAMES = {
             local mgr = sdk.get_managed_singleton("chainsaw.CharacterManager")
             local ctx = mgr and mgr:call("getPlayerContextRef")
             return ctx and ctx:call("get_BodyGameObject")
+        end,
+        -- The partners' GameObjects (Ashley, Luis when he's one), for an actor that hides them [spikes/character_probe].
+        partners = function()
+            local mgr = sdk.get_managed_singleton("chainsaw.CharacterManager")
+            local list = mgr and mgr:call("get_PartnerContextList")
+            local out = {}
+            for i = 0, (list and list:call("get_Count") or 0) - 1 do
+                local ctx = list:call("get_Item", i)
+                local body = ctx and ctx:call("get_BodyGameObject")
+                if body then table.insert(out, body) end
+            end
+            return out
         end,
         -- Keep the player from being controlled, sent every frame while a cutscene plays: the game's own operation stop
         -- (as for its menus), layer Self. He stops by himself even with a direction held, and control comes back when
@@ -365,8 +388,237 @@ local function camera_at(keys, t)
     return pos, qa:slerp(qb, u), fov
 end
 
+-- ---- Actors: other characters, as puppets (spikes/character_probe.md, runs 4-12) ----
+-- An actor is a puppet built from the game's files, as the game's own events build theirs, from a definition in
+-- reframework\data\remod_puppets\<name>.json: skeleton, motion banks, and parts (a mesh and its material each; a
+-- parent_joint, else it follows the skeleton's joints of the same names). What the probe found, all kept here:
+--   - from files, a character needn't be loaded in the level (Luis anywhere);
+--   - a Mesh handed a file that hasn't loaded yet never shows, and a new one made once it has does; so every actor's
+--     files are requested when the cutscenes are read, the parts are made when one plays, and a part not ready to draw
+--     1 s later is replaced by a fresh one (run 12: each needed one, ready at once);
+--   - never destroyed (building after a destroy crashed the game twice): put away (hidden, not updating) when a
+--     cutscene ends and used again, found by its name after Reset Scripts;
+--   - its idle started at once (a new Motion plays nothing).
+-- ponytail: Strands hair isn't built (from files it didn't show; definitions use the plain hair mesh), nor chains.
+local PUPPETS_DIR = "remod_puppets"
+local puppet_defs = {}  -- name -> definition
+local preloaded = {}    -- name -> holders, or { error = text }
+local put_away = {}     -- name -> its root GameObject
+local STUCK = "remod_stuck_part"
+
+local function component(go, t) return go:call("getComponent(System.Type)", sdk.typeof(t)) end
+local function add_component(go, t) return go:call("createComponent(System.Type)", sdk.typeof(t)) end
+
+local create_method = nil
+local function create_object(name)
+    create_method = create_method or sdk.find_type_definition("via.GameObject"):get_method("create(System.String)")
+    return keep(create_method:call(nil, sdk.create_managed_string(name)))
+end
+
+-- A GameObject and every one under it.
+local function tree(go)
+    local out = { go }
+    local function walk(x)
+        while x do
+            table.insert(out, x:call("get_GameObject"))
+            walk(x:call("get_Child"))
+            x = x:call("get_Next")
+        end
+    end
+    walk(go:call("get_Transform"):call("get_Child"))
+    return out
+end
+
+local function set_drawn(go, on)
+    for _, o in ipairs(tree(go)) do o:call("set_DrawSelf", on) end
+end
+local function set_active(go, on)
+    for _, o in ipairs(tree(go)) do
+        o:call("set_DrawSelf", on)
+        o:call("set_UpdateSelf", on)
+    end
+end
+
+-- A resource holder for a game file (no natives/STM, no suffix); nil without a path. Never hand a nil to the game:
+-- that crashes it.
+local function holder(rtype, path)
+    if type(path) ~= "string" or path == "" then return nil end
+    local res = sdk.create_resource(rtype, path)
+    if not res then error("not in the game's files: " .. path) end
+    res:add_ref()  -- a resource isn't managed by REFramework: this one is the game's own count
+    return keep(res:create_holder(rtype .. "Holder"))
+end
+
+-- Every file a definition names, requested now (they load in under a second).
+local function preload(def)
+    local h = { parts = {}, dynamic = {} }
+    h.skeleton = holder("via.motion.SkeletonResource", def.skeleton)
+    h.bank = holder("via.motion.MotionBankResource", def.motion_bank)
+    for _, path in ipairs(def.dynamic_banks or {}) do table.insert(h.dynamic, holder("via.motion.MotionBankResource", path)) end
+    for i, part in ipairs(def.parts or {}) do
+        h.parts[i] = { mesh = holder("via.render.MeshResource", part.mesh),
+                       material = holder("via.render.MeshMaterialResource", part.material) }
+    end
+    return h
+end
+
+local function add_motion(go, bank, banks, layers)
+    local m = add_component(go, "via.motion.Motion")
+    if bank then m:call("set_MotionBankAsset", bank) end
+    m:call("setDynamicMotionBankCount", #banks)
+    for i, d in ipairs(banks) do m:call("setDynamicMotionBank", i - 1, d) end
+    m:call("setLayerCount", layers)
+    for l = 0, layers - 1 do
+        if not m:call("getLayer", l) then m:call("setLayer", l, keep(sdk.create_instance("via.motion.TreeLayer"))) end
+    end
+end
+
+local function make_part(parent, name, mesh, material, parent_joint, bank, banks)
+    local go = create_object("remod_puppet_" .. name)
+    if mesh then
+        local m = add_component(go, "via.render.Mesh")
+        m:call("setMesh", mesh)
+        if material then m:call("set_Material", material) end
+    end
+    add_motion(go, bank, banks, 0)
+    local x = go:call("get_Transform")
+    x:call("set_Parent", parent)
+    x:call("set_LocalPosition", Vector3f.new(0, 0, 0))
+    x:call("set_LocalRotation", Quaternion.new(1, 0, 0, 0))
+    if parent_joint then x:call("set_ParentJoint", tostring(parent_joint)) else x:call("set_SameJointsConstraint", true) end
+    return go
+end
+
+local function build_puppet(name, def, h)
+    local root = create_object("remod_puppet_" .. name)
+    local banks = {}
+    for _, bh in ipairs(h.dynamic) do
+        local d = keep(sdk.create_instance("via.motion.DynamicMotionBank") or sdk.create_instance("via.motion.DynamicMotionBank", true))
+        d:call("set_MotionBank", bh)
+        table.insert(banks, d)
+    end
+    if h.skeleton then add_component(root, "via.motion.DummySkeleton"):call("set_SkeletonResourceHandle", h.skeleton) end
+    add_motion(root, h.bank, banks, tonumber(def.layers) or 13)
+    local rx = root:call("get_Transform")
+    for i, part in ipairs(def.parts or {}) do
+        make_part(rx, tostring(part.name or "part"), h.parts[i].mesh, h.parts[i].material, part.parent_joint, h.bank, banks)
+    end
+    return root
+end
+
+-- The safety net: each mesh part not ready to draw 1 s after it shows is replaced by a fresh one with the same files
+-- and motion banks; the stuck one is hidden and renamed, never destroyed. Up to 5 times.
+local watching = {}  -- { go, mesh, t0, tries, actor }
+local function watch_parts(root, actor)
+    for _, go in ipairs(tree(root)) do
+        local m = component(go, "via.render.Mesh")
+        if m and go:call("get_Name") ~= STUCK then
+            table.insert(watching, { go = go, mesh = m, t0 = now(), tries = 0, actor = actor })
+        end
+    end
+end
+
+local function fresh_part(go, m)
+    local x = go:call("get_Transform")
+    local new = create_object(go:call("get_Name"))
+    local nm = add_component(new, "via.render.Mesh")
+    nm:call("setMesh", m:call("getMesh"))
+    local mat = m:call("get_Material")
+    if mat then nm:call("set_Material", mat) end
+    local motion = component(go, "via.motion.Motion")
+    if motion then
+        local banks = {}
+        for b = 0, motion:call("getDynamicMotionBankCount") - 1 do table.insert(banks, motion:call("getDynamicMotionBank", b)) end
+        add_motion(new, motion:call("get_MotionBankAsset"), banks, 0)
+    end
+    local nx = new:call("get_Transform")
+    nx:call("set_Parent", x:call("get_Parent"))
+    nx:call("set_LocalPosition", x:call("get_LocalPosition"))
+    nx:call("set_LocalRotation", x:call("get_LocalRotation"))
+    local pj = x:call("get_ParentJoint")
+    if pj and tostring(pj) ~= "" then nx:call("set_ParentJoint", pj) end
+    nx:call("set_SameJointsConstraint", x:call("get_SameJointsConstraint"))
+    set_active(go, false)
+    go:call("set_Name", STUCK)
+    return new, nm
+end
+
+-- Where an actor stands: its position and rotation (written down in game), else offset [right, up, forward] metres
+-- from the player (default 1.5 m in front), facing him. Right is (-forward z, forward x): the first actor test
+-- (2026-10-08) put the actor at -0.8 on his right with (forward z, -forward x).
+local function actor_place(a)
+    if a.position then
+        local p, r = a.position, a.rotation
+        return Vector3f.new(p[1], p[2], p[3]), Quaternion.new(r[4], r[1], r[2], r[3])
+    end
+    local body = game.player()
+    if not body then error("no player to place it by") end
+    local x = body:call("get_Transform")
+    local lp, lq = x:call("get_Position"), x:call("get_Rotation")
+    local fx, fz = 2 * (lq.x * lq.z + lq.w * lq.y), 1 - 2 * (lq.x * lq.x + lq.y * lq.y)  -- his +z, flat
+    local len = math.sqrt(fx * fx + fz * fz)
+    if len < 1e-6 then fx, fz, len = 0, 1, 1 end
+    fx, fz = fx / len, fz / len
+    local o = a.offset or { 0, 0, 1.5 }
+    local px, py, pz = lp.x - fz * o[1] + fx * o[3], lp.y + o[2], lp.z + fx * o[1] + fz * o[3]
+    local yaw = math.atan(lp.x - px, lp.z - pz)
+    return Vector3f.new(px, py, pz), Quaternion.new(math.cos(yaw / 2), 0, math.sin(yaw / 2), 0)
+end
+
+local function scene_find(name)
+    local scene = sdk.find_type_definition("via.SceneManager"):get_method("get_CurrentScene"):call(nil)
+    return scene and scene:call("findGameObject(System.String)", name)
+end
+
+-- The actor's puppet out and in place, in its idle; gives its root.
+local function start_actor(a)
+    local def = puppet_defs[a.puppet]
+    if not def then error("no definition " .. PUPPETS_DIR .. "\\" .. tostring(a.puppet) .. ".json") end
+    local root = put_away[a.puppet] or scene_find("remod_puppet_" .. a.puppet)
+    put_away[a.puppet] = nil
+    if root then
+        set_active(root, true)
+    else
+        local h = preloaded[a.puppet]
+        if not h or h.error then h = preload(def) end  -- not requested earlier: the safety net catches it
+        root = build_puppet(a.puppet, def, h)
+    end
+    watch_parts(root, a.name)
+    local pos, rot = actor_place(a)
+    local x = root:call("get_Transform")
+    x:call("set_Position", pos)
+    x:call("set_Rotation", rot)
+    local idle = type(def.idle) == "table" and def.idle or { bank = 1000, motion = 160 }
+    local layer = component(root, "via.motion.Motion"):call("getLayer", 0)
+    layer:call("changeMotion(System.UInt32, System.UInt32, System.Single, System.Single, via.motion.InterpolationMode, via.motion.InterpolationCurve)",
+        idle.bank, idle.motion, 0.0, 0.0, 1, 0)
+    return root
+end
+
+-- The definitions, and every actor's files requested now, so its parts show when its cutscene plays. After load_all.
+local function load_puppets()
+    puppet_defs = {}
+    local ok, files = pcall(fs.glob, PUPPETS_DIR .. "[/\\\\].*\\.json$")
+    for _, path in ipairs(ok and files or {}) do
+        local rel = path:match("[/\\]data[/\\](.*)$") or path
+        local def = json.load_file(rel)
+        local name = rel:match("([^/\\]+)%.json$")
+        if name and type(def) == "table" and type(def.parts) == "table" then puppet_defs[name] = def end
+    end
+    for _, c in ipairs(cutscenes) do
+        for _, a in ipairs(type(c.data.actors) == "table" and c.data.actors or {}) do
+            local def = puppet_defs[a.puppet]
+            if def and not preloaded[a.puppet] then
+                local pok, h = pcall(preload, def)
+                preloaded[a.puppet] = pok and h or { error = tostring(h) }
+                if not pok then log.error("[remod_cutscene] puppet " .. tostring(a.puppet) .. ": " .. tostring(h)) end
+            end
+        end
+    end
+end
+
 -- ---- Playing ----
-local playing = nil  -- { data, started, fired = {}, fov_before, hud_before }
+local playing = nil  -- { data, started, fired = {}, fov_before, hud_before, actors = {name -> {root, puppet}}, hidden }
 
 local problem = nil  -- the last one, shown in the menu; each also logged once (log.* reaches the log without
                      -- REFramework's "Log Lua Errors to Disk")
@@ -391,6 +643,12 @@ local function stop()
         if cam then pcall(cam.call, cam, "set_FOV", playing.fov_before) end
     end
     if playing.hud_before then try("showing the HUD", game.hud, playing.hud_before) end
+    for _, a in pairs(playing.actors or {}) do  -- put away for next time, never destroyed
+        try("putting away " .. a.puppet, set_active, a.root, false)
+        put_away[a.puppet] = a.root
+    end
+    watching = {}
+    for _, body in ipairs(playing.hidden or {}) do pcall(set_drawn, body, true) end
     playing = nil  -- the player's controls come back as hold_player is no longer sent
 end
 
@@ -405,7 +663,17 @@ local function play(data)
         fov_before = ok and fov or nil
     end
     playing = { data = data, started = now(), fired = {}, fov_before = fov_before,
-                hud_before = try("hiding the HUD", game.hud, game.hud_off) }
+                hud_before = try("hiding the HUD", game.hud, game.hud_off), actors = {}, hidden = {} }
+    for _, a in ipairs(data.actors or {}) do
+        local root = try("actor " .. tostring(a.name), start_actor, a)
+        if root then playing.actors[a.name] = { root = root, puppet = a.puppet } end
+        if a.hides == "partner" and #playing.hidden == 0 then  -- the real ones, while it plays
+            for _, body in ipairs(try("finding the partners", game.partners) or {}) do
+                try("hiding a partner", set_drawn, body, false)
+                table.insert(playing.hidden, body)
+            end
+        end
+    end
 end
 
 -- The cutscene's time; it stands still while a movie plays.
@@ -459,8 +727,14 @@ local function current_motion()
 end
 
 local function start_motion(m)
-    if m.actor and m.actor ~= "player" then return end
-    local layer = player_layer()
+    local layer
+    if m.actor and m.actor ~= "player" then
+        local a = playing.actors[m.actor]
+        local motion = a and component(a.root, "via.motion.Motion")
+        layer = motion and motion:call("getLayer", 0)
+    else
+        layer = player_layer()
+    end
     if not layer then return end
     pcall(layer.call, layer,
         "changeMotion(System.UInt32, System.UInt32, System.Single, System.Single, via.motion.InterpolationMode, via.motion.InterpolationCurve)",
@@ -630,6 +904,22 @@ re.on_frame(function()
     end
     check_triggers()
     if not playing then return end
+    for i = #watching, 1, -1 do  -- actors' parts not yet ready to draw
+        local w = watching[i]
+        local ok, ready = pcall(w.mesh.call, w.mesh, "get_ReadyToDraw")
+        if not ok or ready or w.tries >= 5 then
+            if ok and not ready then report("actor " .. w.actor, "a part never became ready to draw") end
+            table.remove(watching, i)
+        elseif now() - w.t0 > 1 then
+            local fok, go, m = pcall(fresh_part, w.go, w.mesh)
+            if fok then
+                w.go, w.mesh, w.tries, w.t0 = go, m, w.tries + 1, now()
+            else
+                report("actor " .. w.actor, go)
+                table.remove(watching, i)
+            end
+        end
+    end
     run_movies(elapsed())
     local t = elapsed()
     if not playing.movie and t >= (playing.data.length or 0) then
@@ -668,7 +958,10 @@ re.on_draw_ui(function()
         imgui.tree_pop()
         return
     end
-    if imgui.button("Reload cutscenes") then load_all() end
+    if imgui.button("Reload cutscenes") then
+        load_all()
+        load_puppets()
+    end
     if load_error then imgui.text("Problem: " .. load_error) end
     if problem then imgui.text("Problem: " .. problem) end
     if #cutscenes == 0 then imgui.text("No cutscenes in reframework\\data\\" .. DIR .. ".") end
@@ -715,6 +1008,23 @@ re.on_draw_ui(function()
     end
     imgui.same_line()
     imgui.text("Leon's spot and where he is, into " .. DIR .. "\\trigger.json (remod: Use trigger)")
+    if imgui.button("Write down Leon's spot") then  -- an actor's position and rotation, to paste into its cutscene
+        local sok, err = pcall(function()
+            local x = game.player():call("get_Transform")
+            local p, q = x:call("get_Position"), x:call("get_Rotation")
+            json.dump_file(DIR .. "/spot.json", { position = { p.x, p.y, p.z }, rotation = { q.x, q.y, q.z, q.w } })
+        end)
+        problem = sok and nil or ("writing down the spot: " .. tostring(err))
+    end
+    imgui.same_line()
+    imgui.text("into " .. DIR .. "\\spot.json: an actor's position and rotation")
+    local puppet_names = {}
+    for name in pairs(puppet_defs) do
+        local h = preloaded[name]
+        table.insert(puppet_names, name .. (h and h.error and " (files: " .. h.error .. ")" or ""))
+    end
+    table.sort(puppet_names)
+    imgui.text("Puppets (actors), in " .. PUPPETS_DIR .. ": " .. (#puppet_names > 0 and table.concat(puppet_names, ", ") or "none"))
     imgui.text("F10: add the camera as a key to " .. DIR .. "\\recording.json" ..
         (recording and (" (" .. #recording.keys .. " keys)") or ""))
     if recording and imgui.button("Start a new recording") then recording = nil end
@@ -723,6 +1033,7 @@ end)
 
 re.on_script_reset(stop)
 load_all()
+load_puppets()
 
 -- For remod's tests (REFramework ignores what a script returns).
 return { camera_at = camera_at }

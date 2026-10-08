@@ -1,0 +1,23 @@
+{
+  "schema_version": 0,
+  "name": "Actor test",
+  "length": 10,
+  "start": {"key": "F11"},
+  "letterbox": 0.1,
+  "actors": [
+    {"name": "luis", "puppet": "luis", "offset": [-0.8, 0, 2.0]},
+    {"name": "blue_ashley", "puppet": "rmc001", "offset": [0.8, 0, 2.0], "hides": "partner"}
+  ],
+  "fades": [
+    {"t": 0, "until": 1, "from": 1, "to": 0},
+    {"t": 9, "until": 10, "from": 0, "to": 1}
+  ],
+  "subtitles": [
+    {"t": 1.5, "until": 4, "text": "Luis: Leon! Over here."},
+    {"t": 4.5, "until": 7.5, "text": "Ashley: Do you like my new outfit?"}
+  ],
+  "motions": [
+    {"t": 5, "actor": "luis", "bank": 1000, "motion": 160},
+    {"t": 5, "actor": "blue_ashley", "bank": 1000, "motion": 160}
+  ]
+}
