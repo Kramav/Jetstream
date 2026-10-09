@@ -20,28 +20,21 @@
       "id": 3,
       "type": "Cutscene",
       "params": {
-        "cutscene": "trigger_test3/difficulty_assisted.json"
+        "cutscene": "trigger_test3/flag_on.json"
       }
     },
     {
       "id": 4,
       "type": "Cutscene",
       "params": {
-        "cutscene": "trigger_test3/difficulty_standard.json"
+        "cutscene": "trigger_test3/flag_control.json"
       }
     },
     {
       "id": 5,
       "type": "Cutscene",
       "params": {
-        "cutscene": "trigger_test3/difficulty_hard.json"
-      }
-    },
-    {
-      "id": 6,
-      "type": "Cutscene",
-      "params": {
-        "cutscene": "trigger_test3/difficulty_professional.json"
+        "cutscene": "trigger_test3/once_per_save.json"
       }
     },
     {
@@ -52,7 +45,7 @@
         "out": "out",
         "version": "1.0",
         "replace": "true",
-        "description": "Talk triggers (merchant G, Ashley H) and story flag triggers (difficulty): spikes/trigger_test.md part 3"
+        "description": "Talk triggers (merchant T, Ashley H), story flags, once per save (Ashley J): spikes/trigger_test.md part 3"
       }
     }
   ],
@@ -100,16 +93,6 @@
     {
       "from": [
         5,
-        "files"
-      ],
-      "to": [
-        7,
-        "file"
-      ]
-    },
-    {
-      "from": [
-        6,
         "files"
       ],
       "to": [

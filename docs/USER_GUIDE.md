@@ -461,13 +461,14 @@ cutscene file (the rest stays; the previous version is kept as `.bak`).
 The trigger's parts, all optional but at least one needed:
 - `near`: the spot and a `radius` in metres;
 - `chapter`, `stage`, `area`, `location`: the game's names, as the menu's **Now** line shows them where you stand;
-- `talk`: `npc` (the character's kind), and optionally `key` (A-Z or F1-F12 but F10; G by default), `prompt` (the
+- `talk`: `npc` (the character's kind, or `merchant` for the merchant), and optionally `key` (A-Z or F1-F12 but F10; T by default), `prompt` (the
   words after the key, "Talk" by default) and `radius` (2.5 m by default);
 - `flags`: story flag names that must be on; one starting with `!` must be off;
 - `after`: `{"movie": "mva000"}` or `{"event": "csa012"}`, for the 10 seconds after that one ends;
 - `delay`: seconds the conditions must hold first;
 - `once`: `true` (the default) once per save: loading a save from before it played lets it play again; `"session"`
-  once each time you start the game; `false` every time.
+  once each time you start the game; `false` every time. A `talk` trigger plays every time by default (its prompt
+  comes back when the cutscene ends); give it `once` to limit it.
 
 It doesn't start while another cutscene plays, the game plays one of its own movies, or the game is paused. It
 starts when the conditions become true (a talk trigger: when you press its key then), and not again until they've

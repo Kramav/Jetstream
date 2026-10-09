@@ -169,7 +169,8 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
             if (t.contains("delay") && !(t["delay"].is_number() && t["delay"].get<double>() >= 0))
                 p.push_back("trigger.delay must be seconds, 0 or more");
             if (t.contains("once") && !t["once"].is_boolean() && t["once"] != "session")
-                p.push_back("trigger.once must be true (once per save), \"session\" (once each time the game runs) or false");
+                p.push_back("trigger.once must be true (once per save), \"session\" (once each time the game runs) or false "
+                            "(every time; a talk trigger's default)");
         }
     }
 

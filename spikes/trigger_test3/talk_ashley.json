@@ -9,14 +9,13 @@
       "key": "H",
       "prompt": "Talk to Ashley (remod test)",
       "radius": 3.0
-    },
-    "once": "session"
+    }
   },
   "subtitles": [
     {
       "t": 0.3,
       "until": 3.6,
-      "text": "remod test: you talked to Ashley (talk trigger, once each time the game runs)"
+      "text": "remod test: you talked to Ashley (talk trigger, every time)"
     }
   ],
   "fades": [

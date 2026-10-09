@@ -5,8 +5,8 @@
   "letterbox": 0.12,
   "trigger": {
     "talk": {
-      "npc": "ch3_a8z0",
-      "key": "G",
+      "npc": "merchant",
+      "key": "T",
       "prompt": "Talk (remod test)",
       "radius": 3.0
     }
@@ -15,7 +15,7 @@
     {
       "t": 0.3,
       "until": 3.6,
-      "text": "remod test: you talked to the merchant (talk trigger, once per save)"
+      "text": "remod test: you talked to the merchant (talk trigger, every time)"
     }
   ],
   "fades": [

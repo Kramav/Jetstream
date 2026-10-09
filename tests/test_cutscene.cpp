@@ -552,7 +552,8 @@ TEST_CASE("Triggers: checked, and Make a trigger here's file put into a cutscene
               "trigger.near.radius must be a number of metres above 0",
               "trigger.chapter must be the game's name for it (as the menu's Now line shows)",
               "trigger.delay must be seconds, 0 or more",
-              "trigger.once must be true (once per save), \"session\" (once each time the game runs) or false"});
+              "trigger.once must be true (once per save), \"session\" (once each time the game runs) or false "
+              "(every time; a talk trigger's default)"});
     // Talking to a character, story flags, after one of the game's movies or cutscenes.
     CHECK(with(R"({"talk": {"npc": "ch3_a8z0", "key": "G", "prompt": "Ask about the castle", "radius": 3},
                    "flags": ["Ch1f0z0LuisArrivedDemoAfter", "!DifficultyHard"], "once": "session"})").empty());

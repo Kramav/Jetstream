@@ -1,0 +1,9 @@
+{
+  "schema_version": 0,
+  "name": "Once per save test",
+  "length": 4.0,
+  "letterbox": 0.12,
+  "trigger": {"talk": {"npc": "ch2_a1z0", "key": "J", "prompt": "Once per save (remod test)", "radius": 3.0}, "once": true},
+  "subtitles": [{"t": 0.3, "until": 3.6, "text": "remod test: once per save (J near Ashley)"}],
+  "fades": [{"t": 0.0, "until": 0.4, "from": 1.0, "to": 0.0}, {"t": 3.6, "until": 4.0, "from": 0.0, "to": 1.0}]
+}

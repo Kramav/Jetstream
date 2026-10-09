@@ -220,6 +220,7 @@ local function enum_values(type_name)
 end
 
 -- What differs between games, found by remod's spikes/cutscene_probe.lua run in that game.
+local merchants, merchants_at = {}, nil  -- RE4's merchant gimmicks, found every 5 s (GAMES.re4.characters)
 local GAMES = {
     re4 = {
         -- Where the camera is set each frame ("after X": once step X is done, else just before it). Set only at
@@ -325,15 +326,35 @@ local GAMES = {
         characters = function()
             local mgr = sdk.get_managed_singleton("chainsaw.CharacterManager")
             local out = {}
-            for _, getter in ipairs({ "get_DollNpcContextList", "get_PartnerContextList" }) do
+            -- Enemies too: the merchant wasn't found among the NPCs and partners (trigger test 3, 2026-10-09).
+            for _, getter in ipairs({ "get_DollNpcContextList", "get_PartnerContextList", "get_EnemyContextList" }) do
                 local list = mgr and mgr:call(getter)
                 for i = 0, (list and list:call("get_Count") or 0) - 1 do
-                    local ctx = list:call("get_Item", i)
-                    local pos = ctx and ctx:call("get_Position")
-                    if pos then
-                        table.insert(out, { kind = enum_name("chainsaw.CharacterKindID", ctx:call("get_KindID")), position = pos })
-                    end
+                    pcall(function()
+                        local ctx = list:call("get_Item", i)
+                        local pos = ctx and ctx:call("get_Position")
+                        if pos then
+                            table.insert(out, { kind = enum_name("chainsaw.CharacterKindID", ctx:call("get_KindID")),
+                                                position = pos, list = getter:match("get_(%a-)Context") })
+                        end
+                    end)
                 end
+            end
+            -- The merchant isn't a character the manager lists (trigger test 3 run 2: nobody but Ashley near him, in
+            -- the NPC, partner and enemy lists); he's a gimmick, chainsaw.GmWeaponMerchant [dump], kind "merchant"
+            -- here. Found in the scene every 5 s (ponytail: a scene search, cached; per frame would cost).
+            if now() - (merchants_at or -10) > 5 then
+                merchants_at, merchants = now(), {}
+                local scene = sdk.find_type_definition("via.SceneManager"):get_method("get_CurrentScene"):call(nil)
+                local found = scene and scene:call("findComponents(System.Type)", sdk.typeof("chainsaw.GmWeaponMerchant"))
+                for _, m in ipairs(found and found:get_elements() or {}) do table.insert(merchants, m) end
+            end
+            for _, m in ipairs(merchants) do
+                pcall(function()
+                    local body = m:get_field("NpcBodyObj") or m:call("get_GameObject")
+                    table.insert(out, { kind = "merchant", position = body:call("get_Transform"):call("get_Position"),
+                                        list = "Gimmick" })
+                end)
             end
             return out
         end,
@@ -365,6 +386,10 @@ local GAMES = {
             local flag = f:get_data(nil)
             return instance("chainsaw.ScenarioFlagManager"):call("checkFlag(System.Int32, System.Int32)",
                 flag:get_field("Group"), flag:get_field("Index"))
+        end,
+        -- The game's difficulty setting (chainsaw.CampaignManager get_CurrentDifficulty: Rank_10..Rank_40) [dump].
+        difficulty = function()
+            return enum_name("chainsaw.CampaignManager.Difficulty", instance("chainsaw.CampaignManager"):call("get_CurrentDifficulty"))
         end,
         -- The save's play time (share.GameClock, counts while playing; a save loaded brings its own): for "once per save".
         play_time = function() return instance("share.GameClock"):call("get_ActualPlayingTime") end,
@@ -1073,7 +1098,7 @@ end
 -- in the last 10 s). It starts when they become true and have held for `delay` seconds (a talk trigger: when its key
 -- is pressed then); not again until they've stopped holding. `once`: true (the default) once per save, by the save's
 -- play time (loading a save from before it lets it play again); "session" once each time the game runs; false every
--- time. Never while a cutscene plays or the game is busy (its own movie, a pause). Checked 5 times a second.
+-- time (a talk trigger's default: the player asks for it). Never while a cutscene plays or the game is busy (its own movie, a pause). Checked 5 times a second.
 local trigger_state = {}  -- cutscene file -> {held, since, fired, done, talk_ready}
 local next_check = 0
 
@@ -1085,28 +1110,73 @@ end
 -- Once per save: the play time each cutscene file last started at by its trigger, in remod_cutscenes\fired.json.
 -- ponytail: one record per cutscene, not per save slot; a save from another playthrough with more play time counts
 -- as after it.
+-- A save played before it iff the save's play time when it loaded is at least that (not the play time now: playing
+-- on from an older save passes it; trigger test 3 run 6). A load is a jump in the play time (back, or forward more
+-- than the time passed); the first reading counts as one (Reset Scripts mid-game).
 local fired_at = nil
+local save = { loaded_pt = nil, last_pt = nil, at = 0 }  -- the loaded save's play time; the last reading, when
+local function track_load()
+    local ok, pt = pcall(game.play_time)
+    if not ok then return end
+    local real = now() - save.at
+    if not save.last_pt or pt < save.last_pt or (pt - save.last_pt) / 1e6 > real + 2 then
+        save.loaded_pt = pt
+        for _, s in pairs(trigger_state) do s.fired_this_save = false end
+        local sok, slot = pcall(function()
+            return sdk.get_managed_singleton("share.SaveDataManager"):call("get_LastLoadSlot")
+        end)
+        log.info(string.format("[remod_cutscene] a save loaded: play time %.1f s, slot %s", pt / 1e6,
+            sok and tostring(slot) or "?"))
+    end
+    save.last_pt, save.at = pt, now()
+end
+-- The game's saves and loads as they happen (share.SaveDataManager _CurrentRequest {Command, SlotId}, CurrentProcess
+-- [dump]), logged when they change: the base for remod's own flags kept per save slot (2026-10-09; a same-save
+-- reload doesn't move the play time, run 7). Read each frame, read-only.
+local save_watch = {}
+local function watch_saves()
+    local mgr = sdk.get_managed_singleton("share.SaveDataManager")
+    if not mgr then return end
+    local req = mgr:get_field("_CurrentRequest")
+    local line = "process " .. enum_name("share.SaveDataManager.Process", mgr:call("get_CurrentProcess"))
+    if req then
+        line = line .. ", request " .. enum_name("share.SaveDataManager.Request.CommandType", req:get_field("Command"))
+            .. " slot " .. tostring(req:get_field("SlotId"))
+    end
+    if line ~= save_watch.line then
+        save_watch.line = line
+        local gui = sdk.get_managed_singleton("chainsaw.SaveLoadMenuGuiManager")
+        local cont = gui and select(2, pcall(gui.call, gui, "get_IsLastDataLoadContinueData"))
+        log.info(string.format("[remod_cutscene] saves: %s; last load slot %s, last good %s, continue data %s", line,
+            tostring(mgr:call("get_LastLoadSlot")), tostring(mgr:call("get_LastLoadSuccessedGameSlot")), tostring(cont)))
+    end
+end
+
 local function fired_before(c, t)
     local s = trigger_state[c.file]
-    if t.once == false then return false end
-    if t.once == "session" then return s.fired end
+    local once = t.once
+    if once == nil and type(t.talk) == "table" then once = false end  -- the player asks for it: every time
+    if once == false then return false end
+    if once == "session" then return s.fired end
+    if s.fired_this_save then return true end
     fired_at = fired_at or (json.load_file(DIR .. "/fired.json") or {})
     local at = fired_at[c.file]
     if not at then return false end
-    local ok, pt = pcall(game.play_time)
-    return not ok or pt >= at  -- the play time unknown: taken as after it
+    return not save.loaded_pt or save.loaded_pt >= at  -- the play time unknown: taken as after it
 end
 
 local function fire(c)
     local s = trigger_state[c.file]
-    s.fired, s.done, s.talk_ready = true, true, false
+    -- A talk trigger's prompt comes back once the cutscene ends (no walking away first: the player asks each time).
+    s.fired, s.done, s.talk_ready, s.fired_this_save = true, type(c.data.trigger.talk) ~= "table", false, true
     local ok, pt = pcall(game.play_time)
     if ok then
         fired_at = fired_at or (json.load_file(DIR .. "/fired.json") or {})
         fired_at[c.file] = pt
         pcall(json.dump_file, DIR .. "/fired.json", fired_at)
     end
-    log.info("[remod_cutscene] " .. (c.data.name or c.file) .. " triggered")
+    log.info("[remod_cutscene] " .. (c.data.name or c.file) .. " triggered"
+        .. (ok and string.format(" (play time %.1f s)", pt / 1e6) or ""))
     if not (playing and playing.data == c.data) then request_toggle(c.data, "triggered") end
 end
 
@@ -1121,6 +1191,28 @@ local function read_flags()
     for _, f in ipairs(list) do
         flags_by_name[f.group .. "/" .. f.name] = f
         if not flags_by_name[f.name] then flags_by_name[f.name] = f end
+    end
+    if #list > 0 then  -- the groups, once: what names flags can take
+        local groups, order = {}, {}
+        for _, f in ipairs(list) do
+            if not groups[f.group] then groups[f.group] = { n = 0, first = f.name }; table.insert(order, f.group) end
+            groups[f.group].n = groups[f.group].n + 1
+        end
+        local parts = {}
+        for _, g in ipairs(order) do table.insert(parts, string.format("%s (%d, e.g. %s)", g, groups[g].n, groups[g].first)) end
+        log.info("[remod_cutscene] story flags: " .. #list .. " in " .. #order .. " groups: " .. table.concat(parts, "; "))
+        -- Where the game's own named flags point (ScenarioFlagDefine {Group, Index}): the Difficulty ones read off in
+        -- trigger test 3, so is Group the _Group array's position? (logged once)
+        pcall(function()
+            local td, out = sdk.find_type_definition("chainsaw.ScenarioFlagDefine"), {}
+            for _, n in ipairs({ "DifficultyStandard", "DifficultyProfessional", "Ch1f0z0LuisArrivedDemoAfter" }) do
+                local fl = td:get_field(n):get_data(nil)
+                local g, i = fl:get_field("Group"), fl:get_field("Index")
+                table.insert(out, string.format("%s = group %s index %s (the list's group %s there: %s)", n, tostring(g),
+                    tostring(i), tostring(g), tostring(order[(tonumber(g) or -1) + 1])))
+            end
+            log.info("[remod_cutscene] named flags: " .. table.concat(out, "; "))
+        end)
     end
 end
 local function flag_is_on(name)  -- nil if there's no such flag (yet)
@@ -1141,7 +1233,13 @@ local game_now, game_ended = nil, {}  -- { kind, name }; kind -> { name, at }
 local function watch_game()
     local ok, kind, name = pcall(game.playing_now)
     if not ok then return end
-    if game_now and game_now.name ~= name then game_ended[game_now.kind] = { name = game_now.name, at = now() } end
+    if game_now and game_now.name ~= name then
+        game_ended[game_now.kind] = { name = game_now.name, at = now() }
+        log.info("[remod_cutscene] the game's " .. game_now.kind .. " ended: " .. tostring(game_now.name))
+    end
+    if kind and not (game_now and game_now.name == name) then
+        log.info("[remod_cutscene] the game's " .. kind .. " playing: " .. tostring(name))
+    end
     game_now = kind and { kind = kind, name = name } or nil
 end
 
@@ -1177,9 +1275,50 @@ local function holds(t, where, pos, chars)
     return true
 end
 
+-- What triggers can see, into the log when it changes (every 2 s): characters within 8 m of Leon, the difficulty and
+-- the Difficulty story flags read both ways. So a talk or flag trigger that doesn't start says why without the menu.
+-- ponytail: always on; it logs only changes, a few lines per area.
+local seen = { at = -10 }
+local function log_seen(pos)
+    if now() - seen.at < 2 then return end
+    seen.at = now()
+    local near = {}
+    local cok, chars = pcall(game.characters)
+    for _, ch in ipairs(cok and chars or {}) do
+        local d = pos and math.sqrt((pos.x - ch.position.x) ^ 2 + (pos.y - ch.position.y) ^ 2 + (pos.z - ch.position.z) ^ 2)
+        if d and d <= 8 then table.insert(near, string.format("%s (%s) %.1f m", tostring(ch.kind), ch.list or "?", d)) end
+    end
+    local kinds = {}
+    for _, n in ipairs(near) do table.insert(kinds, (n:gsub(" [%d.]+ m$", ""))) end
+    table.sort(kinds)
+    local key = table.concat(kinds, ", ")
+    if key ~= seen.near then
+        seen.near = key
+        log.info("[remod_cutscene] near Leon: " .. (#near > 0 and table.concat(near, ", ") or "nobody within 8 m"))
+    end
+    read_flags()
+    local dok, diff = pcall(game.difficulty)
+    local parts = { "difficulty " .. (dok and tostring(diff) or "? " .. tostring(diff)),
+                    "story flags read " .. (flags_list and #flags_list or 0) }
+    for _, d in ipairs({ "Assisted", "Standard", "Hard", "Professional" }) do
+        local f = flags_by_name and flags_by_name["Difficulty" .. d]
+        local lok, lon = true, nil
+        if f then lok, lon = pcall(game.flag_on, f) end
+        local nok, non = pcall(game.named_flag_on, "Difficulty" .. d)
+        table.insert(parts, string.format("%s: by list %s, by define %s", d,
+            f and (lok and tostring(lon) or "error") or "not listed", nok and tostring(non) or "error " .. tostring(non)))
+    end
+    local line = table.concat(parts, "; ")
+    if line ~= seen.flags then
+        seen.flags = line
+        log.info("[remod_cutscene] " .. line)
+    end
+end
+
 local function check_triggers()
     if playing or not game.where or now() < next_check then return end
     next_check = now() + 0.2
+    track_load()
     watch_game()
     local busy_ok, busy = pcall(game.busy)
     if busy_ok and busy then
@@ -1188,6 +1327,7 @@ local function check_triggers()
     end
     local where_ok, where = pcall(game.where)
     local pos = select(2, pcall(player_position))
+    pcall(log_seen, type(pos) == "userdata" and pos or nil)
     local chars = nil
     for _, c in ipairs(cutscenes) do
         local t = c.data.trigger
@@ -1204,6 +1344,9 @@ local function check_triggers()
             if not now_holds then s.done = false end
             local ready = now_holds and not s.done and now() - s.since >= (t.delay or 0) and not fired_before(c, t)
             if type(t.talk) == "table" then
+                if ready ~= (s.talk_ready or false) then
+                    log.info("[remod_cutscene] " .. (c.data.name or c.file) .. ": talk prompt " .. (ready and "shown" or "gone"))
+                end
                 s.talk_ready = ready  -- its key starts it (each frame, below)
             elseif ready then
                 fire(c)
@@ -1215,16 +1358,17 @@ end
 
 -- "Make a trigger here": Leon's spot (2 m around him) and the game's names for where he is, into
 -- remod_cutscenes\trigger.json; remod's Use trigger puts it into a cutscene file. The menu's other buttons add to it.
+local trigger_shown = {}  -- the menu's view of trigger.json: { at, t }
 local function make_trigger()
     local pos = player_position()
     if not pos then error("no player (load a save first)") end
+    trigger_shown.at = nil  -- show it again at once
     local where = game.where()
     json.dump_file(DIR .. "/trigger.json", { near = { position = { pos.x, pos.y, pos.z }, radius = 2.0 },
                                              chapter = where.chapter, stage = where.stage })
 end
 
 -- Adds a condition to trigger.json (made if there's none yet): a story flag, a talk, an after.
-local trigger_shown = {}  -- the menu's view of trigger.json: { at, t }
 local function trigger_add(key, value)
     trigger_shown.at = nil  -- show it again at once
     local t = json.load_file(DIR .. "/trigger.json")
@@ -1239,12 +1383,13 @@ local function trigger_add(key, value)
 end
 
 -- Story flags as they change while you play, for finding the one a moment sets (the menu's Story flags > Watch):
--- each frame a slice of them is read, so a whole pass takes a moment.
-local flag_watch = { on = false, at = 1, last = {}, changes = {} }  -- last: flag -> on; changes: { name, group, on, at }
+-- each frame a slice of them is read, so a whole pass takes a moment. On by default, changes logged (the log is how
+-- Claude finds flags after a play: 2026-10-09); a pass with more than 20 changes (a save loaded) logs a count instead.
+local flag_watch = { on = true, at = 1, last = {}, changes = {}, pass = {} }  -- last: flag -> on; changes: { name, group, on, at }
 local function watch_flags()
     read_flags()
     if not flags_list or #flags_list == 0 then return end
-    for _ = 1, math.min(500, #flags_list) do
+    for _ = 1, math.min(300, #flags_list) do
         local f = flags_list[flag_watch.at]
         flag_watch.at = flag_watch.at % #flags_list + 1
         local ok, on = pcall(game.flag_on, f)
@@ -1253,17 +1398,37 @@ local function watch_flags()
             if before ~= nil and before ~= on then
                 table.insert(flag_watch.changes, 1, { name = f.name, group = f.group, on = on, at = now() })
                 if #flag_watch.changes > 20 then table.remove(flag_watch.changes) end
+                table.insert(flag_watch.pass, f.group .. "/" .. f.name .. (on and " on" or " off"))
             end
             flag_watch.last[f] = on
+        end
+        if flag_watch.at == 1 and #flag_watch.pass > 0 then  -- a whole pass done
+            local p = flag_watch.pass
+            log.info("[remod_cutscene] story flags changed: " .. (#p <= 20 and table.concat(p, ", ")
+                or (#p .. " at once (a save loaded?), e.g. " .. table.concat(p, ", ", 1, 5))))
+            if #p > 20 then  -- the game's clocks then: once per save needs one a loaded save brings back (run 4:
+                -- ActualPlayingTime went on counting across a reload)
+                pcall(function()
+                    local clock, out = instance("share.GameClock"), {}
+                    for _, m in ipairs({ "ActualPlayingTime", "ActualRecordTime", "GameElapsedTime", "InSceneTime",
+                                         "SystemElapsedTime", "GameSaveDataHash" }) do
+                        local ok, v = pcall(clock.call, clock, "get_" .. m)
+                        table.insert(out, m .. " " .. (ok and tostring(v) or "?"))
+                    end
+                    log.info("[remod_cutscene] clocks: " .. table.concat(out, ", "))
+                end)
+            end
+            flag_watch.pass = {}
         end
     end
 end
 
--- A talk trigger's prompt, near the bottom of the screen.
-local function draw_prompt(talk)
+-- A talk trigger's prompt, near the bottom of the screen; row 0, 1, ... stack upwards (two in reach drew on top of
+-- each other, trigger test 3).
+local function draw_prompt(talk, row)
     local size = imgui.get_display_size()
-    local text = "[" .. (talk.key or "G") .. "] " .. (talk.prompt or "Talk")
-    local x, y = size.x * 0.5 - #text * 4, size.y * 0.72
+    local text = "[" .. (talk.key or "T") .. "] " .. (talk.prompt or "Talk")
+    local x, y = size.x * 0.5 - #text * 4, size.y * 0.72 - row * 34
     draw.filled_rect(x - 12, y - 6, #text * 8 + 24, 28, 0xA0000000)
     draw.text(text, x, y, 0xFFFFFFFF)
 end
@@ -1314,14 +1479,17 @@ re.on_frame(function()
         end
     end
     check_triggers()
+    pcall(watch_saves)
     if flag_watch.on then watch_flags() end
     if not playing then  -- talk triggers ready: their prompt, and their key starts them
+        local row = 0
         for _, c in ipairs(cutscenes) do
             local s = trigger_state[c.file]
             local talk = s and s.talk_ready and c.data.trigger.talk
             if talk then
-                draw_prompt(talk)
-                local key = KEY_CODES[talk.key or "G"]
+                draw_prompt(talk, row)
+                row = row + 1
+                local key = KEY_CODES[talk.key or "T"]
                 if key and pressed(key) then fire(c) end
             end
         end
@@ -1440,7 +1608,8 @@ re.on_draw_ui(function()
     imgui.same_line()
     imgui.text("into " .. DIR .. "\\spot.json: an actor's position and rotation")
     -- More conditions for the trigger: each button adds one to trigger.json (made if there's none yet).
-    if now() - (trigger_shown.at or -10) > 1 then  -- what trigger.json holds, read once a second
+    if not trigger_shown.at then  -- what trigger.json holds: read again only after a button changes it (a missing
+        -- file logged a JSON error every second)
         trigger_shown.at, trigger_shown.t = now(), json.load_file(DIR .. "/trigger.json")
     end
     local tf, parts = trigger_shown.t, {}
@@ -1482,7 +1651,7 @@ re.on_draw_ui(function()
         if #near == 0 then imgui.text(cok and "Nobody within 15 m." or ("Couldn't list them: " .. tostring(chars))) end
         for i, ch in ipairs(near) do
             if imgui.button("Talk trigger##talk" .. i) then
-                trigger_add("talk", { npc = ch.kind, key = "G", prompt = "Talk", radius = 2.5 })
+                trigger_add("talk", { npc = ch.kind, key = "T", prompt = "Talk", radius = 2.5 })
             end
             imgui.same_line()
             imgui.text(string.format("%s, %.1f m", ch.kind, ch.d))

@@ -821,6 +821,13 @@ playback (camera, fades, motions on time, movies) stays in `re.on_frame` and the
 Applied to the whole runtime the same day (cutscene play / stop from keys, menu and triggers; the previewer). The
 finished probes in `spikes/` weren't changed (not used again).
 
+**Log so the user reports only what Claude can't see (user, 2026-10-09: "I should only have to report on results
+that you cant see yourself. logging should be on so you can better diagnose issues after I report").** Every runtime
+feature, probe and spike logs, by default, the state its decisions depend on (what it looked for, what it found, why
+a condition didn't hold), on change so the log stays small (`log.info` reaches `re2_framework_log.txt` without "Log
+Lua Errors to Disk"). After a run Claude reads the log first (game folder in remod's settings); guides ask the user
+only for what's on screen or felt (did it appear, how it looked, a crash).
+
 **Every spike gets a step-by-step guide (user, 2026-10-07: "whenever we have a spike, make a guide for doing it in the
 spikes folder"):** `spikes/<name>.md`, written for the user (what it answers, time, what's needed, numbered steps in
 remod and the game, taking it out, where the result lands, what to do if something goes wrong), listed in
@@ -1391,7 +1398,7 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       (AppSingleton) `get_ActualPlayingTime`. Save slots: `share.SaveDataManager.get_LastLoadSuccessedGameSlot` (not
       used).
     - **Format:** `trigger` {`near` {`position`, `radius`}, `chapter`, `location`, `area`, `stage`, **`talk`** {`npc`
-      (a kind), `key` (A-Z or F1-F12 but F10; G), `prompt` ("Talk"), `radius` (2.5)}, **`flags`** ["Name", "!Name"],
+      (a kind), `key` (A-Z or F1-F12 but F10; T, not G: often a free camera key), `prompt` ("Talk"), `radius` (2.5)}, **`flags`** ["Name", "!Name"],
       **`after`** {`movie` | `event`: id}, `delay`, `once` (true: **once per save**, default; "session"; false)},
       checked by `check_cutscene` (2026-10-09: talk, flags, after, once values added).
     - **Runtime:** `check_triggers` every 0.2 s. A trigger fires when its conditions become true, once they've held
@@ -1416,7 +1423,69 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       to trigger.json (`trigger_add`); Make a trigger here still starts it afresh.
     - **Example 18:** `18_start_a_cutscene_by_itself`, a real spot (the cutscene probe's camera position), radius 3.
     - **Checked:** tests (the checks, use_trigger new / existing / missing / a talk trigger / empty), `check-lua`,
-      example 18 built. **Not run in game:** talk, flags, after, once per save (`spikes/trigger_test.md` part 3).
+      example 18 built. **Test 3 run 1 (user, 2026-10-09): a talk trigger works (Ashley, `ch2_a1z0`, H)**; no prompt
+      at the merchant (`ch3_a8z0` a guess, or he's in none of the lists read); no difficulty flag cutscene. The log
+      had no clue, so the runtime now logs what triggers see when it changes (`log_seen`: characters within 8 m with
+      kind and list, enemies' list added; `CampaignManager.get_CurrentDifficulty` (Rank_10..40) and the Difficulty
+      flags by the group list and by ScenarioFlagDefine). **Talk triggers play every time by default (user: "let the
+      cutscenes play more than once ... at least for the player triggered ones")**, the prompt back when the cutscene
+      ends. **Run 2 (user + log, 2026-10-09):** Ashley's H prompt shows and plays twice. No merchant in any
+      CharacterManager list (nobody else logged within 8 m): **he's a gimmick, `chainsaw.GmWeaponMerchant`** [dump]
+      (fields `NpcBodyObj`, `NPCContext` a PartnerBaseContext), now found by `scene:findComponents(System.Type)` every
+      5 s as kind `merchant`. G was the user's free camera key: the talk default is now T. Difficulty: CampaignManager
+      reads Rank_20 at the title, Rank_40 in the save; 17,586 story flags read, but no group variable is named
+      `DifficultyX` and `checkFlag(group, index)` of ScenarioFlagDefine's says false for all four: so either those
+      defines don't map to `_Group` indexes, or difficulty isn't kept as a story flag. The flag watch is now on by
+      default and logs changes (and the groups once), so a play shows real flag names. **Run 3 (user + log,
+      2026-10-09): talk triggers work** (T at the merchant, found as a gimmick 3.7 m away, and his Trade beside it; H at
+      Ashley). **Story flags have no readable names** [game]: 17,586 in 242 groups named by place and chapter
+      (`Location47`, `Chapter0101`, ...), the flags numbered (`Location47_002`); 753 came on when the save loaded. So a
+      flag trigger is found with the watch (what changed when the user did X), not by name. The runtime now also logs
+      where ScenarioFlagDefine's named flags point. Run 4 (ready): a flag test on `Location47_002`, a control needing it
+      on and off (must never play), once per save (J near Ashley). **To fix later, not now (user, 2026-10-09: "fine for
+      testing, not good for long term"): two talk prompts in reach draw on top of each other** (`draw_prompt`; stack
+      them, or show only the nearest). **Stacked 2026-10-09** (user asked once J's prompt was hidden under H's, both
+      near Ashley): each ready prompt a row higher. Not done: their look (a box per row, fixed 34 px).
+      **Run 4 (user + log, 2026-10-09):**
+      - **Flag triggers work:** the `Location47_002` test played 9 s after the load; the control (on and off) never.
+      - **The game's events have flags [game]:** csa038 (the chimera heads) turned on `EventTimelineStart00/
+        EventTimelineStart00_038` as it started and `EventTimelineEnd00/EventTimelineEnd00_038` as it ended (with
+        `Chapter0303_*`, `PurposeStart0303_001`). Inferred: `EventTimelineStart<hundreds>_<nn>` / `End...` for every
+        csa id, so "after the game's cutscene X" can be a lasting flag, not only the 10 s `after`. `watch_game`
+        logged csa038 playing and ending too.
+      - **ScenarioFlagDefine's Group isn't the `_Group` array's position** (DifficultyStandard -> group 0 index 1 =
+        `Location40`), or those defines are unused; the named flags stay unreliable.
+      - **Once per save failed:** J played; after the user reloaded (90 Location47 flags off then on: maybe a retry
+        from a checkpoint, not a slot load), no J prompt. `ActualPlayingTime` kept counting across it (109 s for 120 s
+        of real time), so it never went back below the recorded value. The runtime now logs every GameClock time and
+        `GameSaveDataHash` at each mass flag change, to find one a load brings back.
+      - **Run 5 (user + log, 2026-10-09):** loaded from the title, `ActualPlayingTime` read the save's 13,230 s, so
+        J's prompt showed (J's record was 13,264); J played at 13,252 s. After an in-game Load Game, no J. Either an
+        in-game load doesn't restore the clock (GameClock has `onTakeOverGameSaveData` /
+        `checkEnableTakeOverGameSaveData`: inferred, a "take over" keeps it) or the slot was a later autosave. The
+        runtime now logs any play-time jump and `SaveDataManager.get_LastLoadSlot`, and the play time on each
+        "triggered" line. If the clock isn't restored: each slot's own time is in
+        `chainsaw.GameSaveSlotDetailContents_Ver0x07.ActualPlayingTime` (via `SaveDataManager._GameSaveSlotDetailHolder`).
+      - **Run 6 (log): the clock is fine, the rule was wrong.** An in-game Load Game does restore `ActualPlayingTime`
+        (slot 3: 13,403 -> 10,982 s; slot from `SaveDataManager.get_LastLoadSlot`; at the title it reads 0 and slot
+        -1). No J at the first save because the user reached Ashley 170 s in, past J's record: comparing the play
+        time *now* is wrong. **Fixed:** `track_load` notes the play time when a save loads (a jump back, or forward
+        more than the time passed; the first reading too) and once per save compares that; a fire also marks it done
+        for the rest of that save's session. Logged: "a save loaded: play time ..., slot ...". Run 7 waits.
+      - **Run 7 (log): a same-save reload doesn't move the play time** (13,268 at J, 13,279 two minutes and a reload
+        later; only some flags flicked off and on), so no clock rule can tell it. **Decided (user, 2026-10-09):
+        remod's own "story flags"** instead of play time, and story-flag windows for timing. **Plan [inferred]:**
+        remod's flags in a file of ours, a copy per save slot taken when the game saves to it, put back when it loads
+        (so they follow saves as the game's do; the save file untouched). Needs when the game saves / loads and which
+        slot, read without hooks: `share.SaveDataManager._CurrentRequest` {`Command` (Invalid, Load, Remove, Save),
+        `SlotId`}, `get_CurrentProcess` (Idle, PreIdle, Processing, SaveWait, LoadWait, GameLoadWait, RemoveWait),
+        `get_LastLoadSlot`, `isAutoSaveDataIndex(slot)`, `SaveLoadMenuGuiManager.get_IsLastDataLoadContinueData`
+        (a retry from a checkpoint) [dump]. Not usable: `_GameSaveResistrantTable` (the game's own save registrants:
+        an interface Lua can't implement), `OnGameSaveCompleted` (a delegate). The runtime now logs every change of
+        those ("saves: ..."). Run 8: save to a slot, load another, reload the same, die and retry; the log says
+        which of them are seen.
+      - After csa038 Ashley is the player character, and her H prompt (a talk to `ch2_a1z0`) doesn't show: intended
+        (user).
     - **Not used:** `OccupiedMediator.checkBusy()` (meaning unknown).
     - **Not done:** enemy-count triggers, a gamepad button for talk triggers (keyboard keys only), the editor showing
       or editing a trigger's parts (it's kept as JSON; Use trigger replaces it).
