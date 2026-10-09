@@ -110,7 +110,7 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
     if (c.contains("trigger")) {
         const json& t = c["trigger"];
         if (!t.is_object()) {
-            p.push_back("trigger must be an object (near, stage, area, location, chapter, delay, once)");
+            p.push_back("trigger must be an object (near, talk, flags, after, stage, area, location, chapter, delay, once)");
         } else {
             bool any = false;
             if (t.contains("near")) {
@@ -127,10 +127,49 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                     if (!t[key].is_string() || t[key].get<std::string>().empty())
                         p.push_back(std::string("trigger.") + key + " must be the game's name for it (as the menu's Now line shows)");
                 }
-            if (!any) p.push_back("trigger needs a condition: near, stage, area, location or chapter");
+            // Talking to a character: near one of that kind, a prompt shows; its key starts the cutscene.
+            if (t.contains("talk")) {
+                any = true;
+                const json& k = t["talk"];
+                if (!k.is_object() || !k.contains("npc") || !plain_name(k["npc"].is_string() ? k["npc"].get<std::string>() : ""))
+                    p.push_back("trigger.talk.npc must be the character's kind, as the menu's Characters near Leon shows "
+                                "(e.g. \"ch3_a8z0\")");
+                if (k.is_object() && k.contains("key")) {
+                    const std::string key = k["key"].is_string() ? k["key"].get<std::string>() : "";
+                    const bool letter = key.size() == 1 && key[0] >= 'A' && key[0] <= 'Z';
+                    const bool fkey = key.size() >= 2 && key.size() <= 3 && key[0] == 'F' &&
+                                      std::ranges::all_of(key.substr(1), [](unsigned char ch) { return std::isdigit(ch); }) &&
+                                      std::stoi(key.substr(1)) >= 1 && std::stoi(key.substr(1)) <= 12 && key != "F10";
+                    if (!letter && !fkey) p.push_back("trigger.talk.key must be a capital letter A-Z or F1-F12 (not F10)");
+                }
+                if (k.is_object() && k.contains("prompt") && !(k["prompt"].is_string() && !k["prompt"].get<std::string>().empty()))
+                    p.push_back("trigger.talk.prompt must be text, e.g. \"Talk\"");
+                if (k.is_object() && k.contains("radius") && !(k["radius"].is_number() && k["radius"].get<double>() > 0))
+                    p.push_back("trigger.talk.radius must be a number of metres above 0");
+            }
+            // Story flags: each must be on ("Name") or off ("!Name"), by the game's names (the menu's Story flags).
+            if (t.contains("flags")) {
+                any = true;
+                if (!t["flags"].is_array() || t["flags"].empty() ||
+                    !std::ranges::all_of(t["flags"], [](const json& f) {
+                        return f.is_string() && f.get<std::string>().size() > (f.get<std::string>().starts_with('!') ? 1u : 0u);
+                    }))
+                    p.push_back("trigger.flags must be a list of story flag names, \"!\" before one that must be off");
+            }
+            // Right after one of the game's movies or cutscenes ends.
+            if (t.contains("after")) {
+                any = true;
+                const json& a = t["after"];
+                const bool one = a.is_object() && a.size() == 1 && (a.contains("movie") || a.contains("event"));
+                if (!one || !plain_name(a.begin()->is_string() ? a.begin()->get<std::string>() : ""))
+                    p.push_back("trigger.after must be {\"movie\": id} or {\"event\": id}, the game's names (e.g. "
+                                "\"mva000\", \"csa012\")");
+            }
+            if (!any) p.push_back("trigger needs a condition: near, talk, flags, after, stage, area, location or chapter");
             if (t.contains("delay") && !(t["delay"].is_number() && t["delay"].get<double>() >= 0))
                 p.push_back("trigger.delay must be seconds, 0 or more");
-            if (t.contains("once") && !t["once"].is_boolean()) p.push_back("trigger.once must be true or false");
+            if (t.contains("once") && !t["once"].is_boolean() && t["once"] != "session")
+                p.push_back("trigger.once must be true (once per save), \"session\" (once each time the game runs) or false");
         }
     }
 
@@ -238,6 +277,37 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                 p.push_back(where + ": hides can only be \"partner\" (the real partner, hidden while it plays)");
         }
     }
+    // Animation files put on a character as a bank of our own number (spikes/event_animation_test.md).
+    if (const json* files = list("animation_files")) {
+        std::vector<std::pair<std::string, long long>> used;  // (actor, bank)
+        for (size_t i = 0; i < files->size(); ++i) {
+            const json& a = (*files)[i];
+            const std::string where = "animation file " + std::to_string(i + 1);
+            if (!a.is_object()) {
+                p.push_back(where + " must be an object");
+                continue;
+            }
+            const std::string actor = a.contains("actor") && a["actor"].is_string() ? a["actor"].get<std::string>() : "player";
+            if (actor != "player" && std::ranges::find(actor_names, actor) == actor_names.end())
+                p.push_back(where + ": actor must be \"player\" or one of the actors' names");
+            std::string file = a.contains("file") && a["file"].is_string() ? a["file"].get<std::string>() : "";
+            std::string lower = file;
+            std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+            std::ranges::replace(lower, '\\', '/');
+            if (!lower.ends_with(".motlist") || lower.starts_with("natives/") || lower.find(':') != std::string::npos)
+                p.push_back(where + ": file must be a game path ending in .motlist, without natives/STM and without the "
+                                    "number after it, e.g. _Chainsaw/Event/cs/csa012/csa012_s00/chara/cha300_00/cha300_00.motlist");
+            if (!a.contains("bank") || !a["bank"].is_number_integer() || a["bank"].get<long long>() < 0 ||
+                a["bank"].get<long long>() > 0xFFFFFFFFll) {
+                p.push_back(where + ": bank must be a whole number, 0 or more (e.g. 9000: one of your own, not the character's)");
+            } else if (const std::pair key{actor, a["bank"].get<long long>()}; std::ranges::find(used, key) != used.end()) {
+                p.push_back(where + ": bank " + std::to_string(key.second) + " is already another animation file's for " +
+                            (actor == "player" ? std::string("the player") : actor));
+            } else {
+                used.push_back(key);
+            }
+        }
+    }
     if (const json* motions = list("motions"))
         for (size_t i = 0; i < motions->size(); ++i) {
             const json& m = (*motions)[i];
@@ -288,8 +358,9 @@ std::vector<json> entries(const json& c, const char* key) {
             if (e.is_object()) out.push_back(e);
     return out;
 }
-const std::vector<std::string> kEdited{"schema_version", "name",  "length",    "start",  "letterbox", "camera",
-                                       "actors",         "motions", "subtitles", "fades", "movies", "sounds"};
+const std::vector<std::string> kEdited{"schema_version", "name",    "length",          "start",     "letterbox",
+                                       "camera",         "actors",  "animation_files", "motions",   "subtitles",
+                                       "fades",          "movies",  "sounds"};
 
 CutsceneCameraKey camera_key_of(const json& k) {
     CutsceneCameraKey x{.t = num_of(k, "t", 0)};
@@ -341,6 +412,11 @@ Cutscene read_cutscene(const fs::path& file) {
         x.blend = num_of(m, "blend", 10);
         c.motions.push_back(x);
     }
+    for (const json& a : entries(j, "animation_files")) {
+        CutsceneAnimationFile x{.file = text_of(a, "file"), .bank = static_cast<long long>(num_of(a, "bank", 9000))};
+        if (a.contains("actor") && a["actor"].is_string()) x.actor = a["actor"].get<std::string>();
+        c.animation_files.push_back(x);
+    }
     for (const json& s : entries(j, "subtitles"))
         c.subtitles.push_back({num_of(s, "t", 0), num_of(s, "until", 0), text_of(s, "text")});
     for (const json& f : entries(j, "fades"))
@@ -387,6 +463,14 @@ std::string cutscene_text(const Cutscene& c) {
     for (const auto& s : c.subtitles) j["subtitles"].push_back({{"t", s.t}, {"until", s.until}, {"text", s.text}});
     j["fades"] = json::array();
     for (const auto& f : c.fades) j["fades"].push_back({{"t", f.t}, {"until", f.until}, {"from", f.from}, {"to", f.to}});
+    if (!c.animation_files.empty()) {
+        j["animation_files"] = json::array();
+        for (const auto& a : c.animation_files) {
+            json x = {{"file", a.file}, {"bank", a.bank}};
+            if (a.actor != "player") x["actor"] = a.actor;
+            j["animation_files"].push_back(x);
+        }
+    }
     j["motions"] = json::array();
     for (const auto& m : c.motions) {
         json x = {{"t", m.t}, {"bank", m.bank}, {"motion", m.motion}, {"frame", m.frame}, {"blend", m.blend}};
@@ -628,7 +712,8 @@ std::optional<PickedAnimation> read_picked_animation(const fs::path& game_dir) {
         !j.contains("motion") || !j["motion"].is_number_integer())
         return std::nullopt;
     PickedAnimation p{.actor = text_of(j, "actor"), .bank = j["bank"].get<long long>(),
-                      .motion = j["motion"].get<long long>(), .name = text_of(j, "name"), .frame = num_of(j, "frame", 0)};
+                      .motion = j["motion"].get<long long>(), .name = text_of(j, "name"), .frame = num_of(j, "frame", 0),
+                      .file = text_of(j, "file")};
     if (p.actor.empty()) p.actor = "player";
     return p;
 }
@@ -831,8 +916,11 @@ json made_trigger(const fs::path& trigger) {
         throw PackageError("no trigger yet: in game, stand where it should start and click Make a trigger here in "
                            "REFramework's menu (remod cutscenes) (" + trigger.string() + ")");
     const json t = json::parse(read_text(trigger), nullptr, false);
-    if (t.is_discarded() || !t.is_object() || !t.contains("near"))
+    if (t.is_discarded() || !t.is_object())
         throw PackageError("not a trigger the runtime made: " + trigger.string());
+    if (t.empty())
+        throw PackageError("the trigger has no conditions yet: in game, add some in REFramework's menu (remod cutscenes): "
+                           "Make a trigger here, Talk trigger, a story flag, Start after it");
     return t;
 }
 

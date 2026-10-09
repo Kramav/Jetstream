@@ -386,6 +386,13 @@ Opening a cutscene (from the Browser, or **Edit cutscene** on a Cutscene block) 
   the stage, for its settings: puppet, near Leon or at a spot (**Use Leon's spot**), and whether it hides the partner.
 - **Every item (tables):** everything as numbers, to type exact values.
 - **Add picked animation** adds the animation you picked in game at the playhead.
+- **Animation files** (the cutscene's panel, with nothing selected): animations from the game's own cutscenes,
+  which aren't among a character's usual ones. Each is a file such as
+  `_Chainsaw/Event/cs/csa012/csa012_s00/chara/cha300_00/cha300_00.motlist` (Luis in cutscene csa012), put on a
+  character under a bank number of your own (9000, 9001, ...) when the cutscene plays. Easiest: in game, load the
+  file in the Animations menu (**Add this animation file**), pick an animation, **Use in a cutscene**, then **Add
+  picked animation** here: the file comes along. These animations move the character as the game's cutscene did,
+  through walls too, so give them room.
 
 Problems show at the top as you edit. Ctrl+Z / Ctrl+Y undo and redo. **Save** (Ctrl+S) writes the file and keeps the
 previous one as `.bak`. **Test in game** saves and copies it into the game. **Add to graph** puts a Cutscene block for
@@ -394,9 +401,13 @@ it into your graph, linked into Package. **Use layout** or **Build layout** in t
 
 **Finding animations (in game).** REFramework's menu > remod cutscenes > **Animations**:
 1. Pick **who**: Leon, or a puppet, which comes out in front of him.
-2. Pick one of its **banks**, then an animation from the list (numbers and the game's names; **Find** narrows it).
+2. Optional, for a game cutscene's own animations: **Animation file** (a `.motlist` path; the box suggests one for
+   Leon and Luis), **As bank** (your own number, e.g. 9000), **Add this animation file**. A second later the line
+   under it says how many animations it brought; the bank is then in the list. In the extracted game files they're
+   under `natives\STM\_chainsaw\event\cs\<cutscene>\...\chara\<character's mesh>\`.
+3. Pick one of its **banks**, then an animation from the list (numbers and the game's names; **Find** narrows it).
    It plays at once, looping, with a frame slider and Pause.
-3. **Use in a cutscene** writes it down for the editor's **Add picked animation**.
+4. **Use in a cutscene** writes it down (with its animation file, if any) for the editor's **Add picked animation**.
 
 While Leon previews one he's held still, as in a cutscene.
 
@@ -432,19 +443,35 @@ Example `15_play_a_game_movie` fades out, plays the intro movie and fades back i
 the sound starts at that time, beside everything else, and stops when the cutscene ends.
 
 **Cutscenes that start by themselves** (`trigger`): the cutscene starts when everything its trigger names is true.
-1. In game, stand where it should start and click **Make a trigger here** (REFramework's menu > Script Generated UI
-   > remod cutscenes). It saves Leon's spot, plus the game's names for the chapter and stage he's in.
-2. In remod, click **Use trigger** on the Cutscene block: the trigger goes into the cutscene file (the rest stays;
-   the previous version is kept as `.bak`).
+You make the trigger in game (REFramework's menu > Script Generated UI > remod cutscenes); each button there adds a
+condition to `trigger.json`, and the menu shows what it holds so far (**Start a new trigger** empties it):
+- **Make a trigger here:** Leon's spot, plus the game's names for the chapter and stage he's in (this one starts the
+  file afresh).
+- **Characters near Leon > Talk trigger:** talking to that character. Near him, "[G] Talk" shows at the bottom of the
+  screen, and G starts the cutscene: a new conversation with the merchant, say. The characters are listed by the
+  game's names for their kind (the merchant is probably `ch3_a8z0`), nearest first.
+- **Story flags:** the game's flags for what has happened in the story. Tick **Watch** and play: flags that change are
+  listed, so you can see what a moment sets, and **Add** one (it must be on; one that went off must be off). **Find a
+  flag** searches them by name.
+- **Start after it:** right after the game's own movie or cutscene that just ended (shown by name).
+
+Then in remod, **Use trigger** (the Cutscene block, or the Cutscene layout with nothing selected) puts it into the
+cutscene file (the rest stays; the previous version is kept as `.bak`).
 
 The trigger's parts, all optional but at least one needed:
 - `near`: the spot and a `radius` in metres;
 - `chapter`, `stage`, `area`, `location`: the game's names, as the menu's **Now** line shows them where you stand;
+- `talk`: `npc` (the character's kind), and optionally `key` (A-Z or F1-F12 but F10; G by default), `prompt` (the
+  words after the key, "Talk" by default) and `radius` (2.5 m by default);
+- `flags`: story flag names that must be on; one starting with `!` must be off;
+- `after`: `{"movie": "mva000"}` or `{"event": "csa012"}`, for the 10 seconds after that one ends;
 - `delay`: seconds the conditions must hold first;
-- `once`: true by default, meaning once per game session (reloading the game lets it start again).
+- `once`: `true` (the default) once per save: loading a save from before it played lets it play again; `"session"`
+  once each time you start the game; `false` every time.
 
 It doesn't start while another cutscene plays, the game plays one of its own movies, or the game is paused. It
-starts when the conditions become true, and not again until they've stopped being true. Example
+starts when the conditions become true (a talk trigger: when you press its key then), and not again until they've
+stopped being true. Example
 `18_start_a_cutscene_by_itself` starts at a spot in chapter 1's village.
 
 ## Built from blocks

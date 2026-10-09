@@ -75,9 +75,10 @@ void keep_selection_valid(CutsceneEdit& e) {
     e.playhead = std::clamp(e.playhead, 0.0, std::max(e.doc.length, 0.0));
 }
 
-void remove_actor(remod::Cutscene& c, int i) {  // and its animations, which name it
+void remove_actor(remod::Cutscene& c, int i) {  // and its animations and animation files, which name it
     const std::string name = c.actors[i].name;
     std::erase_if(c.motions, [&](const auto& m) { return m.actor == name; });
+    std::erase_if(c.animation_files, [&](const auto& f) { return f.actor == name; });
     c.actors.erase(c.actors.begin() + i);
 }
 
@@ -448,9 +449,12 @@ void draw_actor(CutsceneEdit& e, const fs::path& game, std::string& status) {
     ImGui::Text("Actor: %s", a.name.c_str());
     ImGui::PushItemWidth(-ImGui::GetFontSize() * 6);
     const std::string old = a.name;
-    if (ImGui::InputText("name", &a.name, ImGuiInputTextFlags_CharsNoBlank))
-        for (auto& m : c.motions)  // its animations follow the new name
+    if (ImGui::InputText("name", &a.name, ImGuiInputTextFlags_CharsNoBlank)) {
+        for (auto& m : c.motions)  // its animations and animation files follow the new name
             if (m.actor == old) m.actor = a.name;
+        for (auto& f : c.animation_files)
+            if (f.actor == old) f.actor = a.name;
+    }
     pick("puppet", a.puppet, e.puppets);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Puppets: remod's (luis, ashley) and those in the game's reframework\\data\\remod_puppets (a new "
@@ -523,7 +527,8 @@ void draw_whole(CutsceneEdit& e, const fs::path& game, std::string& status) {
         }
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Start it when Leon comes near the spot where you clicked Make a trigger here in game.");
+        ImGui::SetTooltip("Start it by itself, by the trigger you made in game (REFramework's menu > remod cutscenes: a spot, "
+                          "talking to a character, story flags, after the game's own cutscene).");
     ImGui::Separator();
     ImGui::Text("Actors (other characters)");
     for (int i = 0; i < int(c.actors.size()); ++i) {
@@ -535,6 +540,38 @@ void draw_whole(CutsceneEdit& e, const fs::path& game, std::string& status) {
         ImGui::PopID();
     }
     if (ImGui::Button("Add actor")) add_actor(e);
+    ImGui::Separator();
+    // Animation files: a game cutscene's own animations, loaded onto a character as a bank of our number.
+    ImGui::Text("Animation files");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Animations from the game's own cutscenes (_Chainsaw/Event/cs/<id>/.../chara/<mesh>/<mesh>.motlist),\n"
+                          "put on a character as a bank of your own number when the cutscene plays. Its animations then\n"
+                          "use that bank. They move the character as in the game's cutscene (through walls too).");
+    std::vector<std::string> who{"player"};
+    for (const auto& a : c.actors) who.push_back(a.name);
+    int erase = -1;
+    for (int i = 0; i < int(c.animation_files.size()); ++i) {
+        auto& f = c.animation_files[i];
+        ImGui::PushID(1000 + i);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6);
+        pick("##who", f.actor, who);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 5);
+        edit_int("##bank", f.bank);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Its bank number: your own, e.g. 9000 (not one the character has).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x")) erase = i;
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##file", &f.file);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", f.file.empty() ? "A .motlist's game path" : f.file.c_str());
+        ImGui::PopID();
+    }
+    if (erase >= 0) c.animation_files.erase(c.animation_files.begin() + erase);
+    if (ImGui::Button("Add animation file")) {
+        long long bank = 9000;
+        while (std::ranges::any_of(c.animation_files, [&](const auto& f) { return f.bank == bank; })) ++bank;
+        c.animation_files.push_back({.actor = "player", .bank = bank});
+    }
     ImGui::Separator();
     ImGui::TextWrapped("Click something on the timeline or the stage to edit it. Right-click a lane to add to it.");
 }
@@ -911,6 +948,11 @@ CutsceneAction draw_cutscene_layout(CutsceneEdit& e, const fs::path& game, bool 
             else c.actors.push_back({.name = who, .puppet = who});
         }
         c.motions.push_back({.t = e.playhead, .actor = who, .bank = picked->bank, .motion = picked->motion, .frame = picked->frame});
+        // Picked from an animation file the previewer added: the cutscene loads it too.
+        if (!picked->file.empty() && std::ranges::none_of(c.animation_files, [&](const auto& f) {
+                return f.actor == who && f.bank == picked->bank;
+            }))
+            c.animation_files.push_back({.actor = who, .file = picked->file, .bank = picked->bank});
         e.selected = {remod::CutsceneLane::Motion, int(c.motions.size()) - 1};
         e.actor = -1;
     }

@@ -375,6 +375,44 @@ TEST_CASE("Recording and trigger into the cutscene being edited; cutscene files 
         CHECK((e.kind == remod::FileKind::Cutscene) == (e.name == "door.json"));
 }
 
+TEST_CASE("Animation files: a game cutscene's own animations as a bank of the cutscene's number") {
+    const std::string file = "_Chainsaw/Event/cs/csa012/csa012_s00/chara/cha300_00/cha300_00.motlist";
+    const std::vector<std::string> p = remod::check_cutscene(R"({
+        "schema_version": 0, "length": 5,
+        "actors": [{"name": "luis", "puppet": "luis"}],
+        "animation_files": [
+            {"actor": "luis", "file": ")" + file + R"(", "bank": 9000},
+            {"file": "_Chainsaw/Event/cs/csa012/csa012_s00/chara/cha000_00/cha000_00.motlist", "bank": 9000},
+            {"actor": "luis", "file": "natives/STM/_Chainsaw/x.motlist", "bank": 9000},
+            {"actor": "nobody", "file": "x.motlist.663", "bank": -1},
+            "nope"
+        ]
+    })");
+    const std::vector<std::string> want{
+        "animation file 3: file must be a game path ending in .motlist, without natives/STM and without the number after "
+        "it, e.g. _Chainsaw/Event/cs/csa012/csa012_s00/chara/cha300_00/cha300_00.motlist",
+        "animation file 3: bank 9000 is already another animation file's for luis",
+        "animation file 4: actor must be \"player\" or one of the actors' names",
+        "animation file 4: file must be a game path ending in .motlist, without natives/STM and without the number after "
+        "it, e.g. _Chainsaw/Event/cs/csa012/csa012_s00/chara/cha300_00/cha300_00.motlist",
+        "animation file 4: bank must be a whole number, 0 or more (e.g. 9000: one of your own, not the character's)",
+        "animation file 5 must be an object",
+    };
+    CHECK(p == want);  // the player and luis may each have a bank 9000
+
+    // The editor's model keeps them; renaming or removing an actor is the app's (it carries them along).
+    remod::Cutscene c = remod::new_cutscene("x.json");
+    c.actors.push_back({.name = "luis", .puppet = "luis"});
+    c.animation_files = {{.actor = "luis", .file = file, .bank = 9000}, {.file = file, .bank = 9001}};
+    test::TempDir tmp;
+    remod::write_cutscene(tmp.path / "x.json", c);
+    CHECK(remod::read_cutscene(tmp.path / "x.json") == c);
+    CHECK(remod::check_cutscene(remod::cutscene_text(c)).empty());
+    const auto j = nlohmann::json::parse(remod::cutscene_text(c));
+    CHECK(j["animation_files"][1].contains("actor") == false);  // the player: left out, as in motions
+    CHECK(remod::cutscene_text(remod::new_cutscene("y.json")).find("animation_files") == std::string::npos);
+}
+
 TEST_CASE("What the game wrote down for the editor: Leon's spot, the picked animation, the puppets") {
     test::TempDir tmp;
     const fs::path game = tmp.path / "game", data = game / "reframework/data";
@@ -391,6 +429,10 @@ TEST_CASE("What the game wrote down for the editor: Leon's spot, the picked anim
     CHECK(picked->actor == "luis");
     CHECK(picked->motion == 160);
     CHECK(picked->frame == 12);
+    CHECK(picked->file.empty());  // the character's own bank
+    test::write_file(data / "remod_cutscenes/animation.json",
+                     R"({"actor": "luis", "bank": 9000, "motion": 3, "file": "_Chainsaw/Event/cs/x.motlist"})");
+    CHECK(remod::read_picked_animation(game)->file == "_Chainsaw/Event/cs/x.motlist");
 
     test::write_file(data / "remod_puppets/rmc001.json", "{}");
     test::write_file(data / "remod_puppets/luis.json", "{}");  // also remod's: listed once
@@ -502,13 +544,31 @@ TEST_CASE("Triggers: checked, and Make a trigger here's file put into a cutscene
     };
     CHECK(with(R"({"near": {"position": [1, 2, 3], "radius": 2}, "chapter": "chap01_01", "delay": 0.5, "once": false})").empty());
     CHECK(with(R"({"stage": "st40_100"})").empty());
-    CHECK(with("{}") == std::vector<std::string>{"trigger needs a condition: near, stage, area, location or chapter"});
+    CHECK(with("{}") ==
+          std::vector<std::string>{"trigger needs a condition: near, talk, flags, after, stage, area, location or chapter"});
     CHECK(with(R"({"near": {"position": [1, 2], "radius": 0}, "chapter": 3, "delay": -1, "once": "yes"})") ==
           std::vector<std::string>{
               "trigger.near.position must be [x, y, z] (from Make a trigger here, never typed)",
               "trigger.near.radius must be a number of metres above 0",
               "trigger.chapter must be the game's name for it (as the menu's Now line shows)",
-              "trigger.delay must be seconds, 0 or more", "trigger.once must be true or false"});
+              "trigger.delay must be seconds, 0 or more",
+              "trigger.once must be true (once per save), \"session\" (once each time the game runs) or false"});
+    // Talking to a character, story flags, after one of the game's movies or cutscenes.
+    CHECK(with(R"({"talk": {"npc": "ch3_a8z0", "key": "G", "prompt": "Ask about the castle", "radius": 3},
+                   "flags": ["Ch1f0z0LuisArrivedDemoAfter", "!DifficultyHard"], "once": "session"})").empty());
+    CHECK(with(R"({"talk": {"npc": "ch3_a8z0"}})").empty());  // key, prompt, radius: defaults
+    CHECK(with(R"({"after": {"event": "csa012"}})").empty());
+    CHECK(with(R"({"after": {"movie": "mva000"}, "flags": ["X"]})").empty());
+    CHECK(with(R"({"talk": {"npc": "a b", "key": "F10", "prompt": "", "radius": 0}, "flags": ["!", 3], "after": {"film": "x"}})") ==
+          std::vector<std::string>{
+              "trigger.talk.npc must be the character's kind, as the menu's Characters near Leon shows (e.g. \"ch3_a8z0\")",
+              "trigger.talk.key must be a capital letter A-Z or F1-F12 (not F10)",
+              "trigger.talk.prompt must be text, e.g. \"Talk\"",
+              "trigger.talk.radius must be a number of metres above 0",
+              "trigger.flags must be a list of story flag names, \"!\" before one that must be off",
+              "trigger.after must be {\"movie\": id} or {\"event\": id}, the game's names (e.g. \"mva000\", \"csa012\")"});
+    CHECK(with(R"({"talk": {"npc": "x", "key": "g"}, "flags": []})").size() == 2);  // lower-case key; an empty list
+    CHECK(with(R"({"talk": {"npc": "x", "key": "F123456789012"}})").size() == 1);   // refused, never thrown
 
     test::TempDir tmp;
     const fs::path trig = tmp.path / "game/reframework/data/remod_cutscenes/trigger.json";
@@ -527,6 +587,13 @@ TEST_CASE("Triggers: checked, and Make a trigger here's file put into a cutscene
     CHECK(again["subtitles"][0]["text"] == "Hello");
     CHECK_FALSE(again["trigger"].contains("stage"));  // replaced, not merged
     CHECK(fs::exists(fs::path(cut) += ".bak"));
+
+    // A talk trigger made in game has no spot: still the runtime's. An empty one (Start a new trigger) isn't yet.
+    test::write_file(trig, R"({"talk": {"npc": "ch3_a8z0", "key": "G", "prompt": "Talk", "radius": 2.5}})");
+    remod::use_trigger(cut, trig);
+    CHECK(nlohmann::json::parse(test::read_file(cut))["trigger"]["talk"]["npc"] == "ch3_a8z0");
+    test::write_file(trig, "{}");
+    CHECK_THROWS_WITH(remod::use_trigger(cut, trig), Catch::Matchers::ContainsSubstring("no conditions yet"));
 }
 
 TEST_CASE("Cutscene blocks into Package: the runtime once, the run fails on a bad file") {

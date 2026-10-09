@@ -946,6 +946,7 @@ void game_scripts_list(State& s) {
         s.game_scripts_read = ImGui::GetTime();
     }
     const std::string label = "Scripts in the game (" + std::to_string(s.game_scripts.size()) + ")###gamescripts";
+    ImGui::SetNextItemOpen(true, ImGuiCond_Once);  // open at first: it's easy to miss closed (user, 2026-10-09)
     if (!ImGui::TreeNode(label.c_str())) return;
     if (s.game_scripts.empty()) ImGui::TextDisabled("None: reframework\\autorun has no scripts.");
     std::string remove;
@@ -1362,6 +1363,7 @@ void draw_side_panel(State& s) {
         ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "No profile '%s' in the profiles folder.", s.graph.profile.c_str());
     for (const auto& e : s.profile_errors) ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", e.c_str());
     if (s.build_mode) {
+        game_scripts_list(s);  // in every layout (user, 2026-10-09: looked for it outside Use layout)
         ImGui::TextDisabled("Building the layout. Switch to Use layout to run it.");
     } else {
         const bool running = s.run.valid();
@@ -2696,6 +2698,10 @@ void draw_cutscene_view(State& s, const std::filesystem::path& game) {
     CutsceneEdit& e = *s.cutscene;
     const auto in_graph = std::ranges::any_of(graph_cutscenes(s), [&](const auto& f) { return same_file(f, e.file); });
     CutsceneAction action = draw_cutscene_layout(e, game, in_graph, s.status);
+    ImGui::Begin("Cutscene item");  // appended under the item: what's in the game, beside Test in game
+    ImGui::Separator();
+    game_scripts_list(s);
+    ImGui::End();
     if (action == CutsceneAction::SaveAs)  // then what it was asked for, once it has a file
         action = save_open_cutscene(s, game) ? std::exchange(e.after_save, CutsceneAction::None) : CutsceneAction::None;
     switch (action) {

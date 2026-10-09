@@ -805,6 +805,22 @@ game start), unless `add_ref_permanent()` [REFramework book, REManagedObject]. P
 - Use the runtime's `keep(o)` for anything handed to the game.
 - A resource (`sdk.create_resource`) isn't managed: its `add_ref()` is the game's own count.
 
+**What works in game becomes the rule, every time (user, 2026-10-08: "what ever ends up working, you need to
+remember that that is how it should be carried out every time").** Each lesson here applies to every script, spike
+and runtime feature written after it, and to the existing ones once found: when one is confirmed, change every other
+place still doing it the old way.
+
+**Change the game's objects only in the game's update (confirmed 2026-10-08, event animation test run 2).**
+Anything that changes the game (building puppets, creating resources, changing a Motion's banks, playing or stopping a
+cutscene, an animation, a frame, pause, putting a puppet away) is queued where it's asked for (the menu, a key, a
+trigger: `on_update(what, f)` in the runtime) and run in `re.on_pre_application_entry("UpdateBehavior")`, each logged
+before it runs (a crash then shows which). Never inside `re.on_draw_ui`. Reading is fine anywhere. Read a freshly
+built object's state only after the game has updated it (0.5 s). Why: building Luis from the previewer's menu crashed
+the game on a worker thread (run 1); queued, he built cleanly and two animation files loaded (run 2). Per-frame
+playback (camera, fades, motions on time, movies) stays in `re.on_frame` and the camera hooks, where it was proven.
+Applied to the whole runtime the same day (cutscene play / stop from keys, menu and triggers; the previewer). The
+finished probes in `spikes/` weren't changed (not used again).
+
 **Every spike gets a step-by-step guide (user, 2026-10-07: "whenever we have a spike, make a guide for doing it in the
 spikes folder"):** `spikes/<name>.md`, written for the user (what it answers, time, what's needed, numbered steps in
 remod and the game, taking it out, where the result lands, what to do if something goes wrong), listed in
@@ -972,10 +988,16 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
   docs/re4r_movies.md; the New movie block and example 16 built, not yet seen in game); then **triggers** (built 2026-10-08,
   not run: M3 route 3 "Triggers")
   (cutscenes starting by themselves; M5's first piece; survey with §9's "finding a game's switch" method); **other
-  characters in cutscenes** matter a lot (user). **Now (user, 2026-10-08): the game's cutscene animations on
-  characters** (the event animation test, M3 "Event animations" below); **then, in this order: a better-looking
-  Cutscene layout** (user, 2026-10-08: "looks bad but its good enough for now"; ask what's bad first), **then more
-  triggers** (story flags, "once" kept per save, after the game's movie or event X). Later: Write with Claude for
+  characters in cutscenes** matter a lot (user). **Done 2026-10-08: the game's cutscene animations on characters**
+  (works in game; in cutscene files, not run yet: M3 "Event animations" below). **More triggers: built 2026-10-09,
+  not run** (talking to a character, story flags, after the game's movie or event X, once per save: M3 "Triggers").
+  **Still to do: a better-looking Cutscene layout** (user, 2026-10-08: "looks bad but its good enough for now"; two
+  fixes done 2026-10-08: the layout switch stays put, an empty cutscene with nothing open; ask what else is bad).
+  **Wanted, survey first, not started:** a real new entry in the merchant's menu that starts a cutscene (M3
+  "Triggers"). **Tests don't lean on unconfirmed parts (user, 2026-10-09: "I dont mind doing the test scripts
+  manually, but having me doing the whole cutscene interface while we havent confirmed that it works and the ui is
+  still bad is not good practice")**: the test's content comes written and built (a mod to install); its steps use
+  only what's confirmed. Later: Write with Claude for
   cutscene files, an example graph, sound; M4. **In game (user, 2026-10-07): the finished cutscene stops Leon and the controls come back after.** The
   user found "note an animation's numbers from the menu" confusing: not done yet.
   Route 3 so far (M3 "Route 3" below): format, runtime, probe and the Cutscene block built (2026-10-07); the
@@ -1345,20 +1367,59 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       e.g. `chap01_01`, `Chp01`) and `get_CurrentStageIdentifier()` (`StageIdentifier` {`_Area` AreaID, `_Location`
       LocID, `_Stage` StageID: 834, e.g. `st40_100`}); names from the enums' static fields (`enum_name`). Other
       places that name stages: `SoundSpaceManager.get_CurrentStage`, `StreamingTextureManager.get_CurrentActiveStage`.
-    - **Story flags exist but aren't used yet:** `chainsaw.ScenarioFlagManager.checkFlag(System.Guid)` (also
-      `checkFlag(Int32, Int32)`). Their names aren't in the dump; they'd need reading from the game's flag files.
-    - **Format:** `trigger` {`near` {`position`, `radius`}, `chapter`, `location`, `area`, `stage`, `delay`, `once`
-      (default true: per game session)}, checked by `check_cutscene`.
+    - **Story flags [dump]:** `chainsaw.ScenarioFlagManager` (AppSingleton) `_Group` (Group[]); a Group has
+      `get_Name`, `get_Variables` (`via.userdata.UserVariables`: `getVariableCount`, `getVariable(i)` ->
+      `via.userdata.Variable` `get_Name`), `isOn(index)`, `getFlags` (UInt32[]). So every flag's name is readable in
+      game [inferred: flag index = variable index]. Only 54 are named in the dump itself (`chainsaw.ScenarioFlagDefine`
+      static `Flag` {DataName, Group, Index}, e.g. `Ch1f0z0LuisArrivedDemoAfter`, `Ch1f0z0EventTimelineEnd_100`,
+      `DifficultyHard`); also `checkFlag(Guid)`, `checkFlag(group, index)`, `findVariable(dataname, group_no)`.
+    - **Talking to a character (user, 2026-10-09: "a new option for talking to trader that starts a cutscene"; chose
+      our own prompt over replacing his shop or a real new entry in his menu).** The merchant's menu is the game's
+      `chainsaw.gui.shop.InGameShopGuiState_*` state machine (Purchase, Sell, Custom, File, AttacheCase..., also
+      `ForceClose`) [dump]: a real new entry would mean adding to its screens and catching its input, likely hooks.
+      Characters [dump]: `CharacterManager.get_DollNpcContextList` / `get_PartnerContextList`, `CharacterContext
+      get_KindID` (`chainsaw.CharacterKindID`, e.g. `ch3_a8z0`, inferred the merchant) / `get_Position`.
+    - **Wanted later: a real new entry in the merchant's menu (user, 2026-10-09: "I would like 'A real new menu
+      entry' but we should survey first, so make a note of that but dont do it yet").** Survey first (existing mods
+      and tools that add shop or menu entries in RE4R or other RE Engine games, how they do it, whether they need
+      hooks or a C++ plugin, licences), then decide. Don't start it until asked. Starting points from the dump: the
+      shop's `chainsaw.gui.shop.InGameShopGuiState_*` states (SelectEnter / SelectExit, ShopEnter, ForceClose ...)
+      and `chainsaw.InGameShopManager`.
+    - **The game's movies and cutscenes [dump]:** `MovieMediator` / `TimelineEventMediator` `isPlaying()`,
+      `getWork(ID)` (`MovieWork.get_IsPlaying`; `TimelineEventWork._EventPhase`, `EventPhase.Playing`); ids are
+      `chainsaw.MovieDefine.ID` / `TimelineEventDefine.ID` names (`csa000`...). Play time: `share.GameClock`
+      (AppSingleton) `get_ActualPlayingTime`. Save slots: `share.SaveDataManager.get_LastLoadSuccessedGameSlot` (not
+      used).
+    - **Format:** `trigger` {`near` {`position`, `radius`}, `chapter`, `location`, `area`, `stage`, **`talk`** {`npc`
+      (a kind), `key` (A-Z or F1-F12 but F10; G), `prompt` ("Talk"), `radius` (2.5)}, **`flags`** ["Name", "!Name"],
+      **`after`** {`movie` | `event`: id}, `delay`, `once` (true: **once per save**, default; "session"; false)},
+      checked by `check_cutscene` (2026-10-09: talk, flags, after, once values added).
     - **Runtime:** `check_triggers` every 0.2 s. A trigger fires when its conditions become true, once they've held
-      for `delay`; not again until they stop holding, and with `once` only once per session. Never while a cutscene
-      plays or `GAMES.re4.busy()` (MovieMediator `isPlaying`, PauseManager `isPaused()`).
+      for `delay`; not again until they stop holding. Never while a cutscene plays or `GAMES.re4.busy()`
+      (MovieMediator `isPlaying`, PauseManager `isPaused()`). **Added 2026-10-09 (not run in game):**
+      - `talk`: ready while Leon is within its radius of a character of that kind; each frame a ready one draws
+        "[G] Talk" near the bottom and its key fires it.
+      - `flags`: by name (or "Group/Name"), read once the groups exist (`read_flags`, retried every 10 s while
+        empty); an unknown name never holds.
+      - `after`: `watch_game` notes the game's movie / event playing (searched only while one plays; our own
+        cutscene's movies aren't watched) and the last of each kind that ended; holds 10 s after.
+      - `once` true: `remod_cutscenes/fired.json` {cutscene file: play time when it fired}; fired iff the play time
+        now is at least that. ponytail: per cutscene, not per slot; another playthrough's save with more play time
+        counts as after.
     - **Menu:** a **Now:** line (chapter, location, area, stage, "(busy)"); **Make a trigger here** writes
       `remod_cutscenes/trigger.json` (Leon's spot, radius 2, chapter, stage). Core `use_trigger` (the app's **Use
-      trigger** on the Cutscene block) puts it into the cutscene file.
+      trigger** on the Cutscene block) puts it into the cutscene file. **Added 2026-10-09:** a **trigger.json:** line
+      (what it holds) and **Start a new trigger** (empties it; `use_trigger` then says it has no conditions); the
+      game's movie / cutscene playing and the last that ended, with **Start after it**; **Characters near Leon (talk
+      triggers)** (kind, distance, **Talk trigger**); **Story flags** (count; **Watch** lists flags as they change,
+      500 read per frame round-robin, with **Add**; **Find a flag** with on / off and **Must be on / off**). Each adds
+      to trigger.json (`trigger_add`); Make a trigger here still starts it afresh.
     - **Example 18:** `18_start_a_cutscene_by_itself`, a real spot (the cutscene probe's camera position), radius 3.
-    - **Checked:** tests (the checks, use_trigger new / existing / missing), `check-lua`, example 18 built.
+    - **Checked:** tests (the checks, use_trigger new / existing / missing / a talk trigger / empty), `check-lua`,
+      example 18 built. **Not run in game:** talk, flags, after, once per save (`spikes/trigger_test.md` part 3).
     - **Not used:** `OccupiedMediator.checkBusy()` (meaning unknown).
-    - **Not done:** persisting "once" per save, flags, "after the game's movie / event X", enemy-count triggers.
+    - **Not done:** enemy-count triggers, a gamepad button for talk triggers (keyboard keys only), the editor showing
+      or editing a trigger's parts (it's kept as JSON; Use trigger replaces it).
   - **Other characters in cutscenes (user's 4): character probe** (`spikes/character_probe.md`, `.lua`; installed by
     a Lua script block's Test in game).
     - **Run 1 (2026-10-08): the game crashed on F3, the lock.** The probe passed `nil` for `LockRequestOption`, a
@@ -1626,10 +1687,33 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
           Luis) and a bank number (9000); the file is requested, then a second later a DynamicMotionBank with it is
           appended to the character's dynamic banks (`add_motion_file`); the note says how many animations the bank
           has, and whether `setupMotionBank` was needed. A bank number already present is refused.
+        - **Run 1 (user, 2026-10-08): picking luis in the previewer crashed the game** (`c0000005` on a game worker
+          thread, RIP re4.exe+0x3fd0fbd; nothing logged by us; two Reset Scripts earlier that session). The previewer
+          built the puppet inside `re.on_draw_ui` and read its banks the same frame; a cutscene builds the same puppet
+          from `re.on_frame` and works. **Inferred, not proven:** changing the game's objects from the menu's drawing
+          code races the game's workers. Now the menu queues such work (`on_update`) and it runs in
+          `on_pre_application_entry("UpdateBehavior")` (the puppet, the motion file request, adding the bank), each
+          logged first; banks are read 0.5 s after the build. Run 2 says whether that was it.
+        - **Run 2 (user, 2026-10-08: "looks like its working?"), from the log:** no crash; Luis built in the update;
+          csa012's `cha300_00.motlist` as bank 9000: **14 animations**; Leon's `cha000_00.motlist` as 9001: **21**; both
+          **needed `setupMotionBank()`** (0 before it); adding 9001 again refused. **Seen (user):** most look like
+          the game's cutscene actions; bodies right (Luis's puppet skeleton takes them); some move only the arms
+          (inferred: upper-body motions the events layer over others); **they move the character (root motion) and
+          clip through walls** (puppets have no collision; inferred: positions relative to the event's origin); the
+          game's camera kept following Leon (outside a cutscene). **So event animations work: the route is proven.**
         - **Open (the test):** does it load and play; does the body look right on a puppet's skeleton; does an event
           animation move the character to the event's origin; the face (the head part's own motlist, not tried).
-        - **After it works:** cutscene files name the animation files to load (per actor and the player), loaded with
-          the actors (`preload`); the editor picks them; then step 2 (Blender) is only a new motlist at a new path.
+        - **In cutscene files (built 2026-10-08, not run in game):** `animation_files` [{`actor` ("player" or an
+          actor's name), `file` (a `.motlist`'s game path, no natives/STM, no suffix), `bank`}] (core
+          `CutsceneAnimationFile`; `check_cutscene`: the path's form, a known actor, one bank number per character).
+          The runtime requests each file when it loads cutscenes (in the game's update) and, when one plays, after its
+          actors, adds the bank to that character (`animation_file_on`; skipped if the character already has that bank
+          number: a reused puppet, Leon again). Motions then use the bank. The previewer remembers which file each bank
+          it added came from, so Use in a cutscene writes `file` into animation.json and the editor's **Add picked
+          animation** adds the animation file too. Editor: the cutscene panel's **Animation files** (who, bank, path,
+          x; Add animation file); renaming or removing an actor carries them. The files are the game's: nothing to
+          package. Not done: a picker for the game's event files, the face (head part), pinning a character in place
+          against root motion. Then step 2 (Blender) is only a new motlist at a new path.
       - **Brand-new animations made in Blender: survey (2026-10-08; user: RE4's cutscenes have actions that aren't
         gameplay animations). A future consideration (user, 2026-10-08: "lets leave that as a future
         consideration"): don't start it until asked.** Licences and activity from GitHub's API and READMEs. Nothing
@@ -1691,6 +1775,8 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
         - Core `remove_installed_script` moves the `.lua` and the folder to the Recycle Bin. `to_recycle_bin` is now
           shared with Delete file.
         - App: the Pipeline panel's **Scripts in the game (N)** under Game folder, read every 2 s, with Remove on each.
+          **In every layout since 2026-10-09** (user looked for it outside Use layout): Use layout's Pipeline panel,
+          Build layout's (after Game), the Cutscene layout's right-hand panel; open by default.
           The tooltip says to uninstall a mod manager's install there instead.
         - Checked: a test (sorting, modules folder, a subfolder's script not listed, remove, bad names). **Not checked
           by eye.**

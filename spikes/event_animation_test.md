@@ -16,6 +16,15 @@ plays its animations in remod's Animations previewer. No bank file is written an
 If 1 and 2 work, cutscenes can use any of the game's cutscene animations, and the same route should later take
 animations made in Blender (CLAUDE.md §10, "Brand-new animations made in Blender", step 1).
 
+**Status:**
+- **Run 1 (2026-10-08): picking luis crashed the game**, before any animation file. The crash was on one of the
+  game's worker threads, with nothing logged by remod. Luis was built from inside the menu's drawing code (a cutscene
+  builds him from its key and works). Now the menu only asks; the game's own update builds him (and loads animation
+  files), and his banks are read half a second later. The log gets a line ("bringing out luis") before each such step.
+- **Run 2 (2026-10-08): no crash.** Luis's csa012 file loaded as bank 9000 with 14 animations, Leon's as 9001 with
+  21; both needed the game's `setupMotionBank` first. **Works:** most look like the game's cutscene actions, bodies
+  right, some move only the arms; they move the character and can walk it through walls.
+
 **Time:** about 10 minutes. **You need:**
 - RE4R with REFramework;
 - remod with **Game folder** set;
@@ -33,7 +42,7 @@ It hooks no game methods.
 ## Run it
 
 3. REFramework's menu > Script Generated UI > **remod cutscenes** > **Animations**.
-4. **Who: luis.** Luis comes out 2 m in front of Leon.
+4. **Who: luis.** "Bringing luis out..." shows for a moment, then Luis stands 2 m in front of Leon.
    - **Animation file** already holds Luis's file from cutscene csa012:
      `_Chainsaw/Event/cs/csa012/csa012_s00/chara/cha300_00/cha300_00.motlist`. Leave **As bank** at 9000.
    - Click **Add this animation file**. About a second later, a line under it says what happened, e.g.

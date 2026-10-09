@@ -1,0 +1,34 @@
+{
+  "schema_version": 0,
+  "name": "Flag test: Assisted",
+  "length": 4.0,
+  "letterbox": 0.12,
+  "trigger": {
+    "flags": [
+      "DifficultyAssisted"
+    ],
+    "delay": 2.0,
+    "once": "session"
+  },
+  "subtitles": [
+    {
+      "t": 0.3,
+      "until": 3.6,
+      "text": "remod test: story flag DifficultyAssisted is on (this save's difficulty)"
+    }
+  ],
+  "fades": [
+    {
+      "t": 0.0,
+      "until": 0.4,
+      "from": 1.0,
+      "to": 0.0
+    },
+    {
+      "t": 3.6,
+      "until": 4.0,
+      "from": 0.0,
+      "to": 1.0
+    }
+  ]
+}

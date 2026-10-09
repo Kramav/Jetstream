@@ -50,6 +50,15 @@ struct CutsceneMotion {
     double frame = 0, blend = 10;
     bool operator==(const CutsceneMotion&) const = default;
 };
+// An animation file (.motlist) put on a character as a bank of the cutscene's own number when it plays: a game
+// cutscene's own animations (_Chainsaw/Event/cs/<id>/.../chara/<mesh>/<mesh>.motlist; spikes/event_animation_test.md),
+// later a new one. Its motions are then that bank's.
+struct CutsceneAnimationFile {
+    std::string actor = "player";  // or an actor's name
+    std::string file;              // game path, no natives/STM, no suffix
+    long long bank = 9000;
+    bool operator==(const CutsceneAnimationFile&) const = default;
+};
 struct CutsceneSubtitle {
     double t = 0, until = 2;
     std::string text;
@@ -81,6 +90,7 @@ struct Cutscene {
     std::vector<CutsceneCameraKey> camera;
     std::vector<CutsceneActor> actors;
     std::vector<CutsceneMotion> motions;
+    std::vector<CutsceneAnimationFile> animation_files;
     std::vector<CutsceneSubtitle> subtitles;
     std::vector<CutsceneFade> fades;
     std::vector<CutsceneCue> movies, sounds;
@@ -169,6 +179,7 @@ struct PickedAnimation {
     long long bank = 0, motion = 0;
     std::string name;
     double frame = 0;
+    std::string file;  // the animation file its bank was added from in the previewer; empty: the character's own bank
 };
 std::optional<PickedAnimation> read_picked_animation(const std::filesystem::path& game_dir);
 

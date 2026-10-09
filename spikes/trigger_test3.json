@@ -1,0 +1,121 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "trigger_test3/talk_merchant.json"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "trigger_test3/talk_ashley.json"
+      }
+    },
+    {
+      "id": 3,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "trigger_test3/difficulty_assisted.json"
+      }
+    },
+    {
+      "id": 4,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "trigger_test3/difficulty_standard.json"
+      }
+    },
+    {
+      "id": 5,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "trigger_test3/difficulty_hard.json"
+      }
+    },
+    {
+      "id": 6,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "trigger_test3/difficulty_professional.json"
+      }
+    },
+    {
+      "id": 7,
+      "type": "PackageMod",
+      "params": {
+        "name": "remod trigger test 3",
+        "out": "out",
+        "version": "1.0",
+        "replace": "true",
+        "description": "Talk triggers (merchant G, Ashley H) and story flag triggers (difficulty): spikes/trigger_test.md part 3"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "files"
+      ],
+      "to": [
+        7,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "files"
+      ],
+      "to": [
+        7,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "files"
+      ],
+      "to": [
+        7,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "files"
+      ],
+      "to": [
+        7,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "files"
+      ],
+      "to": [
+        7,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "files"
+      ],
+      "to": [
+        7,
+        "file"
+      ]
+    }
+  ]
+}

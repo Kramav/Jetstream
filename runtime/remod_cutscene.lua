@@ -205,6 +205,20 @@ local function enum_name(type_name, value)
     return names[value] or tostring(value)
 end
 
+-- An enum's values by name (its static fields, value__ left out).
+local enum_value_lists = {}
+local function enum_values(type_name)
+    local values = enum_value_lists[type_name]
+    if not values then
+        values = {}
+        for _, f in ipairs(sdk.find_type_definition(type_name):get_fields()) do
+            if f:is_static() then values[f:get_name()] = f:get_data(nil) end
+        end
+        enum_value_lists[type_name] = values
+    end
+    return values
+end
+
 -- What differs between games, found by remod's spikes/cutscene_probe.lua run in that game.
 local GAMES = {
     re4 = {
@@ -305,6 +319,74 @@ local GAMES = {
         busy = function()
             return instance("chainsaw.MovieMediator"):call("isPlaying") or instance("share.PauseManager"):call("isPaused()")
         end,
+        -- The characters about (partners, and NPCs such as the merchant): { kind, position }, the kind by the game's
+        -- name (chainsaw.CharacterKindID, e.g. ch3_a8z0) [dump: CharacterManager get_DollNpcContextList /
+        -- get_PartnerContextList; CharacterContext get_KindID, get_Position]. For talk triggers. [Not seen in game yet.]
+        characters = function()
+            local mgr = sdk.get_managed_singleton("chainsaw.CharacterManager")
+            local out = {}
+            for _, getter in ipairs({ "get_DollNpcContextList", "get_PartnerContextList" }) do
+                local list = mgr and mgr:call(getter)
+                for i = 0, (list and list:call("get_Count") or 0) - 1 do
+                    local ctx = list:call("get_Item", i)
+                    local pos = ctx and ctx:call("get_Position")
+                    if pos then
+                        table.insert(out, { kind = enum_name("chainsaw.CharacterKindID", ctx:call("get_KindID")), position = pos })
+                    end
+                end
+            end
+            return out
+        end,
+        -- Every story flag: { name, group (its group's name), g, index } [dump: chainsaw.ScenarioFlagManager _Group;
+        -- its Group get_Name / get_Variables / isOn(index); via.userdata.UserVariables getVariableCount / getVariable;
+        -- Variable get_Name]. [inferred: a flag's index in its group is its variable's index; not seen in game yet]
+        story_flags = function()
+            local mgr = instance("chainsaw.ScenarioFlagManager")
+            local groups = mgr and mgr:get_field("_Group")
+            local out = {}
+            for _, g in ipairs(groups and groups:get_elements() or {}) do
+                local vars = g:call("get_Variables")
+                local gname = tostring(g:call("get_Name"))
+                for i = 0, (vars and vars:call("getVariableCount") or 0) - 1 do
+                    local v = vars:call("getVariable", i)
+                    local name = v and v:call("get_Name")
+                    if name then table.insert(out, { name = tostring(name), group = gname, g = g, index = i }) end
+                end
+            end
+            return out
+        end,
+        flag_on = function(f) return f.g:call("isOn", f.index) end,
+        -- One of the flags the game's code names itself (chainsaw.ScenarioFlagDefine's static Flag {DataName, Group,
+        -- Index}, e.g. DifficultyHard, Ch1f0z0LuisArrivedDemoAfter), by ScenarioFlagManager checkFlag(group, index); nil
+        -- if it names none [dump; not seen in game yet].
+        named_flag_on = function(name)
+            local f = sdk.find_type_definition("chainsaw.ScenarioFlagDefine"):get_field(name)
+            if not f or not f:is_static() then return nil end
+            local flag = f:get_data(nil)
+            return instance("chainsaw.ScenarioFlagManager"):call("checkFlag(System.Int32, System.Int32)",
+                flag:get_field("Group"), flag:get_field("Index"))
+        end,
+        -- The save's play time (share.GameClock, counts while playing; a save loaded brings its own): for "once per save".
+        play_time = function() return instance("share.GameClock"):call("get_ActualPlayingTime") end,
+        -- The game's own movie or cutscene playing now: "movie" or "event", and its id's name (e.g. mva000, csa012), or
+        -- nil [dump: MovieMediator / TimelineEventMediator isPlaying and getWork(ID); MovieWork get_IsPlaying;
+        -- TimelineEventWork _EventPhase Playing]. Its id is looked for only while one plays. [Not seen in game yet.]
+        playing_now = function()
+            for _, k in ipairs({ { "movie", "chainsaw.MovieMediator", "chainsaw.MovieDefine.ID" },
+                                  { "event", "chainsaw.TimelineEventMediator", "chainsaw.TimelineEventDefine.ID" } }) do
+                local med = instance(k[2])
+                if med and med:call("isPlaying") then
+                    local phase = k[1] == "event" and enum("chainsaw.TimelineEventWork.EventPhase", "Playing")
+                    for name, id in pairs(enum_values(k[3])) do
+                        local w = med:call("getWork", id)
+                        if w and (phase and w:get_field("_EventPhase") == phase or not phase and w:call("get_IsPlaying")) then
+                            return k[1], name
+                        end
+                    end
+                end
+            end
+            return nil
+        end,
         movie_stop = function(m)
             local mm = instance("chainsaw.MovieMediator")
             if m.phase ~= "loading" and mm:call("isPlaying") then pcall(mm.call, mm, "requestSkip", m.id) end
@@ -403,6 +485,7 @@ end
 local PUPPETS_DIR = "remod_puppets"
 local puppet_defs = {}  -- name -> definition
 local preloaded = {}    -- name -> holders, or { error = text }
+local anim_holders = {}  -- an animation file's game path -> its resource holder (cutscenes' animation_files)
 local put_away = {}     -- name -> its root GameObject
 local STUCK = "remod_stuck_part"
 
@@ -609,6 +692,7 @@ local function preview_motion()
 end
 
 local function preview_put_away()
+    preview.building = false
     if preview.root then
         pcall(set_active, preview.root, false)
         put_away[preview.who] = preview.root
@@ -616,10 +700,26 @@ local function preview_put_away()
     preview.root, preview.banks, preview.bank, preview.motions, preview.picked = nil, nil, nil, nil, nil
 end
 
+-- Work that changes the game's objects (building a puppet, changing a Motion's banks) waits for the game's own update
+-- (UpdateBehavior, below) instead of running from the menu: building Luis from the menu crashed the game on one of
+-- its worker threads (user, 2026-10-08; nothing logged by us), while the same build from a cutscene's key works.
+local in_update = {}  -- { what, f }
+local function on_update(what, f, quiet) table.insert(in_update, { what = what, f = f, quiet = quiet }) end
+
 local function preview_choose(who)
-    preview_put_away()
-    preview.who = who
-    if who ~= "player" then preview.root = start_actor({ name = "preview", puppet = who, offset = { 0, 0, 2 } }) end
+    local old_root, old_who = preview.root, preview.who
+    preview.root, preview.banks, preview.bank, preview.motions, preview.picked = nil, nil, nil, nil, nil
+    preview.who, preview.problem, preview.building = who, nil, true
+    on_update("previewing " .. who, function()
+        if old_root then  -- the one shown before, put away for next time
+            pcall(set_active, old_root, false)
+            put_away[old_who] = old_root
+        end
+        preview.building = false
+        if who == "player" or preview.who ~= who then return end  -- Leon, or another picked meanwhile
+        preview.root = start_actor({ name = "preview", puppet = who, offset = { 0, 0, 2 } })
+        preview.since = now()
+    end)
 end
 
 -- The banks it has: {id, name}, by id.
@@ -704,6 +804,10 @@ local function add_motion_files()
             table.remove(loading_files, i)
             local ok, note = pcall(add_motion_file, f)
             table.insert(file_notes, f.path .. ": " .. (ok and note or ("failed: " .. tostring(note))))
+            if ok and f.motion:call("getMotionCount", f.bank) > 0 then
+                preview.files = preview.files or {}  -- for Use in a cutscene: the cutscene loads the file too
+                preview.files[f.who .. "#" .. f.bank] = f.path
+            end
             log.info("[remod_cutscene] " .. file_notes[#file_notes])
             preview.banks, preview.motions = nil, nil  -- list them again
         end
@@ -720,16 +824,39 @@ local function load_puppets()
         local name = rel:match("([^/\\]+)%.json$")
         if name and type(def) == "table" and type(def.parts) == "table" then puppet_defs[name] = def end
     end
-    for _, c in ipairs(cutscenes) do
-        for _, a in ipairs(type(c.data.actors) == "table" and c.data.actors or {}) do
-            local def = puppet_defs[a.puppet]
-            if def and not preloaded[a.puppet] then
-                local pok, h = pcall(preload, def)
-                preloaded[a.puppet] = pok and h or { error = tostring(h) }
-                if not pok then log.error("[remod_cutscene] puppet " .. tostring(a.puppet) .. ": " .. tostring(h)) end
+    on_update("requesting the cutscenes' files", function()  -- resources are made in the game's update (§9)
+        for _, c in ipairs(cutscenes) do
+            for _, a in ipairs(type(c.data.actors) == "table" and c.data.actors or {}) do
+                local def = puppet_defs[a.puppet]
+                if def and not preloaded[a.puppet] then
+                    local pok, h = pcall(preload, def)
+                    preloaded[a.puppet] = pok and h or { error = tostring(h) }
+                    if not pok then log.error("[remod_cutscene] puppet " .. tostring(a.puppet) .. ": " .. tostring(h)) end
+                end
+            end
+            for _, af in ipairs(type(c.data.animation_files) == "table" and c.data.animation_files or {}) do
+                if type(af.file) == "string" and not anim_holders[af.file] then
+                    local hok, h = pcall(holder, "via.motion.MotionListResource", af.file)
+                    if hok then anim_holders[af.file] = h
+                    else log.error("[remod_cutscene] animation file " .. af.file .. ": " .. tostring(h)) end
+                end
             end
         end
-    end
+    end)
+end
+
+-- A cutscene's animation file on its character, as its bank (once: a puppet reused, or Leon a second time, has it).
+-- ponytail: a bank number already on the character from elsewhere (the previewer, another file) is taken as this one.
+local function animation_file_on(af, actors)
+    local who = af.actor or "player"
+    local body = who == "player" and game.player() or (actors[who] and actors[who].root)
+    if not body then error("no " .. who .. " to put it on") end
+    local m = component(body, "via.motion.Motion")
+    if m:call("getMotionCount", af.bank) > 0 then return end
+    local h = anim_holders[af.file] or holder("via.motion.MotionListResource", af.file)
+    anim_holders[af.file] = h
+    local note = add_motion_file({ motion = m, holder = h, bank = af.bank })
+    if m:call("getMotionCount", af.bank) == 0 then error(note .. " (not loaded yet? play it again)") end
 end
 
 -- ---- Playing ----
@@ -790,6 +917,17 @@ local function play(data)
             end
         end
     end
+    for _, af in ipairs(data.animation_files or {}) do  -- before any motion uses their banks
+        try("animation file " .. tostring(af.file), animation_file_on, af, playing.actors)
+    end
+end
+
+-- Starting and stopping, as asked by a key, the menu or a trigger: in the game's update (§9 of remod's CLAUDE.md:
+-- game objects change only there), so a press toggles once the game gets to it.
+local function request_toggle(data, what)
+    on_update((what or "playing") .. " " .. tostring(data.name or data.movie_of), function()
+        if playing and playing.data == data then stop() else play(data) end
+    end)
 end
 
 -- The cutscene's time; it stands still while a movie plays.
@@ -883,6 +1021,19 @@ if game then
     end
     -- The player held before the game's behaviour update, every frame of a cutscene (reported once per play).
     re.on_pre_application_entry("UpdateBehavior", function()
+        if #in_update > 0 then
+            local work = in_update
+            in_update = {}
+            for _, w in ipairs(work) do
+                if not w.quiet then log.info("[remod_cutscene] " .. w.what) end  -- logged first, in case the game goes down
+                local ok, err = pcall(w.f)
+                if not ok then
+                    report(w.what, err)
+                    preview.problem = w.what .. ": " .. tostring(err)
+                end
+            end
+        end
+        if #loading_files > 0 then add_motion_files() end
         if not playing then
             if preview.who == "player" and preview.picked then pcall(game.hold_player) end  -- previewing on Leon
             return
@@ -916,11 +1067,14 @@ local function record_key()
 end
 
 -- ---- Triggers: a cutscene starts by itself (its file's "trigger") ----
--- Every condition it names must hold: near (Leon within radius metres of a spot), and the game's names for where he
--- is (chapter, location, area, stage, as the menu's Now line shows). It starts when they become true and have held
--- for `delay` seconds; not again until they've stopped holding; with `once` (the default), once per game session.
--- Never while a cutscene plays or the game is busy (its own movie, a pause). Checked 5 times a second.
-local trigger_state = {}  -- cutscene file -> {held, since, fired, done}
+-- Every condition it names must hold: near (Leon within radius metres of a spot); the game's names for where he is
+-- (chapter, location, area, stage, as the menu's Now line shows); talk (near a character of that kind: a prompt shows
+-- and its key starts it); flags (story flags on, or off with "!"); after (one of the game's movies or cutscenes ended
+-- in the last 10 s). It starts when they become true and have held for `delay` seconds (a talk trigger: when its key
+-- is pressed then); not again until they've stopped holding. `once`: true (the default) once per save, by the save's
+-- play time (loading a save from before it lets it play again); "session" once each time the game runs; false every
+-- time. Never while a cutscene plays or the game is busy (its own movie, a pause). Checked 5 times a second.
+local trigger_state = {}  -- cutscene file -> {held, since, fired, done, talk_ready}
 local next_check = 0
 
 local function player_position()
@@ -928,7 +1082,70 @@ local function player_position()
     return body and body:call("get_Transform"):call("get_Position")
 end
 
-local function holds(t, where, pos)
+-- Once per save: the play time each cutscene file last started at by its trigger, in remod_cutscenes\fired.json.
+-- ponytail: one record per cutscene, not per save slot; a save from another playthrough with more play time counts
+-- as after it.
+local fired_at = nil
+local function fired_before(c, t)
+    local s = trigger_state[c.file]
+    if t.once == false then return false end
+    if t.once == "session" then return s.fired end
+    fired_at = fired_at or (json.load_file(DIR .. "/fired.json") or {})
+    local at = fired_at[c.file]
+    if not at then return false end
+    local ok, pt = pcall(game.play_time)
+    return not ok or pt >= at  -- the play time unknown: taken as after it
+end
+
+local function fire(c)
+    local s = trigger_state[c.file]
+    s.fired, s.done, s.talk_ready = true, true, false
+    local ok, pt = pcall(game.play_time)
+    if ok then
+        fired_at = fired_at or (json.load_file(DIR .. "/fired.json") or {})
+        fired_at[c.file] = pt
+        pcall(json.dump_file, DIR .. "/fired.json", fired_at)
+    end
+    log.info("[remod_cutscene] " .. (c.data.name or c.file) .. " triggered")
+    if not (playing and playing.data == c.data) then request_toggle(c.data, "triggered") end
+end
+
+-- Story flags by name ("Name", or "Group/Name" when two groups share one), read once the game has them.
+local flags_by_name, flags_list, flags_read_at = nil, nil, -100
+local function read_flags()
+    if flags_list and #flags_list > 0 or now() - flags_read_at < 10 then return end
+    flags_read_at = now()
+    local ok, list = pcall(game.story_flags)
+    if not ok then return end
+    flags_list, flags_by_name = list, {}
+    for _, f in ipairs(list) do
+        flags_by_name[f.group .. "/" .. f.name] = f
+        if not flags_by_name[f.name] then flags_by_name[f.name] = f end
+    end
+end
+local function flag_is_on(name)  -- nil if there's no such flag (yet)
+    read_flags()
+    local f = flags_by_name and flags_by_name[name]
+    if not f then  -- one the game's code names itself, if it's that
+        local nok, on = pcall(game.named_flag_on, name)
+        if nok then return on end
+        return nil
+    end
+    local ok, on = pcall(game.flag_on, f)
+    if not ok then return nil end
+    return on
+end
+
+-- The game's own movie or cutscene: the one playing now, and the last of each kind that ended (for `after`).
+local game_now, game_ended = nil, {}  -- { kind, name }; kind -> { name, at }
+local function watch_game()
+    local ok, kind, name = pcall(game.playing_now)
+    if not ok then return end
+    if game_now and game_now.name ~= name then game_ended[game_now.kind] = { name = game_now.name, at = now() } end
+    game_now = kind and { kind = kind, name = name } or nil
+end
+
+local function holds(t, where, pos, chars)
     if t.near then
         if not pos then return false end
         local p = t.near.position
@@ -938,29 +1155,58 @@ local function holds(t, where, pos)
     for _, key in ipairs({ "chapter", "location", "area", "stage" }) do
         if t[key] and (not where or where[key] ~= t[key]) then return false end
     end
+    if type(t.after) == "table" then
+        local kind = t.after.movie and "movie" or "event"
+        local e = game_ended[kind]
+        if not e or e.name ~= (t.after.movie or t.after.event) or now() - e.at > 10 then return false end
+    end
+    for _, f in ipairs(type(t.flags) == "table" and t.flags or {}) do
+        local off = f:sub(1, 1) == "!"
+        local on = flag_is_on(off and f:sub(2) or f)
+        if on == nil or on == off then return false end
+    end
+    if type(t.talk) == "table" then
+        if not pos then return false end
+        local r, near = t.talk.radius or 2.5, false
+        for _, ch in ipairs(chars or {}) do
+            local dx, dy, dz = pos.x - ch.position.x, pos.y - ch.position.y, pos.z - ch.position.z
+            if ch.kind == t.talk.npc and dx * dx + dy * dy + dz * dz <= r * r then near = true end
+        end
+        if not near then return false end
+    end
     return true
 end
 
 local function check_triggers()
     if playing or not game.where or now() < next_check then return end
     next_check = now() + 0.2
+    watch_game()
     local busy_ok, busy = pcall(game.busy)
-    if busy_ok and busy then return end
+    if busy_ok and busy then
+        for _, s in pairs(trigger_state) do s.talk_ready = false end
+        return
+    end
     local where_ok, where = pcall(game.where)
     local pos = select(2, pcall(player_position))
+    local chars = nil
     for _, c in ipairs(cutscenes) do
         local t = c.data.trigger
         if type(t) == "table" then
             local s = trigger_state[c.file] or {}
             trigger_state[c.file] = s
-            local now_holds = holds(t, where_ok and where or nil, type(pos) == "userdata" and pos or nil)
+            if type(t.talk) == "table" and not chars then
+                local cok, list = pcall(game.characters)
+                chars = cok and list or {}
+            end
+            local now_holds = holds(t, where_ok and where or nil, type(pos) == "userdata" and pos or nil, chars)
             if now_holds and not s.held then s.since = now() end
             s.held = now_holds
             if not now_holds then s.done = false end
-            if now_holds and not s.done and now() - s.since >= (t.delay or 0) and not (t.once ~= false and s.fired) then
-                s.fired, s.done = true, true
-                log.info("[remod_cutscene] " .. (c.data.name or c.file) .. " triggered")
-                play(c.data)
+            local ready = now_holds and not s.done and now() - s.since >= (t.delay or 0) and not fired_before(c, t)
+            if type(t.talk) == "table" then
+                s.talk_ready = ready  -- its key starts it (each frame, below)
+            elseif ready then
+                fire(c)
                 return
             end
         end
@@ -968,13 +1214,58 @@ local function check_triggers()
 end
 
 -- "Make a trigger here": Leon's spot (2 m around him) and the game's names for where he is, into
--- remod_cutscenes\trigger.json; remod's Use trigger puts it into a cutscene file.
+-- remod_cutscenes\trigger.json; remod's Use trigger puts it into a cutscene file. The menu's other buttons add to it.
 local function make_trigger()
     local pos = player_position()
     if not pos then error("no player (load a save first)") end
     local where = game.where()
     json.dump_file(DIR .. "/trigger.json", { near = { position = { pos.x, pos.y, pos.z }, radius = 2.0 },
                                              chapter = where.chapter, stage = where.stage })
+end
+
+-- Adds a condition to trigger.json (made if there's none yet): a story flag, a talk, an after.
+local trigger_shown = {}  -- the menu's view of trigger.json: { at, t }
+local function trigger_add(key, value)
+    trigger_shown.at = nil  -- show it again at once
+    local t = json.load_file(DIR .. "/trigger.json")
+    if type(t) ~= "table" then t = {} end
+    if key == "flags" then
+        t.flags = type(t.flags) == "table" and t.flags or {}
+        table.insert(t.flags, value)
+    else
+        t[key] = value
+    end
+    json.dump_file(DIR .. "/trigger.json", t)
+end
+
+-- Story flags as they change while you play, for finding the one a moment sets (the menu's Story flags > Watch):
+-- each frame a slice of them is read, so a whole pass takes a moment.
+local flag_watch = { on = false, at = 1, last = {}, changes = {} }  -- last: flag -> on; changes: { name, group, on, at }
+local function watch_flags()
+    read_flags()
+    if not flags_list or #flags_list == 0 then return end
+    for _ = 1, math.min(500, #flags_list) do
+        local f = flags_list[flag_watch.at]
+        flag_watch.at = flag_watch.at % #flags_list + 1
+        local ok, on = pcall(game.flag_on, f)
+        if ok then
+            local before = flag_watch.last[f]
+            if before ~= nil and before ~= on then
+                table.insert(flag_watch.changes, 1, { name = f.name, group = f.group, on = on, at = now() })
+                if #flag_watch.changes > 20 then table.remove(flag_watch.changes) end
+            end
+            flag_watch.last[f] = on
+        end
+    end
+end
+
+-- A talk trigger's prompt, near the bottom of the screen.
+local function draw_prompt(talk)
+    local size = imgui.get_display_size()
+    local text = "[" .. (talk.key or "G") .. "] " .. (talk.prompt or "Talk")
+    local x, y = size.x * 0.5 - #text * 4, size.y * 0.72
+    draw.filled_rect(x - 12, y - 6, #text * 8 + 24, 28, 0xA0000000)
+    draw.text(text, x, y, 0xFFFFFFFF)
 end
 
 -- ---- Each frame: keys, motions, letterbox, fades, subtitles ----
@@ -988,6 +1279,7 @@ end
 
 local KEY_CODES = { F1 = 0x70, F2 = 0x71, F3 = 0x72, F4 = 0x73, F5 = 0x74, F6 = 0x75, F7 = 0x76, F8 = 0x77,
                     F9 = 0x78, F11 = 0x7A, F12 = 0x7B }
+for i = 0, 25 do KEY_CODES[string.char(65 + i)] = 0x41 + i end  -- A-Z, for talk triggers
 
 local function draw_overlays(data, t)
     local size = imgui.get_display_size()
@@ -1018,11 +1310,22 @@ re.on_frame(function()
     for _, c in ipairs(cutscenes) do
         local key = c.data.start and KEY_CODES[c.data.start.key]
         if key and pressed(key) then
-            if playing and playing.data == c.data then stop() else play(c.data) end
+            request_toggle(c.data)
         end
     end
     check_triggers()
-    if #loading_files > 0 then add_motion_files() end
+    if flag_watch.on then watch_flags() end
+    if not playing then  -- talk triggers ready: their prompt, and their key starts them
+        for _, c in ipairs(cutscenes) do
+            local s = trigger_state[c.file]
+            local talk = s and s.talk_ready and c.data.trigger.talk
+            if talk then
+                draw_prompt(talk)
+                local key = KEY_CODES[talk.key or "G"]
+                if key and pressed(key) then fire(c) end
+            end
+        end
+    end
     for i = #watching, 1, -1 do  -- actors' (and the previewer's) parts not yet ready to draw
         local w = watching[i]
         local ok, ready = pcall(w.mesh.call, w.mesh, "get_ReadyToDraw")
@@ -1088,9 +1391,7 @@ re.on_draw_ui(function()
     for i, c in ipairs(cutscenes) do
         local name = c.data.name or c.file
         local this = playing and playing.data == c.data
-        if imgui.button((this and "Stop##" or "Play##") .. i) then
-            if this then stop() else play(c.data) end
-        end
+        if imgui.button((this and "Stop##" or "Play##") .. i) then request_toggle(c.data) end
         imgui.same_line()
         local s = trigger_state[c.file]
         imgui.text(name .. (c.data.start and c.data.start.key and ("  (" .. c.data.start.key .. ")") or "") ..
@@ -1102,7 +1403,7 @@ re.on_draw_ui(function()
     for i, name in ipairs(names) do  -- each alone, as a cutscene of just that movie
         local this = playing and playing.data.movie_of == name
         if imgui.button((this and "Stop##movie" or "Play##movie") .. i) then
-            if this then stop() else play({ name = name, movie_of = name, length = 0.01, movies = { { t = 0, id = name } } }) end
+            request_toggle(this and playing.data or { name = name, movie_of = name, length = 0.01, movies = { { t = 0, id = name } } })
         end
         imgui.same_line()
         imgui.text("New movie " .. name .. (registered[name] and (" (id " .. registered[name] .. ")") or ""))
@@ -1138,6 +1439,92 @@ re.on_draw_ui(function()
     end
     imgui.same_line()
     imgui.text("into " .. DIR .. "\\spot.json: an actor's position and rotation")
+    -- More conditions for the trigger: each button adds one to trigger.json (made if there's none yet).
+    if now() - (trigger_shown.at or -10) > 1 then  -- what trigger.json holds, read once a second
+        trigger_shown.at, trigger_shown.t = now(), json.load_file(DIR .. "/trigger.json")
+    end
+    local tf, parts = trigger_shown.t, {}
+    if type(tf) == "table" then
+        if tf.near then table.insert(parts, "near a spot") end
+        if type(tf.talk) == "table" then table.insert(parts, "talking to " .. tostring(tf.talk.npc)) end
+        if type(tf.flags) == "table" then table.insert(parts, table.concat(tf.flags, ", ")) end
+        if type(tf.after) == "table" then table.insert(parts, "after " .. tostring(tf.after.movie or tf.after.event)) end
+        for _, key in ipairs({ "chapter", "location", "area", "stage" }) do
+            if tf[key] then table.insert(parts, key .. " " .. tostring(tf[key])) end
+        end
+    end
+    imgui.text("trigger.json: " .. (#parts > 0 and table.concat(parts, "; ") or "nothing yet"))
+    imgui.same_line()
+    if imgui.button("Start a new trigger") then
+        json.dump_file(DIR .. "/trigger.json", {})
+        trigger_shown.at = nil
+    end
+    if game_now then imgui.text("The game's " .. game_now.kind .. " playing now: " .. game_now.name) end
+    for _, kind in ipairs({ "movie", "event" }) do
+        local e = game_ended[kind]
+        if e then
+            imgui.text(string.format("The game's last %s: %s, ended %.0f s ago", kind == "movie" and "movie" or "cutscene",
+                e.name, now() - e.at))
+            imgui.same_line()
+            if imgui.button("Start after it##" .. kind) then trigger_add("after", { [kind] = e.name }) end
+        end
+    end
+    if imgui.tree_node("Characters near Leon (talk triggers)") then
+        local cok, chars = pcall(game.characters)
+        local pos = select(2, pcall(player_position))
+        local near = {}
+        for _, ch in ipairs(cok and type(pos) == "userdata" and chars or {}) do
+            local dx, dy, dz = pos.x - ch.position.x, pos.y - ch.position.y, pos.z - ch.position.z
+            local d = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if d <= 15 then table.insert(near, { kind = ch.kind, d = d }) end
+        end
+        table.sort(near, function(a, b) return a.d < b.d end)
+        if #near == 0 then imgui.text(cok and "Nobody within 15 m." or ("Couldn't list them: " .. tostring(chars))) end
+        for i, ch in ipairs(near) do
+            if imgui.button("Talk trigger##talk" .. i) then
+                trigger_add("talk", { npc = ch.kind, key = "G", prompt = "Talk", radius = 2.5 })
+            end
+            imgui.same_line()
+            imgui.text(string.format("%s, %.1f m", ch.kind, ch.d))
+        end
+        imgui.text("Talk trigger: near that character, \"[G] Talk\" shows; G starts the cutscene (key, prompt and\n" ..
+                   "radius can be changed in the cutscene file).")
+        imgui.tree_pop()
+    end
+    if imgui.tree_node("Story flags") then
+        local diff = {}  -- flags the game's code names: a check that reading flags works at all
+        for _, d in ipairs({ "Assisted", "Standard", "Hard", "Professional" }) do
+            local dok, on = pcall(game.named_flag_on, "Difficulty" .. d)
+            table.insert(diff, d .. " " .. (dok and (on == true and "ON" or on == false and "off" or "?") or ("error: " .. tostring(on))))
+        end
+        imgui.text("Difficulty flags: " .. table.concat(diff, ", ") .. "  (one should be ON: this save's difficulty)")
+        local _, on = imgui.checkbox("Watch: list flags as they change while you play", flag_watch.on)
+        flag_watch.on = on
+        for i, ch in ipairs(flag_watch.changes) do
+            if imgui.button("Add##fw" .. i) then trigger_add("flags", (ch.on and "" or "!") .. ch.name) end
+            imgui.same_line()
+            imgui.text(string.format("%s %s  (%s, %.0f s ago)", ch.on and "on: " or "off:", ch.name, ch.group, now() - ch.at))
+        end
+        local _, find = imgui.input_text("Find a flag", flag_watch.find or "")
+        flag_watch.find = find or ""
+        read_flags()
+        if flag_watch.find ~= "" and flags_list then
+            local needle, shown = flag_watch.find:lower(), 0
+            for _, f in ipairs(flags_list) do
+                if shown < 20 and f.name:lower():find(needle, 1, true) then
+                    shown = shown + 1
+                    local fok, state = pcall(game.flag_on, f)
+                    if imgui.button("Must be on##ff" .. shown) then trigger_add("flags", f.name) end
+                    imgui.same_line()
+                    if imgui.button("Must be off##ff" .. shown) then trigger_add("flags", "!" .. f.name) end
+                    imgui.same_line()
+                    imgui.text(string.format("%s  (%s, now %s)", f.name, f.group, fok and (state and "on" or "off") or "?"))
+                end
+            end
+        end
+        imgui.text((flags_list and #flags_list or 0) .. " story flags. Each button adds to " .. DIR .. "\\trigger.json.")
+        imgui.tree_pop()
+    end
     local puppet_names = {}
     for name in pairs(puppet_defs) do
         local h = preloaded[name]
@@ -1160,6 +1547,11 @@ re.on_draw_ui(function()
             for i, w in ipairs(whos) do if w == preview.who then at = i end end
             local changed, picked = imgui.combo("Who", at, labels)
             if changed and whos[picked] ~= preview.who then preview_choose(whos[picked]) end
+            if preview.problem then imgui.text("Problem: " .. preview.problem) end
+            if preview.building or (preview.root and now() - (preview.since or 0) < 0.5) then
+                imgui.text("Bringing " .. (preview.who == "player" and "Leon" or preview.who) .. " out...")  -- its banks are read once the game has updated it
+                return
+            end
             if not preview_motion() then
                 imgui.text(preview.who == "player" and "No player yet (load a save)." or "Pick it again to bring it out.")
                 return
@@ -1173,15 +1565,20 @@ re.on_draw_ui(function()
             preview.file_bank = bank_text or "9000"
             if imgui.button("Add this animation file") then
                 local bank = math.tointeger(tonumber(preview.file_bank))
-                local path = preview.file[preview.who]
-                local hok, h = pcall(holder, "via.motion.MotionListResource", path)
+                local path, motion, who = preview.file[preview.who], preview_motion(), preview.who
                 if not bank or bank < 0 then
                     table.insert(file_notes, "As bank must be a whole number")
-                elseif not hok or not h then
-                    table.insert(file_notes, path .. ": " .. tostring(h or "no file named"))
                 else
-                    table.insert(loading_files, { motion = preview_motion(), holder = h, bank = bank, path = path, t0 = now() })
                     table.insert(file_notes, path .. ": requested, added in a second")
+                    on_update("requesting " .. path, function()
+                        local hok, h = pcall(holder, "via.motion.MotionListResource", path)
+                        if not hok or not h then
+                            table.insert(file_notes, path .. ": " .. tostring(h or "no file named"))
+                        else
+                            table.insert(loading_files, { motion = motion, holder = h, bank = bank, path = path, t0 = now(),
+                                                          who = who })
+                        end
+                    end)
                 end
             end
             imgui.same_line()
@@ -1209,7 +1606,7 @@ re.on_draw_ui(function()
                 if needle == "" or mo.name:lower():find(needle, 1, true) or tostring(mo.id) == needle then
                     shown = shown + 1
                     if shown <= 40 and imgui.button(string.format("%d  %s  (%.0f frames)##m%d", mo.id, mo.name, mo.frames, mo.id)) then
-                        preview_play(mo)
+                        on_update("previewing " .. mo.name, function() preview_play(mo) end)
                     end
                 end
             end
@@ -1222,20 +1619,27 @@ re.on_draw_ui(function()
                 local frame = layer:call("get_Frame")
                 local fchanged, f = imgui.slider_float("Frame", frame, 0, math.max(layer:call("get_EndFrame"), 1))
                 if fchanged then
-                    layer:call("set_Speed", 0.0)
-                    layer:call("set_Frame", f)
+                    on_update("frame", function()  -- quiet: not logged every frame of a drag
+                        layer:call("set_Speed", 0.0)
+                        layer:call("set_Frame", f)
+                    end, true)
                 end
                 local paused = layer:call("get_Speed") == 0
-                if imgui.button(paused and "Play" or "Pause") then layer:call("set_Speed", paused and 1.0 or 0.0) end
+                if imgui.button(paused and "Play" or "Pause") then
+                    on_update(paused and "play" or "pause", function() layer:call("set_Speed", paused and 1.0 or 0.0) end)
+                end
                 imgui.same_line()
                 if imgui.button("Use in a cutscene") then
                     json.dump_file(DIR .. "/animation.json", { actor = preview.who, bank = p.bank, motion = p.motion,
-                                                              name = p.name, frame = math.floor(frame) })
+                                                              name = p.name, frame = math.floor(frame),
+                                                              file = (preview.files or {})[preview.who .. "#" .. p.bank] })
                 end
                 imgui.same_line()
                 imgui.text("into " .. DIR .. "\\animation.json (remod's cutscene editor: Add picked animation)")
             end
-            if imgui.button(preview.who == "player" and "Stop previewing" or "Put it away") then preview_put_away() end
+            if imgui.button(preview.who == "player" and "Stop previewing" or "Put it away") then
+                on_update("putting the preview away", preview_put_away)
+            end
         end)
         if not ok then imgui.text("Problem: " .. tostring(err)) end
         imgui.tree_pop()
