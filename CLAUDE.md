@@ -252,8 +252,9 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   step type should get a `preview` if its output is predictable.
 - **App modes:** Build layout (structure editing: add/insert/duplicate/delete/link, via core helpers
   `choices_for_pin`, `add_connected`, `choices_for_link`, `insert_node`, `duplicate_node`, `disconnect_node`)
-  and Use layout (structure and block positions locked; fill in, run, edit). The switch sits centred above the
-  graph. The mode is UI state, remembered in settings.
+  and Use layout (structure and block positions locked; fill in, run, edit). The switch (all three) sits centred in a
+  bar across the top of the window, in the same place in every layout. The mode is UI state, remembered in settings. A third, the **Cutscene layout** (2026-10-08), edits the open
+  cutscene file (§10 M3, "Cutscene editor"); not remembered.
 - **Links are routed by core** (`core/route.*`, `route_links`): right angles with rounded corners, around blocks,
   leaving outputs rightwards and entering inputs from the left; links avoid sharing a line, running right beside one
   (closer than 0.6 gap) and turning on each other. (route_links can still make links of one "net" share a trunk that
@@ -659,10 +660,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
-  (`edits/`, `mods/`) beside them. Eighteen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  (`edits/`, `mods/`) beside them. Nineteen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
   edit with streaming, conditions filter, channels, if / else, backup, movie test card, movie edited by hand
   (2026-10-06), a game sound replaced, a game movie played from a cutscene, a new movie added, a new sound added
-  (2026-10-07), a cutscene that starts by itself (2026-10-08). **All eighteen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
+  (2026-10-07), a cutscene that starts by itself, a new character in a cutscene (2026-10-08). **All nineteen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
   example 13's edit stood in by the movie itself); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
@@ -971,8 +972,11 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
   docs/re4r_movies.md; the New movie block and example 16 built, not yet seen in game); then **triggers** (built 2026-10-08,
   not run: M3 route 3 "Triggers")
   (cutscenes starting by themselves; M5's first piece; survey with §9's "finding a game's switch" method); **other
-  characters in cutscenes** matter a lot (user). Later: Write with Claude for cutscene files, an example graph,
-  sound; M4. **In game (user, 2026-10-07): the finished cutscene stops Leon and the controls come back after.** The
+  characters in cutscenes** matter a lot (user). **Now (user, 2026-10-08): the game's cutscene animations on
+  characters** (the event animation test, M3 "Event animations" below); **then, in this order: a better-looking
+  Cutscene layout** (user, 2026-10-08: "looks bad but its good enough for now"; ask what's bad first), **then more
+  triggers** (story flags, "once" kept per save, after the game's movie or event X). Later: Write with Claude for
+  cutscene files, an example graph, sound; M4. **In game (user, 2026-10-07): the finished cutscene stops Leon and the controls come back after.** The
   user found "note an animation's numbers from the menu" confusing: not done yet.
   Route 3 so far (M3 "Route 3" below): format, runtime, probe and the Cutscene block built (2026-10-07); the
   cutscene probe ran the same day; the test cutscene (`spikes/cutscene_test.json`) then played in game with the
@@ -1544,8 +1548,141 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
           banks, layers, and the movie / sound objects (catalog entries, prefabs, trigger infos, bank holders).
         - Never destroying stays.
       - **Second try (user, 2026-10-08): "working".** The actor test played on F11 with no problems logged.
-        **Actors in cutscenes work in game.** Not confirmed separately: each actor's side and facing, the partner
-        hidden and shown again, and a second play. The guide's order is F8, F11, F8; then F8 twice;
+        **Actors in cutscenes work in game.** A second F11 played cleanly (user).
+      - **Sides were swapped (user, 2026-10-08):** with right = (fz, -fx), Luis at -0.8 stood on Leon's right. Now
+        right = (-fz, fx). Not seen again yet.
+    - **Built 2026-10-08 (user: "make all of the above, and an animation previewer"):**
+      - **Animation previewer** (runtime menu > remod cutscenes > Animations).
+        - **Who:** Leon, or any puppet definition, brought out 2 m in front of him by `start_actor`.
+        - **Banks and animations:** its active banks (`Motion.getActiveMotionBank(i)`: `MotionBank.get_BankID`, its
+          `get_MotionList` path's motlist name). A bank's animations: `getMotionCount(bank)`, then
+          `getMotionInfoByIndex(UInt32, UInt32, MotionInfo)` into a `via.motion.MotionInfo` (`get_MotionID`,
+          `get_MotionName`, `get_MotionEndFrame`). Filter by name or id; 40 shown.
+        - **Playback:** a click plays it on layer 0 looping (`set_WrapMode` Loop, `set_Speed`), with a frame slider
+          (`set_Frame`) and Pause.
+        - **Use in a cutscene:** writes `remod_cutscenes/animation.json` {actor, bank, motion, name, frame}.
+        - Leon is held (`hold_player`) while he previews one. A preview puppet is put away when a cutscene plays.
+        - Empty bank lists aren't cached (a new puppet's banks load a moment later).
+        - Not seen in game: whether `MotionInfo` is filled this way, whether a puppet's banks list.
+      - **Cutscene editor, now the Cutscene layout** (2026-10-08; user: the first version, a floating window of
+        tables, was "not conducive to programming cutscenes", and "I have no idea where cutscenes are stored in the
+        browser"). The user chose a third layout beside Use / Build, a timeline you drag on, a playhead preview,
+        camera keys on it, the tables kept, and a Cutscenes place in the Browser with cutscene files clickable
+        anywhere and New cutscene.
+        - **Core:**
+          - `Cutscene` (`read_cutscene` / `cutscene_text` / `write_cutscene`, .bak): the editable fields, including the
+            camera keys (`CutsceneCameraKey`: t, position, rotation, fov 0 = unset, ease "" = smooth). The trigger and
+            unknown fields are kept as JSON (`kept`). An entry's unknown fields are dropped.
+          - The timeline model: `cutscene_lanes` (camera, fades, subtitles, Leon, each actor, movies, sounds),
+            `CutsceneItemRef`, `set_item_time` (clamped to 0..length, spans at least 0.05 s, camera keys re-sorted with
+            the ref following), `add_item` (none for camera: recorded) and `remove_item`.
+          - `cutscene_frame(c, t)`: black (fades layered as the runtime draws them), subtitle, camera keys around t and
+            progress after the ease (camera_at's rule), each character's latest motion.
+          - `apply_recording` / `apply_trigger` (in memory; `use_recording` / `use_trigger` still write the file for the
+            block), `new_cutscene`, `is_cutscene_file` (.json under 1 MB, schema_version + length, no nodes).
+            `list_folder` gives such files `FileKind::Cutscene`.
+          - `History` is now `Snapshots<T>` (`History = Snapshots<Graph>`): the cutscene has its own undo.
+          - Also `read_spot`, `read_picked_animation`, `puppet_names` (remod's and the game's).
+        - **App** (`app/cutscene_view.*`; `main.cpp` holds `State::cutscene`, `cutscene_mode`):
+          - the layout: Browser left, "Cutscene" middle, "Cutscene item" right; the graph's windows aren't drawn;
+          - the layout switch stays in the app's top bar (`draw_layout_switch`, a main menu bar, centred on the window),
+            the same in every layout (user, 2026-10-08: a "Back to graph" in its place was "not how the layouts work");
+            with nothing open it starts a new cutscene with no file (`untitled_cutscene`; user: "why do i need to open a
+            cutscene first"): Save, Test in game, Add to graph and Save and close ask where first (`SaveAs`, then the
+            action asked for, `after_save`); untouched it has nothing to save;
+          - the top bar: Save, Reload, Undo / Redo, Test in game (saves first; refused on the game's
+            copy), Remove from game, Add to graph (a Cutscene block linked into the one Package, as a sound drop),
+            Close;
+          - the preview (bars, fade, subtitle at the playhead, as `draw_overlays`), the stage (top-down, offsets
+            dragged, 0.1 m snap), Play / Space, a line saying what the camera and each character do then;
+          - the timeline (select, drag, stretch, 0.05 s snap, Shift free; right-click to add or remove; Delete; the
+            ruler moves the playhead);
+          - the inspector (an item, an actor (renaming carries its motions; removing takes them), or the cutscene);
+          - "Every item" tables;
+          - Ctrl+Z / Y / S go to the cutscene in that layout; closing remod with it unsaved asks first.
+        - **Browser:** a "Cutscenes" place above Pinned: This graph's (its Cutscene blocks' files), In the game
+          (`remod_cutscenes`, read every 2 s: copies, then what was written down, with its age; recording / trigger
+          clicked go into the open cutscene), Show the folder, New cutscene (a save dialog, a starter file). Cutscene
+          files anywhere show "(cutscene)" and open on click.
+        - **Checked:** tests (camera keys round trip; lanes, moving, stretching, clamping, adding, removing; the frame;
+          recording / trigger in memory; `is_cutscene_file` and `list_folder`), and **`cutscene_view_smoke`**: the
+          layout drawn headless (its own ImGui context, no window) for 2400 frames of seeded random clicks, drags,
+          right-clicks and keys, half aimed at the timeline: no ImGui assert, 33 edits and 22 selections, each round
+          written and read back the same.
+        - **Seen (user, 2026-10-08): "this looks bad but its good enough for now". TODO later: improve the cutscene
+          UI's look** (what's bad wasn't said yet: ask before redesigning).
+      - **Event animations: the game's cutscene animations on our characters (2026-10-08; user chose it; RE4's
+        cutscene actions aren't gameplay animations). Built in the runtime, not run in game:
+        `spikes/event_animation_test.md`.**
+        - **Where they are [game data]:** `_chainsaw/event/cs/<id>/<id>_s00/chara/<mesh>/<mesh>.motlist` (1,543;
+          version 663), one folder per character by mesh name (csa012: `cha000_00` Leon, `cha300_00` Luis; `cha300_10`
+          beside it is his head's, inferred: the face). Only 10 event `.motbank`s exist (`event/resource/motion/<id>/
+          *_autowalk`): the events' timelines name motlists directly.
+        - **No bank file needed [dump]:** `via.motion.DynamicMotionBank` has `set_MotionList(MotionListResourceHolder)`
+          beside `set_MotionBank`, and its base `DynamicMotionBankBase` has `set_OverwriteBankID` / `set_BankID`
+          (also Priority, Order, BankType). So a motlist goes on a character's `Motion` as a dynamic bank of our own
+          number. Also there: `Motion.setupMotionBank()`, `findMotionBank(bankId)`.
+        - **The previewer's Add this animation file** (Animations, any Who): a path (default csa012's for Leon and
+          Luis) and a bank number (9000); the file is requested, then a second later a DynamicMotionBank with it is
+          appended to the character's dynamic banks (`add_motion_file`); the note says how many animations the bank
+          has, and whether `setupMotionBank` was needed. A bank number already present is refused.
+        - **Open (the test):** does it load and play; does the body look right on a puppet's skeleton; does an event
+          animation move the character to the event's origin; the face (the head part's own motlist, not tried).
+        - **After it works:** cutscene files name the animation files to load (per actor and the player), loaded with
+          the actors (`preload`); the editor picks them; then step 2 (Blender) is only a new motlist at a new path.
+      - **Brand-new animations made in Blender: survey (2026-10-08; user: RE4's cutscenes have actions that aren't
+        gameplay animations). A future consideration (user, 2026-10-08: "lets leave that as a future
+        consideration"): don't start it until asked.** Licences and activity from GitHub's API and READMEs. Nothing
+        tried yet. The plan when it's picked up, a spike in three steps:
+        1. A puppet plays a game cutscene's motlist through a bank we name. **Started 2026-10-08 (user chose it):
+           "Event animations" below; no `.motbank` needed if it works.**
+        2. A copied motlist at a new path, through a `.motbank` we write (layout from REE-Lib, MIT).
+        3. A real custom one: Blender → .glb → Content Editor → motlist.
+
+        Then a **New animation** block (an animation file and a name, giving the bank and motion numbers).
+        | Candidate | Covers | Gap | Licence | Maintained |
+        |---|---|---|---|---|
+        | REE Content Editor (kagenocookie) | `.motlist` read / write, animation preview, **GLTF import / export** (Blender: .glb, 60 fps), mot copy / paste / retargeting; `.motbank` read / write; RE4 listed, not marked partial | Retargeting "incomplete and pretty limited"; needs the rigged mesh open; a GUI | MIT | v0.7.22, 2026-09 |
+        | RE Mesh Editor (NSACloud) | The character in Blender: `.mesh`, `.mdf2`, `.fbxskel` import / export, RE4 presets | No animation files | GPL-3.0 | 2026-04 |
+        | Motlist Tool (alphaZomega) | Injects an animation into a motlist (RE4R from v0.85), written as `.NEW.motlist` | **3ds Max** + RevilMax; replaces a motion rather than adding one | None | 2024-06 |
+        | fmt_RE_MESH (Noesis) | Views a mesh with a motlist's animations | Viewing only | None | 2024-09 |
+        | MHRS-blenderImporter | Imports motlists into Blender | Import only; made for MH Rise | ? | ? |
+        | RE-Engine-Lib (kagenocookie) | The motlist / motbank format in code (what Content Editor uses) | .NET library | MIT | 2026-10 |
+        **Recommendation: build on Content Editor + RE Mesh Editor; the user's tools, never bundled.** The flow:
+        1. RE Mesh Editor imports the character with its skeleton into Blender;
+        2. the user animates;
+        3. export .glb;
+        4. Content Editor imports it into a motlist, saved at a new path.
+
+        remod's part:
+        - a new `.motbank` naming that motlist under a bank id of our own;
+        - the puppet definition's `dynamic_banks` adding it;
+        - packaging, as New character does;
+        - the cutscene's motions then use that bank and motion.
+
+        Nothing of the game's is replaced (Motlist Tool's way replaces a motion). **Open (a spike):**
+        - does a puppet (and Leon) play a motlist from a new path through a new motbank;
+        - does Content Editor's RE4 motlist export play in game;
+        - bone names and facial animation, root motion.
+
+        The cutscenes' own animations (`_chainsaw/event/cs/<id>/*.motlist`, the "impossible" actions) would load the
+        same way, so one spike answers both. AI's place: none for the motion itself yet (text-to-motion onto RE's
+        skeleton would go through the same retargeting); later, at most, driving the steps around it.
+      - **New character block** (`NewCharacter`; core `make_new_character`, `colourize` in image).
+        - **In:** a definition (remod's ashley / luis by name, or a .json), a name (as long as the part's character
+          folder), a part (body), Leave as they are (patterns, `*hand*`), and colourize hue / strength, then
+          brightness / contrast.
+        - **What it does:** copies the part's mesh, and its material with the colour textures (`_alb`) under that
+          folder repointed in place. Those textures and their streaming copies are recoloured (decode_tex,
+          colourize, the converter's save_tex over the original). It writes the definition
+          (`reframework/data/remod_puppets/<name>.json`).
+        - The definition's material is used if extracted, else the mesh's own (`cha103_00c.mdf2` isn't extracted).
+        - Cached in the run cache (`character_<hash>/files.txt`).
+        - Checked: a test on the real files (6 textures + 6 streaming, the hands left, sizes and formats kept, the
+          mdf2 patched in place, wrong name length and part refused; 24 s), and example 19 from the CLI. Its texture
+          was looked at as an image: purple.
+      - **Example 19** (`19_a_new_character_in_a_cutscene`, F6): New character rmc002 (purple) and Luis as actors,
+        hiding the partner. All 229 tests pass with REMOD_GAME. The guide's order is F8, F11, F8; then F8 twice;
           then reset and F8. Not found yet.
       - **Scripts in the game (built 2026-10-08; user: scripts left installed by accident, "we should have the
         ability to see all currently inserted scripts in remod").**

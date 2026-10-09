@@ -3,6 +3,7 @@
 // Win32 + DX11 setup follows imgui/examples/example_win32_directx11 (v1.92.9-docking).
 #define IMGUI_DEFINE_MATH_OPERATORS  // required by the node editor's internal header; before any imgui.h
 #include "browser.hpp"
+#include "cutscene_view.hpp"
 #include "custom.hpp"
 #include "cutscene.hpp"
 #include "game_code.hpp"
@@ -480,6 +481,11 @@ struct State {
     // Test in game, and the script's errors read from it since (shown under the block; not saved).
     std::map<int, std::uintmax_t> log_from;
     std::map<int, std::string> game_errors;
+    // The Cutscene layout (app/cutscene_view): the cutscene open in it, whether it's shown (else Use or Build), and a
+    // cutscene file to add to the graph as a Cutscene block (its Add to graph), handed on to the canvas.
+    std::optional<CutsceneEdit> cutscene;
+    bool cutscene_mode = false;
+    std::filesystem::path add_cutscene;
     // The Pipeline panel's "Scripts in the game" list, read again every 2 s while it's open.
     std::vector<remod::InstalledScript> game_scripts;
     double game_scripts_read = -10;
@@ -2020,48 +2026,65 @@ void draw_route(ImDrawList* draw, const std::vector<remod::Pt>& path, float radi
            -stroke.speed * u * float(ImGui::GetTime()));
 }
 
-// Two modes, switched above the graph: Use a finished layout (fill in, run, edit images) or Build one
-// (add, link, arrange blocks). Two buttons centred, the active one highlighted.
-void draw_mode_switch(State& s) {
-    struct Mode { const char* label; bool build; const char* tip; };
+// The three layouts, switched in a bar across the top of the window, centred, in the same place whatever the layout
+// (user, 2026-10-08: the Cutscene layout had replaced them with "Back to graph"): Use a finished layout (fill in, run,
+// edit images), Build one (add, link, arrange blocks), or the open cutscene. The active one highlighted.
+void draw_layout_switch(State& s) {
+    if (!ImGui::BeginMainMenuBar()) return;
+    struct Mode { const char* label; int mode; const char* tip; };  // mode: 0 Use, 1 Build, 2 Cutscene
     static constexpr Mode modes[]{
-        {"Use layout", false, "Fill in the fields, Run, edit the images. The blocks and links stay as they are."},
-        {"Build layout", true, "Add, remove, link and arrange blocks to make or change a layout."}};
+        {"Use layout", 0, "Fill in the fields, Run, edit the images. The blocks and links stay as they are."},
+        {"Build layout", 1, "Add, remove, link and arrange blocks to make or change a layout."},
+        {"Cutscene layout", 2, nullptr}};
     const ImGuiStyle& style = ImGui::GetStyle();
-    float width = style.ItemSpacing.x;
-    for (const auto& m : modes) width += ImGui::CalcTextSize(m.label).x + style.FramePadding.x * 2;
-    const ImVec2 line_start = ImGui::GetCursorPos();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImMax(0.0f, (ImGui::GetContentRegionAvail().x - width) * 0.5f));
+    float width = -style.ItemSpacing.x;
+    for (const auto& m : modes) width += ImGui::CalcTextSize(m.label).x + style.FramePadding.x * 2 + style.ItemSpacing.x;
+    ImGui::SetCursorPosX(ImMax(0.0f, (ImGui::GetMainViewport()->Size.x - width) * 0.5f));
+    const int now = s.cutscene_mode ? 2 : int(s.build_mode);
     for (const auto& m : modes) {
-        const bool active = s.build_mode == m.build;
+        const bool active = now == m.mode;
         if (active) ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_ButtonActive]);
         if (ImGui::Button(m.label) && !active) {
-            s.build_mode = m.build;
-            remember_paths(s);
+            if (m.mode == 2) {
+                if (!s.cutscene) {
+                    const std::string& g = s.game_dir;
+                    s.cutscene = untitled_cutscene(g.empty() ? std::filesystem::path() : std::filesystem::path(unquote(g)));
+                }
+                s.cutscene_mode = true;
+            } else {
+                s.cutscene_mode = false;
+                s.build_mode = m.mode == 1;
+                remember_paths(s);
+            }
         }
         if (active) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.tip);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", m.tip ? m.tip
+                                    : "Make a cutscene on a timeline: camera, fades, subtitles, characters and their "
+                                      "animations. The cutscene you opened last, else a new one; open others from the "
+                                      "Browser's Cutscenes. The graph stays as it was.");
         ImGui::SameLine();
     }
+    ImGui::EndMainMenuBar();
+}
+
+// The line above the graph.
+void draw_graph_bar(State& s) {
+    const ImGuiStyle& style = ImGui::GetStyle();
     // At the left end: reopen the Pipeline panel if it was closed (Use layout; Run is there), then links with no
     // clean route, drawn as numbered ends (portals). Tidy up usually gives them one.
-    const ImVec2 after_switch = ImGui::GetCursorPos();
-    ImVec2 left = line_start;
     if (!s.build_mode && !s.show_pipeline) {
-        ImGui::SetCursorPos(left);
         if (ImGui::Button("Pipeline")) s.show_pipeline = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the Pipeline panel again (Run, paths, log).");
-        left.x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + style.ItemSpacing.x;
-        ImGui::SetCursorPos(after_switch);
+        ImGui::SameLine();
     }
     if (const auto portals = std::ranges::count(s.routes.portals, 1); portals > 0) {
-        const ImVec2 after = ImGui::GetCursorPos();
-        ImGui::SetCursorPos(ImVec2(left.x, line_start.y + style.FramePadding.y));
+        ImGui::AlignTextToFramePadding();
         ImGui::TextColored(kAmber, "%d link%s without a clean route", int(portals), portals == 1 ? "" : "s");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Shown as numbered ends instead of a line: the blocks are too close or in the way.\n%s",
                               s.build_mode ? "Tidy up (right) or move the blocks apart." : "Switch to Build layout to tidy up.");
-        ImGui::SetCursorPos(after);
+        ImGui::SameLine();
     }
     // At the right end of the same line: the zoom (Far / Near), Tidy up (Build layout) and the blocks' description
     // texts, which take a lot of room once known.
@@ -2569,6 +2592,147 @@ void draw_block_view(State& s) {
     block_picture(s, n->id, s.viewer_view);
 }
 
+// Opens a cutscene in the Cutscene layout (a Cutscene block's Edit cutscene, the Browser). One at a time: another one
+// with unsaved changes is shown instead, to save or close first.
+void open_cutscene_layout(State& s, const std::filesystem::path& file) {
+    if (s.cutscene && cutscene_unsaved(*s.cutscene) && s.cutscene->file != file) {
+        s.cutscene_mode = true;
+        s.status = "Save or close " + (s.cutscene->file.empty() ? std::string("the new cutscene")
+                                                                 : s.cutscene->file.filename().string()) +
+                   " first (it has unsaved changes).";
+        return;
+    }
+    if (s.cutscene && s.cutscene->file == file) {
+        s.cutscene_mode = true;
+        return;
+    }
+    const std::filesystem::path game = s.game_dir.empty() ? std::filesystem::path() : std::filesystem::path(unquote(s.game_dir));
+    if (auto opened = open_cutscene(file, game, s.status)) {
+        s.cutscene = std::move(opened);
+        s.cutscene_mode = true;
+    }
+}
+
+bool same_file(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code ec;
+    if (std::filesystem::equivalent(a, b, ec)) return true;
+    const auto lower = [](const std::filesystem::path& p) {  // not there yet: by name, ignoring case
+        std::string t = std::filesystem::absolute(p).lexically_normal().string();
+        std::ranges::transform(t, t.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+        return t;
+    };
+    return lower(a) == lower(b);
+}
+
+// The cutscene files of the graph's Cutscene blocks, for the Browser's Cutscenes.
+std::vector<std::filesystem::path> graph_cutscenes(const State& s) {
+    std::vector<std::filesystem::path> files;
+    for (const auto& n : s.graph.nodes)
+        if (n.type == "Cutscene") {
+            try {
+                if (auto file = path_field(s, n.id, "cutscene"); !file.empty()) files.push_back(std::move(file));
+            } catch (const std::exception&) {  // {game} not set: left out
+            }
+        }
+    return files;
+}
+
+// What the Browser's Cutscenes asked for: open one, make a new one, or use what the game wrote down in the open one.
+void cutscene_request(State& s, const Browser::CutsceneRequest& r, const std::filesystem::path& game) {
+    using What = Browser::CutsceneRequest::What;
+    switch (r.what) {
+    case What::None: break;
+    case What::Open: open_cutscene_layout(s, r.file); break;
+    case What::New: {
+        std::string value;
+        const std::string start = std::filesystem::path(s.graph_path).parent_path().string();
+        if (!browse(remod::PathKind::SaveFile, "json", value, start)) break;
+        const std::filesystem::path file(remod::fill_game(value));
+        try {
+            if (std::error_code ec; std::filesystem::exists(file, ec))
+                throw remod::PackageError(file.filename().string() + " exists already: open it from the Browser instead");
+            remod::write_cutscene(file, remod::new_cutscene(file));
+            open_cutscene_layout(s, file);
+            s.status = "Made " + file.filename().string() + ": add subtitles, fades and animations on the timeline; " +
+                       "Add to graph puts it in your mod.";
+        } catch (const std::exception& e) {
+            s.status = std::string("Couldn't make the cutscene: ") + e.what();
+        }
+        break;
+    }
+    case What::UseRecording:
+    case What::UseTrigger:
+        if (!s.cutscene) {
+            s.status = "Open a cutscene first, then use what the game wrote down in it.";
+            break;
+        }
+        try {
+            if (r.what == What::UseRecording) remod::apply_recording(s.cutscene->doc, game_cutscenes_dir(game) / "recording.json");
+            else remod::apply_trigger(s.cutscene->doc, game_cutscenes_dir(game) / "trigger.json");
+            s.cutscene_mode = true;
+            s.status = std::string(r.what == What::UseRecording ? "The recorded camera keys are" : "The trigger is") +
+                       " in " + s.cutscene->file.filename().string() + " (Save to keep it).";
+        } catch (const std::exception& e) {
+            s.status = e.what();
+        }
+        break;
+    }
+}
+
+// Saves the open cutscene; one with no file yet asks where first. False if it wasn't saved.
+bool save_open_cutscene(State& s, const std::filesystem::path& game) {
+    CutsceneEdit& e = *s.cutscene;
+    if (e.file.empty()) {
+        std::string value;
+        if (!browse(remod::PathKind::SaveFile, "json", value, std::filesystem::path(s.graph_path).parent_path().string()))
+            return false;
+        set_cutscene_file(e, remod::fill_game(value), game);
+    }
+    return save_cutscene(e, s.status);
+}
+
+// The Cutscene layout, and what its buttons ask of the graph and the game.
+void draw_cutscene_view(State& s, const std::filesystem::path& game) {
+    CutsceneEdit& e = *s.cutscene;
+    const auto in_graph = std::ranges::any_of(graph_cutscenes(s), [&](const auto& f) { return same_file(f, e.file); });
+    CutsceneAction action = draw_cutscene_layout(e, game, in_graph, s.status);
+    if (action == CutsceneAction::SaveAs)  // then what it was asked for, once it has a file
+        action = save_open_cutscene(s, game) ? std::exchange(e.after_save, CutsceneAction::None) : CutsceneAction::None;
+    switch (action) {
+    case CutsceneAction::None:
+    case CutsceneAction::SaveAs: break;
+    case CutsceneAction::Closed:
+        s.cutscene.reset();
+        s.cutscene_mode = false;
+        break;
+    case CutsceneAction::AddToGraph:
+        s.add_cutscene = e.file;  // the canvas adds it, once it's drawn again
+        s.cutscene_mode = false;
+        s.build_mode = false;
+        break;
+    case CutsceneAction::TestInGame:
+        try {
+            const auto files = remod::cutscene_files(e.file);  // the runtime, this cutscene, remod's puppets it uses
+            remod::install_in_game(files, game);
+            s.status = "Copied " + e.file.filename().string() + " and remod's cutscene runtime into the game. In game: " +
+                       "Reset Scripts in REFramework's menu (Insert), then " +
+                       (e.doc.start_key.empty() ? "Play in remod cutscenes." : e.doc.start_key + ".");
+        } catch (const std::exception& ex) {
+            s.status = std::string("Couldn't test it in game: ") + ex.what();
+        }
+        break;
+    case CutsceneAction::RemoveFromGame:
+        try {
+            remod::remove_from_game(remod::cutscene_files(e.file), game);
+            s.status = "Removed " + e.file.filename().string() + " and remod's cutscene runtime from the game (Reset Scripts "
+                       "to unload it).";
+        } catch (const std::exception& ex) {
+            s.status = std::string("Couldn't remove it from the game: ") + ex.what();
+        }
+        break;
+    }
+}
+
 // Image blocks popped out (a thumbnail clicked in Build layout, or the viewer's Pop out): a window each, any size,
 // zoomable. Closed with its X, or with the block.
 void draw_popouts(State& s) {
@@ -2639,7 +2803,7 @@ void draw_thumb(State& s, int node, float width, float height, bool large, std::
 
 void draw_canvas(State& s, ed::EditorContext* editor) {
     ImGui::Begin("Graph");
-    draw_mode_switch(s);
+    draw_graph_bar(s);
     const ImVec2 view_size = ImGui::GetContentRegionAvail();
     const ImVec2 view_center = ImGui::GetCursorScreenPos() + view_size * 0.5f;
     ed::SetCurrentEditor(editor);
@@ -3029,6 +3193,11 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
                 const std::filesystem::path file = path_field(s, n.id, "cutscene");
                 std::error_code ec;
                 const bool exists = !file.empty() && std::filesystem::is_regular_file(file, ec);
+                if (ImGui::Button("Edit cutscene")) open_cutscene_layout(s, file);
+                if (ImGui::IsItemHovered())
+                    hovered_hint = "Open it in the Cutscene layout: a timeline of its camera, fades, subtitles and "
+                                   "animations, where the characters stand, a preview. It needn't exist yet.";
+                ImGui::SameLine();
                 if (ImGui::Button("Use recording")) {
                     try {
                         if (s.game_dir.empty()) throw remod::PackageError("set the Game folder first (in the Pipeline panel)");
@@ -3822,6 +3991,24 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
         s.add_sound.clear();
     }
 
+    // A cutscene from the Cutscene layout's Add to graph: a Cutscene block holding it, linked into the graph's Package
+    // block if it has exactly one (as a sound line goes into Replace sounds; Use layout adds this one too).
+    if (!s.add_cutscene.empty()) {
+        const int id = s.graph.add_node("Cutscene").id;
+        s.graph.find(id)->params["cutscene"] = remod::with_game_token(s.add_cutscene.string());
+        ed::SetNodePosition(id, ed::ScreenToCanvas(view_center));
+        s.place_new = id;
+        std::vector<int> targets;
+        for (const auto& n : s.graph.nodes)
+            if (n.type == "PackageMod") targets.push_back(n.id);
+        if (targets.size() == 1 && s.graph.connect({id, "files", targets[0], "file"}).empty())
+            s.status = "Cutscene added and linked into Package: Run builds the mod with it.";
+        else
+            s.status = targets.empty() ? "Cutscene added: link it into a Package block (Build layout) to put it in a mod."
+                                       : "Cutscene added: link it into one of the Package blocks (Build layout).";
+        s.add_cutscene.clear();
+    }
+
     // A texture from the Browser goes into the selected Original texture block, else the only one; in Build layout
     // a new block is added if there's none.
     if (!s.pending_texture.empty()) {
@@ -3959,6 +4146,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         // Closing asks about unsaved changes first (before the minimized-window skip below, so it's never lost).
         if (g_close_requested) {
             g_close_requested = false;
+            if (state.cutscene && cutscene_unsaved(*state.cutscene)) {  // the cutscene first: save it or not, then close
+                ::ShowWindow(hwnd, SW_RESTORE);
+                g_occluded = false;
+                state.cutscene_mode = true;
+                state.cutscene->confirm_close = true;
+                state.status = "The cutscene has unsaved changes: save or close it, then close remod again.";
+                continue;
+            }
             if (unsaved(state)) {
                 ::ShowWindow(hwnd, SW_RESTORE);
                 g_occluded = false;
@@ -3986,41 +4181,65 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
         poll_run(state);
         // Undo / redo and save, from anywhere in the app (a text box being typed in keeps its own Ctrl+Z).
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) undo(state, false);
+        // In the Cutscene layout they're the cutscene's.
+        const bool on_cutscene = state.cutscene_mode && state.cutscene;
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) {
+            if (on_cutscene) cutscene_undo(*state.cutscene, false);
+            else undo(state, false);
+        }
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal) ||
-            ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal))
-            undo(state, true);
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) save_graph_file(state);
+            ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) {
+            if (on_cutscene) cutscene_undo(*state.cutscene, true);
+            else undo(state, true);
+        }
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) {
+            if (on_cutscene) save_open_cutscene(state, state.game_dir.empty() ? std::filesystem::path()
+                                                                              : std::filesystem::path(unquote(state.game_dir)));
+            else save_graph_file(state);
+        }
+        if (!state.cutscene) state.cutscene_mode = false;
+        draw_layout_switch(state);  // before the dock space, which fits below it
         const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
         // Panels show only where they're used. Both layouts: Browser left (its paths drag onto block fields), Graph
         // middle, Pipeline right (closable in Use layout). Along the bottom: Use layout the viewer, then Textures;
         // Build layout the Nodes. Rebuilt when the mode or the Pipeline's visibility changes, so a hidden panel
         // leaves no empty space.
+        // The Cutscene layout: Browser left, the Cutscene (preview, stage, timeline) middle, the selected item right.
         if (state.build_mode) state.show_pipeline = true;
         static int layout_key = -1;
-        if (const int key = int(state.build_mode) * 2 + int(state.show_pipeline); key != layout_key) {
+        if (const int key = state.cutscene_mode ? 4 : int(state.build_mode) * 2 + int(state.show_pipeline); key != layout_key) {
             layout_key = key;
             ImGui::DockBuilderRemoveNode(dockspace);
             ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
-            ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->Size);
+            ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->WorkSize);
             ImGuiID top = dockspace, bottom = 0, corner = 0, textures = 0, left = 0, rest = 0, right = 0, middle = 0;
-            ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Down, 0.32f, &bottom, &top);
-            ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.25f, &left, &rest);
-            middle = rest;
-            if (state.show_pipeline) ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.3f, &right, &middle);
-            ImGui::DockBuilderDockWindow("Browser", left);
-            ImGui::DockBuilderDockWindow("Graph", middle);
-            if (state.show_pipeline) ImGui::DockBuilderDockWindow("Pipeline", right);
-            if (state.build_mode) {
-                ImGui::DockBuilderDockWindow("Nodes", bottom);
+            if (state.cutscene_mode) {
+                ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Left, 0.2f, &left, &rest);
+                ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.25f, &right, &middle);
+                ImGui::DockBuilderDockWindow("Browser", left);
+                ImGui::DockBuilderDockWindow("Cutscene", middle);
+                ImGui::DockBuilderDockWindow("Cutscene item", right);
             } else {
-                ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.25f, &corner, &textures);
-                ImGui::DockBuilderDockWindow("###viewer", corner);
-                ImGui::DockBuilderDockWindow("Textures", textures);
+                ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Down, 0.32f, &bottom, &top);
+                ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, 0.25f, &left, &rest);
+                middle = rest;
+                if (state.show_pipeline) ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.3f, &right, &middle);
+                ImGui::DockBuilderDockWindow("Browser", left);
+                ImGui::DockBuilderDockWindow("Graph", middle);
+                if (state.show_pipeline) ImGui::DockBuilderDockWindow("Pipeline", right);
+                if (state.build_mode) {
+                    ImGui::DockBuilderDockWindow("Nodes", bottom);
+                } else {
+                    ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.25f, &corner, &textures);
+                    ImGui::DockBuilderDockWindow("###viewer", corner);
+                    ImGui::DockBuilderDockWindow("Textures", textures);
+                }
             }
             ImGui::DockBuilderFinish(dockspace);
         }
-        if (state.build_mode) draw_nodes_panel(state);
+        const std::filesystem::path game_folder =
+            state.game_dir.empty() ? std::filesystem::path() : std::filesystem::path(unquote(state.game_dir));
+        if (state.build_mode && !state.cutscene_mode) draw_nodes_panel(state);
         if (state.want_viewer) {
             browser->show_in_viewer([&state] { draw_block_view(state); });
             state.want_viewer = false;
@@ -4029,16 +4248,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             browser->show_movie(state.show_movie);
             state.show_movie.clear();
         }
+        browser->set_cutscenes(graph_cutscenes(state), game_folder);
         if (const std::string picked = browser->draw(game_files_dir(state), unquote(state.noesis_path), state.profiles,
-                                                     state.graph.profile, state.pinned, state.build_mode);
+                                                     state.graph.profile, state.pinned,
+                                                     state.build_mode || state.cutscene_mode);
             !picked.empty())
             state.pending_texture = picked;
+        cutscene_request(state, browser->take_cutscene_request(), game_folder);
         if (state.pinned != state.saved.pinned_folders) remember_paths(state);  // a folder was pinned or unpinned
-        if (state.build_mode || state.show_pipeline) draw_side_panel(state);
-        state.viewer_on_block = !state.build_mode && browser->viewer_shows_external();
-        update_thumbs(state);
-        draw_canvas(state, editor);
-        draw_popouts(state);
+        if (state.cutscene_mode) {
+            draw_cutscene_view(state, game_folder);
+        } else {
+            if (state.build_mode || state.show_pipeline) draw_side_panel(state);
+            state.viewer_on_block = !state.build_mode && browser->viewer_shows_external();
+            update_thumbs(state);
+            draw_canvas(state, editor);
+            draw_popouts(state);
+        }
         // Undo steps and the unsaved-changes baseline, once the graph is settled: nothing dragged or typed, no block
         // still being placed. After a load or New, the graph as the editor placed it is the baseline.
         if (state.baseline_pending) {

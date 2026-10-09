@@ -1,0 +1,58 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "NewCharacter",
+      "params": {
+        "character": "ashley",
+        "name": "rmc002",
+        "hue": "280",
+        "saturation": "55",
+        "title": "Ashley in purple"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "cutscenes/meet_new_character.json",
+        "title": "Luis and the new character"
+      }
+    },
+    {
+      "id": 3,
+      "type": "PackageMod",
+      "params": {
+        "name": "New character",
+        "out": "mods",
+        "version": "1.0",
+        "description": "Press F6 in game: Luis and a new character (Ashley in purple) meet Leon",
+        "replace": "true"
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        1,
+        "files"
+      ],
+      "to": [
+        3,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "files"
+      ],
+      "to": [
+        3,
+        "file"
+      ]
+    }
+  ]
+}

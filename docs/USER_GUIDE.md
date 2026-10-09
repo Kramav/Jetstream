@@ -69,9 +69,9 @@ After each run every block shows how far it got: **green** = done, **amber** = w
 - **Texture names don't matter:** `x.tex`, `x.tex.143221013` or `x.tex.re2remake` all work; textures are recognised
   by their contents and named the way the game expects in the mod.
 
-## The two layouts
+## The layouts
 
-The switch above the graph changes between:
+The switch in the bar at the top of the window changes between (it stays in the same place in every layout):
 
 - **Use layout:** run a finished graph. Fill in fields, Run, edit, Done editing. Blocks and links are locked. The
   Browser, a large viewer and the textures of what you picked are shown.
@@ -350,7 +350,64 @@ Each actor has:
   (`remod_cutscenes\spot.json`);
 - optionally `"hides": "partner"`, which hides the real partner while it plays.
 
-The actors appear when the cutscene starts and are put away when it ends. Not tested in game yet.
+The actors appear when the cutscene starts and are put away when it ends (seen in game, 2026-10-08).
+
+**Where cutscene files are.** A cutscene file lives wherever you put it: the Cutscene block's **Cutscene file** names
+it (the examples' are in `examples\cutscenes`). **Test in game** copies it into the game, to
+`<game>\reframework\data\remod_cutscenes`. The runtime also writes what you note in game there: `recording.json`
+(F10's camera keys), `trigger.json`, `spot.json` and `animation.json`. The Browser's **Cutscenes**, at the top of its
+tree, lists both:
+- **This graph's:** its Cutscene blocks' files.
+- **In the game:** the copies there, and what was written down, with how long ago. Click **recording** or **trigger**
+  to use it in the open cutscene.
+- **New cutscene...** makes a new file and opens it.
+
+Anywhere else in the Browser, a cutscene file is marked "(cutscene)"; click it to open it.
+
+**The Cutscene layout.** The third layout beside Use and Build. **Cutscene layout** in the top bar shows the cutscene
+you opened last, or a new one if none is open: start making it straight away, and **Save** asks where to keep it.
+Opening a cutscene (from the Browser, or **Edit cutscene** on a Cutscene block) switches to it too. No JSON to type.
+- **Preview** (top left): remod's part of the screen at the playhead (the letterbox bars, fades to black and the
+  subtitle), as the runtime draws them. The game's picture, the camera and the characters only show in game.
+- **Stage** (top right): who stands where, seen from above, Leon facing up. Drag an actor to move it (0.1 m steps;
+  hold Shift for finer).
+- **Play** / Space plays the playhead in real time; the line under it says what the camera and each character are
+  doing then.
+- **Timeline:** a lane each for camera keys, fades, subtitles, Leon's animations, each actor's, movies and sounds.
+  - Click an item to select it.
+  - Drag it to move it; drag a fade's or subtitle's end to stretch it. Times snap to 0.05 s; hold Shift for none.
+  - Right-click a lane to add something there.
+  - Delete removes the selected item.
+  - Click or drag the seconds to move the playhead.
+  - Camera keys can be moved, eased (smooth, linear, cut) or removed. Where the camera is still comes from recording
+    in game.
+- **Cutscene item** (right): the selected item's settings. With nothing selected, the cutscene's own: name, length,
+  start key, letterbox, **Use recording**, **Use trigger** and the actors. Click an actor's lane name, or the actor on
+  the stage, for its settings: puppet, near Leon or at a spot (**Use Leon's spot**), and whether it hides the partner.
+- **Every item (tables):** everything as numbers, to type exact values.
+- **Add picked animation** adds the animation you picked in game at the playhead.
+
+Problems show at the top as you edit. Ctrl+Z / Ctrl+Y undo and redo. **Save** (Ctrl+S) writes the file and keeps the
+previous one as `.bak`. **Test in game** saves and copies it into the game. **Add to graph** puts a Cutscene block for
+it into your graph, linked into Package. **Use layout** or **Build layout** in the top bar returns to the graph;
+**Cutscene layout** comes back to the cutscene, still open.
+
+**Finding animations (in game).** REFramework's menu > remod cutscenes > **Animations**:
+1. Pick **who**: Leon, or a puppet, which comes out in front of him.
+2. Pick one of its **banks**, then an animation from the list (numbers and the game's names; **Find** narrows it).
+   It plays at once, looping, with a frame slider and Pause.
+3. **Use in a cutscene** writes it down for the editor's **Add picked animation**.
+
+While Leon previews one he's held still, as in a cutscene.
+
+**New characters.** The **New character** block makes a character of your own from one of remod's (ashley, luis):
+- one part (its body, by default) becomes new files, with its colour textures recoloured;
+- **Leave as they are** keeps some, e.g. `*hand*` for bare skin;
+- **Colour** and **Strength** set the new colour.
+
+Nothing of the game's is replaced. Its **Name** must be as long as the game's folder it takes the place of (6 letters
+or digits, e.g. `rmc002`). Link its files into Package; a cutscene's actor then uses it as its puppet. Example 19 does
+both.
 
 The cutscene probe (`spikes\cutscene_probe.md`, run 2026-10-07) showed the camera holds still and Leon's animations
 play from the script in RE4R. While a cutscene plays, Leon stands still and the HUD is hidden; both come back when it

@@ -595,6 +595,121 @@ local function start_actor(a)
     return root
 end
 
+-- ---- Animation previewer (user, 2026-10-08) ----
+-- In the menu: pick who (Leon, or a puppet brought out in front of him), one of its motion banks and an animation by
+-- name; it plays at once, looping, with its numbers. "Use in a cutscene" writes them to remod_cutscenes\animation.json
+-- for remod's cutscene editor (Add picked animation). The lists are the game's own [dump: via.motion.Motion
+-- getActiveMotionBank / getMotionCount / getMotionInfoByIndex, via.motion.MotionInfo get_MotionID / get_MotionName /
+-- get_MotionEndFrame]. While Leon previews one, he's held as in a cutscene, so his controls don't take over.
+local preview = { who = "player", root = nil, banks = nil, bank = nil, motions = nil, filter = "", picked = nil }
+
+local function preview_motion()
+    local root = preview.who == "player" and game.player() or preview.root
+    return root and component(root, "via.motion.Motion")
+end
+
+local function preview_put_away()
+    if preview.root then
+        pcall(set_active, preview.root, false)
+        put_away[preview.who] = preview.root
+    end
+    preview.root, preview.banks, preview.bank, preview.motions, preview.picked = nil, nil, nil, nil, nil
+end
+
+local function preview_choose(who)
+    preview_put_away()
+    preview.who = who
+    if who ~= "player" then preview.root = start_actor({ name = "preview", puppet = who, offset = { 0, 0, 2 } }) end
+end
+
+-- The banks it has: {id, name}, by id.
+local function preview_banks()
+    local m = preview_motion()
+    local out, seen = {}, {}
+    for i = 0, (m and m:call("getActiveMotionBankCount") or 0) - 1 do
+        local b = m:call("getActiveMotionBank", i)
+        local id = b and b:call("get_BankID")
+        if id and not seen[id] then
+            seen[id] = true
+            local list = b:call("get_MotionList")
+            local path = list and list:call("get_ResourcePath")
+            local name = path and tostring(path):match("([^/]+)%.motlist") or tostring(b:call("get_Name"))
+            table.insert(out, { id = id, name = name })
+        end
+    end
+    table.sort(out, function(a, c) return a.id < c.id end)
+    return out
+end
+
+-- A bank's animations: {id, name, frames}.
+local function preview_motions(bank)
+    local m = preview_motion()
+    local info = sdk.create_instance("via.motion.MotionInfo") or sdk.create_instance("via.motion.MotionInfo", true)
+    local out = {}
+    for i = 0, m:call("getMotionCount", bank) - 1 do
+        if m:call("getMotionInfoByIndex(System.UInt32, System.UInt32, via.motion.MotionInfo)", bank, i, info) then
+            table.insert(out, { id = info:call("get_MotionID"), name = tostring(info:call("get_MotionName")),
+                                frames = info:call("get_MotionEndFrame") })
+        end
+    end
+    return out
+end
+
+local function preview_play(mo)
+    local layer = preview_motion():call("getLayer", 0)
+    layer:call("changeMotion(System.UInt32, System.UInt32, System.Single, System.Single, via.motion.InterpolationMode, via.motion.InterpolationCurve)",
+        preview.bank, mo.id, 0.0, 0.0, 1, 0)
+    layer:call("set_WrapMode", enum("via.motion.WrapMode", "Loop"))
+    layer:call("set_Speed", 1.0)
+    preview.picked = { bank = preview.bank, motion = mo.id, name = mo.name, frames = mo.frames }
+end
+
+-- An animation file (.motlist: a game cutscene's own, later a new one) put on a character as a bank of our own number,
+-- with no .motbank: a via.motion.DynamicMotionBank given the file (set_MotionList) and our number (set_OverwriteBankID,
+-- set_BankID) [dump], added to its Motion's dynamic banks. Spike: spikes/event_animation_test.md. The file is requested
+-- first and added a second later (a resource handed over before it loaded never took, for meshes: character probe
+-- run 11). Each step's result goes in file_notes, shown in the menu.
+local CUTSCENE_FILES = {  -- csa012 (Luis and Leon); the spike's defaults
+    player = "_Chainsaw/Event/cs/csa012/csa012_s00/chara/cha000_00/cha000_00.motlist",
+    luis = "_Chainsaw/Event/cs/csa012/csa012_s00/chara/cha300_00/cha300_00.motlist",
+}
+local loading_files = {}  -- { motion, holder, bank, path, t0 }
+local file_notes = {}
+
+local function add_motion_file(f)
+    local m = f.motion
+    if m:call("getMotionCount", f.bank) > 0 then
+        return "bank " .. f.bank .. " is already there: pick another number"
+    end
+    local d = keep(sdk.create_instance("via.motion.DynamicMotionBank") or sdk.create_instance("via.motion.DynamicMotionBank", true))
+    d:call("set_MotionList", f.holder)
+    d:call("set_OverwriteBankID", true)
+    d:call("set_BankID", f.bank)
+    local banks = {}
+    for i = 0, m:call("getDynamicMotionBankCount") - 1 do table.insert(banks, m:call("getDynamicMotionBank", i)) end
+    table.insert(banks, d)
+    m:call("setDynamicMotionBankCount", #banks)
+    for i, b in ipairs(banks) do m:call("setDynamicMotionBank", i - 1, b) end
+    local n = m:call("getMotionCount", f.bank)
+    if n > 0 then return string.format("bank %d: %d animations", f.bank, n) end
+    m:call("setupMotionBank")
+    n = m:call("getMotionCount", f.bank)
+    return string.format("bank %d: %d animations after setupMotionBank (0 before)", f.bank, n)
+end
+
+local function add_motion_files()
+    for i = #loading_files, 1, -1 do
+        local f = loading_files[i]
+        if now() - f.t0 > 1 then
+            table.remove(loading_files, i)
+            local ok, note = pcall(add_motion_file, f)
+            table.insert(file_notes, f.path .. ": " .. (ok and note or ("failed: " .. tostring(note))))
+            log.info("[remod_cutscene] " .. file_notes[#file_notes])
+            preview.banks, preview.motions = nil, nil  -- list them again
+        end
+    end
+end
+
 -- The definitions, and every actor's files requested now, so its parts show when its cutscene plays. After load_all.
 local function load_puppets()
     puppet_defs = {}
@@ -656,6 +771,7 @@ end
 -- come back when it ends or stops.
 local function play(data)
     stop()
+    preview_put_away()  -- its puppet may be one of the actors
     local cam = camera_parts()
     local fov_before = nil
     if cam then
@@ -767,7 +883,10 @@ if game then
     end
     -- The player held before the game's behaviour update, every frame of a cutscene (reported once per play).
     re.on_pre_application_entry("UpdateBehavior", function()
-        if not playing then return end
+        if not playing then
+            if preview.who == "player" and preview.picked then pcall(game.hold_player) end  -- previewing on Leon
+            return
+        end
         local ok, err = pcall(game.hold_player)
         if not ok and playing.hold_problem ~= err then
             playing.hold_problem = err
@@ -903,8 +1022,8 @@ re.on_frame(function()
         end
     end
     check_triggers()
-    if not playing then return end
-    for i = #watching, 1, -1 do  -- actors' parts not yet ready to draw
+    if #loading_files > 0 then add_motion_files() end
+    for i = #watching, 1, -1 do  -- actors' (and the previewer's) parts not yet ready to draw
         local w = watching[i]
         local ok, ready = pcall(w.mesh.call, w.mesh, "get_ReadyToDraw")
         if not ok or ready or w.tries >= 5 then
@@ -920,6 +1039,7 @@ re.on_frame(function()
             end
         end
     end
+    if not playing then return end
     run_movies(elapsed())
     local t = elapsed()
     if not playing.movie and t >= (playing.data.length or 0) then
@@ -1025,13 +1145,111 @@ re.on_draw_ui(function()
     end
     table.sort(puppet_names)
     imgui.text("Puppets (actors), in " .. PUPPETS_DIR .. ": " .. (#puppet_names > 0 and table.concat(puppet_names, ", ") or "none"))
+    if imgui.tree_node("Animations") then
+        local ok, err = pcall(function()
+            -- Who: Leon, or a puppet out in front of him.
+            local whos, labels = { "player" }, { "Leon" }
+            local names = {}
+            for name in pairs(puppet_defs) do table.insert(names, name) end
+            table.sort(names)
+            for _, name in ipairs(names) do
+                table.insert(whos, name)
+                table.insert(labels, name)
+            end
+            local at = 1
+            for i, w in ipairs(whos) do if w == preview.who then at = i end end
+            local changed, picked = imgui.combo("Who", at, labels)
+            if changed and whos[picked] ~= preview.who then preview_choose(whos[picked]) end
+            if not preview_motion() then
+                imgui.text(preview.who == "player" and "No player yet (load a save)." or "Pick it again to bring it out.")
+                return
+            end
+            -- An animation file of our choosing, as a bank of our own number.
+            preview.file = preview.file or {}
+            local file = preview.file[preview.who] or CUTSCENE_FILES[preview.who] or ""
+            local _, typed = imgui.input_text("Animation file", file)
+            preview.file[preview.who] = typed or file
+            local _, bank_text = imgui.input_text("As bank", preview.file_bank or "9000")
+            preview.file_bank = bank_text or "9000"
+            if imgui.button("Add this animation file") then
+                local bank = math.tointeger(tonumber(preview.file_bank))
+                local path = preview.file[preview.who]
+                local hok, h = pcall(holder, "via.motion.MotionListResource", path)
+                if not bank or bank < 0 then
+                    table.insert(file_notes, "As bank must be a whole number")
+                elseif not hok or not h then
+                    table.insert(file_notes, path .. ": " .. tostring(h or "no file named"))
+                else
+                    table.insert(loading_files, { motion = preview_motion(), holder = h, bank = bank, path = path, t0 = now() })
+                    table.insert(file_notes, path .. ": requested, added in a second")
+                end
+            end
+            imgui.same_line()
+            imgui.text("(no natives/STM, no suffix)")
+            for i = math.max(1, #file_notes - 4), #file_notes do imgui.text(file_notes[i]) end
+            if not preview.banks or #preview.banks == 0 then preview.banks = preview_banks() end  -- a new puppet's load
+            local bank_labels, bank_at = {}, 1
+            for i, b in ipairs(preview.banks) do
+                table.insert(bank_labels, b.id .. "  " .. b.name)
+                if b.id == preview.bank then bank_at = i end
+            end
+            if #preview.banks == 0 then
+                imgui.text("It has no motion banks yet.")
+                return
+            end
+            local bchanged, bpicked = imgui.combo("Bank", bank_at, bank_labels)
+            if bchanged or not preview.bank then
+                preview.bank, preview.motions = preview.banks[bpicked or 1].id, nil
+            end
+            preview.motions = preview.motions or preview_motions(preview.bank)
+            local _, filter = imgui.input_text("Find", preview.filter)
+            preview.filter = filter or ""
+            local shown, needle = 0, preview.filter:lower()
+            for _, mo in ipairs(preview.motions) do
+                if needle == "" or mo.name:lower():find(needle, 1, true) or tostring(mo.id) == needle then
+                    shown = shown + 1
+                    if shown <= 40 and imgui.button(string.format("%d  %s  (%.0f frames)##m%d", mo.id, mo.name, mo.frames, mo.id)) then
+                        preview_play(mo)
+                    end
+                end
+            end
+            if shown > 40 then imgui.text(string.format("... and %d more: type in Find to narrow it", shown - 40)) end
+            imgui.text(string.format("%d animations in bank %d", #preview.motions, preview.bank))
+            local p = preview.picked
+            if p then
+                local layer = preview_motion():call("getLayer", 0)
+                imgui.text(string.format("Playing: bank %d, motion %d (%s)", p.bank, p.motion, p.name))
+                local frame = layer:call("get_Frame")
+                local fchanged, f = imgui.slider_float("Frame", frame, 0, math.max(layer:call("get_EndFrame"), 1))
+                if fchanged then
+                    layer:call("set_Speed", 0.0)
+                    layer:call("set_Frame", f)
+                end
+                local paused = layer:call("get_Speed") == 0
+                if imgui.button(paused and "Play" or "Pause") then layer:call("set_Speed", paused and 1.0 or 0.0) end
+                imgui.same_line()
+                if imgui.button("Use in a cutscene") then
+                    json.dump_file(DIR .. "/animation.json", { actor = preview.who, bank = p.bank, motion = p.motion,
+                                                              name = p.name, frame = math.floor(frame) })
+                end
+                imgui.same_line()
+                imgui.text("into " .. DIR .. "\\animation.json (remod's cutscene editor: Add picked animation)")
+            end
+            if imgui.button(preview.who == "player" and "Stop previewing" or "Put it away") then preview_put_away() end
+        end)
+        if not ok then imgui.text("Problem: " .. tostring(err)) end
+        imgui.tree_pop()
+    end
     imgui.text("F10: add the camera as a key to " .. DIR .. "\\recording.json" ..
         (recording and (" (" .. #recording.keys .. " keys)") or ""))
     if recording and imgui.button("Start a new recording") then recording = nil end
     imgui.tree_pop()
 end)
 
-re.on_script_reset(stop)
+re.on_script_reset(function()
+    stop()
+    preview_put_away()
+end)
 load_all()
 load_puppets()
 

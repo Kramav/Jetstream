@@ -13,7 +13,9 @@ front of Leon, the real Ashley is hidden while it plays, then they're put away w
 - **First try (2026-10-08): F11 crashed the game.** REFramework frees objects a script made when the script resets
   (or stops using them), unless the script marks them to keep. The runtime handed the game objects that weren't
   kept. Fixed: everything it hands the game is now kept.
-- **Second try (2026-10-08): works.** The cutscene played with its actors, and nothing was logged as a problem.
+- **Second try (2026-10-08): works.** The cutscene played with its actors, and nothing was logged as a problem. F11
+  a second time played cleanly. Luis and Ashley were on the wrong sides; fixed.
+- **Part 2 (ready):** the sides again, the animation previewer, the cutscene editor and example 19.
 
 **Time:** about 10 minutes. **You need:**
 - RE4R with REFramework;
@@ -45,9 +47,32 @@ It hooks no game methods.
 7. Press **F11** again: does it play the same way a second time?
 8. Optional: **Reset Scripts**, then **F11** once more.
 
+## Part 2: sides, the previewer, the editor, example 19
+
+Close remod and build it again first, then click **Test in game** on the Cutscene block again (the runtime changed).
+
+10. **F11** again: Luis should now be on Leon's **left** and the blue Ashley on his **right** (it was the other way
+    round).
+11. REFramework's menu > remod cutscenes > **Animations**.
+    - **Who: Leon.** Pick a bank, then click an animation. Does Leon play it, looping? Do the frame slider and Pause
+      work? Click **Stop previewing**: does he move again?
+    - **Who: luis.** Does Luis come out in front of Leon, with a list of banks and animations? Click a few.
+    - Click **Use in a cutscene** on one you like.
+12. In remod, open `actor_test` from the Browser's **Cutscenes** (top of the tree), or click **Edit cutscene** on the
+    Cutscene block. It opens in the Cutscene layout.
+    - On the **Stage** (top right), is Luis on Leon's left?
+    - Move the playhead to 2 s (click the seconds), then click **Add picked animation**.
+    - Drag a subtitle along the timeline, and stretch a fade by its end.
+    - **Test in game** (top bar), Reset Scripts, **F11**: does that character play the animation at 2 s?
+13. Example 19: open `examples\19_a_new_character_in_a_cutscene.json`, **Run**, and install `examples\mods\New
+    character.zip` with Fluffy. In game, **F6**: Luis on the right, a purple Ashley on the left.
+
+Tell me what happened at each step.
+
 ## Take it out
 
-9. In remod, click **Remove from game** on the Cutscene block. Uninstall the rmc001 mod in Fluffy if you like.
+14. In remod, click **Remove from game** on the Cutscene block. Uninstall the rmc001 and New character mods in
+    Fluffy if you like.
 
 ## Tell Claude
 

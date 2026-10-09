@@ -1,5 +1,7 @@
 #include "browse.hpp"
 
+#include "cutscene.hpp"
+
 #include "texture_converter.hpp"
 
 #define NOMINMAX
@@ -197,6 +199,9 @@ std::vector<DirEntry> list_folder(const fs::path& folder, std::string* error) {
         const std::string name = it->path().filename().string();
         if (it->is_directory(ignore)) folders.push_back({name, FileKind::Folder});
         else files.push_back({name, file_kind(name)});
+        // A cutscene among other JSON files: by its contents (small files only, read once per listing).
+        if (FileKind& k = files.back().kind; !it->is_directory(ignore) && k == FileKind::Other && is_cutscene_file(it->path()))
+            k = FileKind::Cutscene;
     }
     for (auto* group : {&folders, &files})
         std::ranges::sort(*group, [](const DirEntry& a, const DirEntry& b) { return less_nocase(a.name, b.name); });

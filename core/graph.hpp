@@ -269,22 +269,42 @@ std::optional<ImagePreview> preview_image(const Graph& graph, const RunValues& p
 std::string link_value(const Graph& graph, const RunValues& preview, const RunValues& last_run, size_t link,
                        bool* from_run = nullptr);
 
-// Undo / redo (front ends): snapshots of the whole graph (blocks, links, values, positions; small). A front end calls
-// track() whenever the graph may have changed and is settled (nothing being dragged or typed): a change since the
-// last snapshot becomes one undo step. Up to 200 steps.
-class History {
+// Undo / redo (front ends): snapshots of the whole document (a graph: blocks, links, values, positions; small; a
+// cutscene). A front end calls track() whenever it may have changed and is settled (nothing being dragged or typed): a
+// change since the last snapshot becomes one undo step. Up to 200 steps.
+template <class T>
+class Snapshots {
 public:
-    void reset(const Graph& graph);  // a loaded or new graph: no steps
-    void track(const Graph& now);
-    bool undo(Graph& graph);  // false if there's nothing to undo; else `graph` is the earlier one
-    bool redo(Graph& graph);
+    void reset(const T& doc) {  // a loaded or new one: no steps
+        past_.clear();
+        future_.clear();
+        last_ = doc;
+    }
+    void track(const T& now) {
+        if (now == last_) return;
+        past_.push_back(std::move(last_));
+        if (past_.size() > 200) past_.erase(past_.begin());
+        future_.clear();  // a new change: what was undone can't be redone any more
+        last_ = now;
+    }
+    bool undo(T& doc) { return step(past_, future_, doc); }  // false if there's nothing to undo
+    bool redo(T& doc) { return step(future_, past_, doc); }
     bool can_undo() const { return !past_.empty(); }
     bool can_redo() const { return !future_.empty(); }
 
 private:
-    std::vector<Graph> past_, future_;
-    Graph last_;
+    bool step(std::vector<T>& from, std::vector<T>& to, T& doc) {
+        if (from.empty()) return false;
+        to.push_back(std::move(last_));
+        last_ = std::move(from.back());
+        from.pop_back();
+        doc = last_;
+        return true;
+    }
+    std::vector<T> past_, future_;
+    T last_{};
 };
+using History = Snapshots<Graph>;
 
 // Node ids in the order a run takes them (dependency order, ties in file order). Nodes in a loop are left out.
 std::vector<int> step_order(const Graph& graph);

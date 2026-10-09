@@ -36,6 +36,9 @@ void save_png(const std::filesystem::path& file, const Bgra& image);  // save_pn
 // Hue in degrees (a luminance-keeping rotation of the colours); saturation, brightness and contrast from -1 to 1, 0 as
 // is (saturation -1: grey). Colour only: alpha stays as it is (RE textures often keep other data there).
 void adjust_colour(Bgra& image, float hue, float saturation, float brightness, float contrast);
+// Every pixel made `hue` (degrees) at `saturation` (0-1), keeping its own lightness (GIMP's Colorize): white stays
+// white, black black, everything between takes the colour, so even a near-white cloth turns it. Alpha kept.
+void colourize(Bgra& image, float hue, float saturation);
 
 // Stretch: to exactly width x height. Fit: the whole image inside, aspect kept, transparent bars. Fill: covers it,
 // aspect kept, the overflow cropped (centred). WIC's Fant scaling. Throws on a zero size.

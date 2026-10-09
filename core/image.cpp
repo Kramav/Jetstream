@@ -253,6 +253,28 @@ void adjust_colour(Bgra& image, float hue, float saturation, float brightness, f
     }
 }
 
+void colourize(Bgra& image, float hue, float saturation) {
+    const float h = std::fmod(std::fmod(hue, 360.0f) + 360.0f, 360.0f) / 60.0f, s = std::clamp(saturation, 0.0f, 1.0f);
+    for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        std::uint8_t* p = &image.pixels[i];  // B, G, R, A
+        const float l = (0.299f * p[2] + 0.587f * p[1] + 0.114f * p[0]) / 255.0f;
+        // HSL to RGB.
+        const float c = (1 - std::abs(2 * l - 1)) * s, x = c * (1 - std::abs(std::fmod(h, 2.0f) - 1)), m = l - c / 2;
+        float r = 0, g = 0, b = 0;
+        switch (int(h) % 6) {
+        case 0: r = c, g = x; break;
+        case 1: r = x, g = c; break;
+        case 2: g = c, b = x; break;
+        case 3: g = x, b = c; break;
+        case 4: r = x, b = c; break;
+        default: r = c, b = x; break;
+        }
+        p[2] = std::uint8_t(std::lround(std::clamp(r + m, 0.0f, 1.0f) * 255));
+        p[1] = std::uint8_t(std::lround(std::clamp(g + m, 0.0f, 1.0f) * 255));
+        p[0] = std::uint8_t(std::lround(std::clamp(b + m, 0.0f, 1.0f) * 255));
+    }
+}
+
 Bgra resize_image(const Bgra& image, unsigned width, unsigned height, Fit fit) {
     if (width == 0 || height == 0 || image.width == 0 || image.height == 0) throw std::runtime_error("can't resize to or from a zero size");
     if (width == image.width && height == image.height) return image;  // e.g. no streaming copy: the edit is base-sized

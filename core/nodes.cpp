@@ -1279,6 +1279,98 @@ NodeSpec cutscene_node() {
     };
 }
 
+// A new character for cutscenes (user, 2026-10-08): core make_new_character, its files kept in the run cache by what
+// made them (the definition, the settings, the converter), so an unchanged run converts nothing.
+// ponytail: the folder isn't counted in the run cache's 512 MB (prune_cache looks at its top-level files only).
+std::vector<ListItem> sound_items(const std::vector<Value>& files);  // a list's items by game path (below)
+
+NodeSpec new_character_node() {
+    return {
+        .type = "NewCharacter",
+        .title = "New character",
+        .summary = "A new character for cutscenes: one part of a character (e.g. Ashley's body) as new files with its "
+                   "colour textures recoloured, and the character's puppet definition. Nothing of the game's is "
+                   "replaced. Connect to Package's 'other file'; a cutscene's actor uses it by its name.",
+        .inputs = {{.name = "character", .label = "Character", .type = Text, .widget = Widget::Text,
+                    .hint = "Whose copy it is: remod's ashley or luis, or a puppet definition file (.json).",
+                    .initial = "ashley"},
+                   {.name = "name", .label = "Name", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "The new character's name: letters and digits, as long as the folder it takes the place "
+                            "of (6 for a character: cha103 -> rmc001). Its files and its actors' puppet.",
+                    .initial = "rmc001"},
+                   {.name = "part", .label = "Part", .type = Text, .widget = Widget::Text,
+                    .hint = "Which part gets new files and colours; the others stay the game's (e.g. head, hair).",
+                    .initial = "body", .advanced = true},
+                   {.name = "skip", .label = "Leave as they are", .type = Text, .widget = Widget::Text,
+                    .hint = "Colour textures not to recolour, by file name (* any run, ; between several), e.g. "
+                            "*hand* for bare skin.",
+                    .initial = "*hand*"},
+                   number_input("hue", "Colour", "The new colour's hue: 0 red, 60 yellow, 120 green, 220 blue, 300 purple.",
+                                "220", 0, 360, "%.0f"),
+                   number_input("saturation", "Strength", "How strong the colour is: 0 grey, 100 full.", "60", 0, 100,
+                                "%.0f%%"),
+                   number_input("brightness", "Brightness", "-100 to 100. 0: as is.", "0", -100, 100, "%.0f%%"),
+                   number_input("contrast", "Contrast", "-100 (flat) to 100. 0: as is.", "0", -100, 100, "%.0f%%"),
+                   {.name = "game", .label = "Game files", .type = Folder, .widget = Widget::Path,
+                    .hint = "Your Game files folder (the extracted natives\\STM), where the character's files are read "
+                            "from.",
+                    .path = PathKind::Folder, .initial = "{game}", .advanced = true}},
+        .outputs = {{.name = "files", .type = Path, .label = "character files", .list = true}},
+        .family = Family::Transform,
+        .run = [](NodeRun& r) {
+            const std::string who = r.text("character");
+            const bool remods = !who.empty() && std::ranges::all_of(who, [](unsigned char c) { return std::isalnum(c) || c == '_'; });
+            const fs::path def = remods ? runtime_dir() / "puppets" / (who + ".json") : r.resolve(who);
+            std::error_code ec;
+            if (!fs::is_regular_file(long_path(def), ec))
+                throw GraphError("no character " + who + " (remod's: ashley, luis; or a definition file): " + def.string());
+            const fs::path natives = r.resolve(r.text("game"));
+            NewCharacter spec{.name = r.text("name"), .definition = def, .part = r.text("part")};
+            const std::string skip = r.text("skip");
+            spec.skip = [skip](const std::string& file) { return any_pattern(file, skip); };
+            spec.hue = number(r, "hue");
+            spec.saturation = number(r, "saturation") / 100;
+            spec.brightness = number(r, "brightness") / 100;
+            spec.contrast = number(r, "contrast") / 100;
+            const std::string key = hash_hex(file_bytes(def) + '\0' + natives.string() + '\0' + spec.name + '\0' +
+                                             spec.part + '\0' + skip + '\0' + r.text("hue") + '\0' +
+                                             r.text("saturation") + '\0' + r.text("brightness") + '\0' +
+                                             r.text("contrast") + '\0' + r.run.options.converter.id(r.profile()) + "|char1");
+            const fs::path& cache = r.run.options.cache_dir;
+            const fs::path out = cache.empty() ? r.temp_file("") : cache / ("character_" + key);
+            const fs::path list = out / "files.txt";
+            std::vector<Value> files;
+            std::string message;
+            if (std::ifstream in(list); in) {  // made before with the same everything
+                for (std::string line; std::getline(in, line);)
+                    if (const size_t tab = line.find('\t'); tab != std::string::npos)
+                        files.push_back(file_value(out / line.substr(0, tab), line.substr(tab + 1)));
+                if (files.empty() || !std::ranges::all_of(files, [&](const Value& v) { return fs::is_regular_file(v.path, ec); }))
+                    files.clear();
+                else
+                    message = "unchanged: " + std::to_string(files.size()) + " files reused";
+            }
+            if (files.empty()) {
+                fs::remove_all(out, ec);
+                std::vector<PackageFile> made;
+                try {
+                    made = make_new_character(spec, natives, r.profile(), r.run.options.converter, out, &message);
+                } catch (const std::exception& e) {
+                    fs::remove_all(out, ec);
+                    throw GraphError(e.what());
+                }
+                std::ofstream o(list);
+                for (const auto& f : made) {
+                    o << fs::relative(f.source, out).generic_string() << '\t' << f.game_path.generic_string() << '\n';
+                    files.push_back(file_value(f.source, f.game_path.generic_string()));
+                }
+            }
+            r.output_list("files", files, sound_items(files));
+            r.done(message);
+        },
+    };
+}
+
 // ---- Movies (CLAUDE.md §10 M3, route 1) ----
 
 constexpr const char* kVideoFormats = "mp4,m4v,mov,wmv,avi,mkv";
@@ -2853,7 +2945,7 @@ const std::vector<NodeSpec>& node_specs() {
         mesh_mask_node(),
         mask_blend_node(), replace_photo_node(),
         preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), new_movie_node(), new_sound_node(), game_sound_node(), replace_sounds_node(),
-        lua_script_node(), cutscene_node(), package_mod(),
+        lua_script_node(), cutscene_node(), new_character_node(), package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), if_node(), first_of_node(), file_exists_node(), text_matches_node(), not_node(),
@@ -2924,8 +3016,14 @@ const char* ai_note(std::string_view type) {
         {"LuaScript", "A REFramework script mod (Lua): the .lua, plus a folder named like it beside it for modules it "
                       "requires. Link 'script files' into Package's 'other file'; the mod then needs REFramework. "
                       "REFramework runs only reframework/autorun's top-level .lua files, so one script per block."},
+        {"NewCharacter", "A NEW character (nothing replaced): a copy of remod's ashley or luis (or a definition file) "
+                         "with one part's colour textures recoloured, named by 'name' (as long as the folder it "
+                         "replaces: 6 letters / digits). Link 'character files' into Package's 'other file'; a "
+                         "Cutscene's actors use it as \"puppet\": \"<name>\". Needs the Game files folder."},
         {"Cutscene", "A real-time cutscene from a cutscene file (JSON: camera keys with t, position [x,y,z], rotation "
-                     "[x,y,z,w], fov, ease smooth/linear/cut; subtitles; letterbox; fades; motions on the player; "
+                     "[x,y,z,w], fov, ease smooth/linear/cut; subtitles; letterbox; fades; motions on the player or an "
+                     "actor; actors: [{name, puppet (ashley, luis, or a New character's name), offset [right, up, "
+                     "forward] from the player or position + rotation from the game, hides: \"partner\"}]; "
                      "movies: [{t, id}] with a game movie's name (mva000) or a New movie block's name; sounds: "
                      "[{t, id}] with a New sound block's name). Link "
                      "'cutscene files' into Package's 'other file'. A run checks the file and names every problem. "

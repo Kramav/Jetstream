@@ -1313,38 +1313,6 @@ std::string link_value(const Graph& g, const RunValues& preview, const RunValues
     return "";
 }
 
-void History::reset(const Graph& graph) {
-    past_.clear();
-    future_.clear();
-    last_ = graph;
-}
-
-void History::track(const Graph& now) {
-    if (now == last_) return;
-    past_.push_back(std::move(last_));
-    if (past_.size() > 200) past_.erase(past_.begin());
-    future_.clear();  // a new change: what was undone can't be redone any more
-    last_ = now;
-}
-
-bool History::undo(Graph& graph) {
-    if (past_.empty()) return false;
-    future_.push_back(std::move(last_));
-    last_ = std::move(past_.back());
-    past_.pop_back();
-    graph = last_;
-    return true;
-}
-
-bool History::redo(Graph& graph) {
-    if (future_.empty()) return false;
-    past_.push_back(std::move(last_));
-    last_ = std::move(future_.back());
-    future_.pop_back();
-    graph = last_;
-    return true;
-}
-
 std::vector<int> step_order(const Graph& g) {
     std::vector<int> ids;
     for (const Node* n : topo_order(g)) ids.push_back(n->id);

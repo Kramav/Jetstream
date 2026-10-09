@@ -1,8 +1,12 @@
 // The cutscene runtime (CLAUDE.md §10 M3 route 3), outside the game: its camera interpolation run in Lua 5.4 against
 // stand-ins for REFramework's tables, the shipped scripts' syntax, and the example cutscene's shape.
+#include "browse.hpp"
 #include "cutscene.hpp"
 #include "game_code.hpp"
 #include "graph.hpp"
+#include "image.hpp"
+#include "profile.hpp"
+#include "texture_converter.hpp"
 
 #include "helpers.hpp"
 
@@ -203,6 +207,261 @@ TEST_CASE("Actors: checked, motions name them, and remod's own puppet definition
             CHECK(part.at("material").get<std::string>().ends_with(".mdf2"));
         }
     }
+}
+
+TEST_CASE("The cutscene editor's model: read, change, write back, keeping what it doesn't edit") {
+    test::TempDir tmp;
+    const fs::path file = tmp.path / "cutscenes/meet.json";
+    remod::Cutscene c = remod::read_cutscene(file);  // not there yet: a new one, named after it
+    CHECK(c.name == "meet");
+    CHECK(c.actors.empty());
+
+    test::write_file(file, R"({"schema_version": 0, "name": "Meet", "length": 8, "start": {"key": "F11"},
+        "camera": [{"t": 0, "position": [1, 2, 3], "rotation": [0, 0, 0, 1]}],
+        "trigger": {"near": {"position": [1, 2, 3], "radius": 2}}, "mine": 7,
+        "actors": [{"name": "luis", "puppet": "luis", "offset": [-0.8, 0, 2]},
+                   {"name": "ash", "puppet": "ashley", "position": [4, 5, 6], "rotation": [0, 1, 0, 0], "hides": "partner"}],
+        "motions": [{"t": 2, "actor": "luis", "bank": 1000, "motion": 160}],
+        "subtitles": [{"t": 1, "until": 3, "text": "Hola"}], "fades": [{"t": 0, "until": 1, "from": 1, "to": 0}],
+        "movies": [{"t": 7, "id": "mva000"}]})");
+    c = remod::read_cutscene(file);
+    CHECK(c.name == "Meet");
+    CHECK(c.start_key == "F11");
+    REQUIRE(c.camera.size() == 1);
+    CHECK(c.camera[0].position == std::array<double, 3>{1, 2, 3});
+    CHECK(c.camera[0].fov == 0);  // not set: the game's
+    CHECK(c.trigger);
+    REQUIRE(c.actors.size() == 2);
+    CHECK_FALSE(c.actors[0].at_spot);
+    CHECK(c.actors[0].offset == std::array<double, 3>{-0.8, 0, 2});
+    CHECK(c.actors[1].at_spot);
+    CHECK(c.actors[1].position == std::array<double, 3>{4, 5, 6});
+    CHECK(c.actors[1].hides_partner);
+    REQUIRE(c.motions.size() == 1);
+    CHECK(c.motions[0].actor == "luis");
+    CHECK(c.motions[0].blend == 10);  // the runtime's default when the file has none
+    CHECK(c.movies[0].id == "mva000");
+
+    c.motions.push_back({.t = 4, .bank = 1000, .motion = 161});  // on the player
+    c.actors[0].hides_partner = true;
+    remod::write_cutscene(file, c);
+    CHECK(fs::exists(fs::path(file) += ".bak"));
+    const std::string text = test::read_file(file);
+    CHECK(remod::check_cutscene(text).empty());
+    const auto j = nlohmann::json::parse(text);
+    CHECK(j["camera"].size() == 1);
+    CHECK_FALSE(j["camera"][0].contains("fov"));  // not written when not set
+    CHECK_FALSE(j["camera"][0].contains("ease"));
+    CHECK(j["trigger"]["near"]["radius"] == 2);
+    CHECK(j["mine"] == 7);
+    CHECK_FALSE(j["motions"][1].contains("actor"));  // the player: the default
+    CHECK(remod::read_cutscene(file) == c);  // read back the same
+
+    test::write_file(file, "{ broken");
+    CHECK_THROWS_AS(remod::read_cutscene(file), remod::PackageError);
+}
+
+TEST_CASE("The cutscene's timeline: lanes, moving, stretching, adding and removing") {
+    remod::Cutscene c{.length = 10};
+    c.actors = {{.name = "luis", .puppet = "luis"}};
+    c.camera = {{.t = 0}, {.t = 4, .ease = "cut"}, {.t = 8}};
+    c.fades = {{.t = 0, .until = 1, .from = 1, .to = 0}};
+    c.subtitles = {{.t = 2, .until = 4, .text = "Hola"}};
+    c.motions = {{.t = 1, .actor = "luis", .bank = 1000, .motion = 160}, {.t = 3, .bank = 1, .motion = 2}};
+    c.sounds = {{.t = 5, .id = "beeps"}};
+    const auto lanes = remod::cutscene_lanes(c);
+    REQUIRE(lanes.size() == 7);  // camera, fades, subtitles, Leon, luis, movies, sounds
+    CHECK(lanes[0].items.size() == 3);
+    CHECK(lanes[3].actor == "player");
+    REQUIRE(lanes[3].items.size() == 1);
+    CHECK(lanes[3].items[0].ref == remod::CutsceneItemRef{remod::CutsceneLane::Motion, 1});
+    CHECK(lanes[4].actor == "luis");
+    CHECK(lanes[4].items[0].ref.index == 0);
+    CHECK(lanes[2].items[0].until == 4);
+    CHECK(lanes[6].items[0].label == "beeps");
+
+    // A span moved keeps inside the cutscene; stretched past the end, it stops there.
+    remod::CutsceneItemRef sub{remod::CutsceneLane::Subtitle, 0};
+    remod::set_item_time(c, sub, 9, 11);
+    CHECK(c.subtitles[0].t == 9);
+    CHECK(c.subtitles[0].until == 10);
+    remod::set_item_time(c, sub, 12, 10);  // its start can't pass its end
+    CHECK(c.subtitles[0].t < c.subtitles[0].until);
+    remod::set_item_time(c, sub, -3);
+    CHECK(c.subtitles[0].t == 0);
+    // A camera key moved past the next one: the keys stay in time order and the ref follows it.
+    remod::CutsceneItemRef key{remod::CutsceneLane::Camera, 0};
+    remod::set_item_time(c, key, 6);
+    CHECK(key.index == 1);
+    CHECK(c.camera[1].t == 6);
+    CHECK(c.camera[0].t == 4);
+    CHECK(remod::check_cutscene(remod::cutscene_text(c)).size() == 0);
+
+    // Adding: none for camera keys (recorded); a fade out late on; a motion on an actor.
+    CHECK_FALSE(remod::add_item(c, remod::CutsceneLane::Camera, "", 2));
+    const auto fade = remod::add_item(c, remod::CutsceneLane::Fade, "", 9.5);
+    REQUIRE(fade);
+    CHECK(c.fades[fade.index].to == 1);
+    CHECK(c.fades[fade.index].until == 10);
+    CHECK(c.fades[fade.index].t == 9.5);
+    const auto motion = remod::add_item(c, remod::CutsceneLane::Motion, "luis", 7);
+    CHECK(c.motions[motion.index].actor == "luis");
+    remod::remove_item(c, motion);
+    CHECK(c.motions.size() == 2);
+    remod::remove_item(c, {remod::CutsceneLane::Sound, 5});  // no such item: nothing
+    CHECK(c.sounds.size() == 1);
+    CHECK(remod::check_cutscene(remod::cutscene_text(c)).empty());
+}
+
+TEST_CASE("The cutscene at a moment, as the runtime draws it") {
+    remod::Cutscene c{.length = 10};
+    c.actors = {{.name = "luis", .puppet = "luis"}};
+    c.camera = {{.t = 0}, {.t = 4, .ease = "linear"}, {.t = 6, .ease = "cut"}};
+    c.fades = {{.t = 0, .until = 2, .from = 1, .to = 0}};
+    c.subtitles = {{.t = 1, .until = 3, .text = "Hola"}};
+    c.motions = {{.t = 1, .actor = "luis", .bank = 1000, .motion = 160}, {.t = 2, .actor = "luis", .bank = 1000, .motion = 161}};
+    auto f = remod::cutscene_frame(c, 1);
+    CHECK(f.black == 0.5);
+    CHECK(f.subtitle == "Hola");  // from its t
+    CHECK(f.camera_from == 0);
+    CHECK(f.camera_to == 1);
+    CHECK(f.camera_progress == 0.25);  // linear
+    REQUIRE(f.playing.size() == 2);
+    CHECK(f.playing[0].motion == -1);  // Leon: nothing started
+    CHECK(f.playing[1].motion == 0);
+    f = remod::cutscene_frame(c, 3);
+    CHECK(f.black == 0);
+    CHECK(f.subtitle.empty());  // until is the end, not shown
+    CHECK(f.playing[1].motion == 1);
+    CHECK(f.playing[1].since == 1);
+    f = remod::cutscene_frame(c, 5);
+    CHECK(f.camera_to == 2);
+    CHECK(f.camera_progress == 0);  // a cut holds the key before
+    f = remod::cutscene_frame(c, 9);
+    CHECK(f.camera_from == 2);
+    CHECK(f.camera_to == 2);
+    CHECK(remod::cutscene_frame(remod::Cutscene{}, 1).camera_from == -1);
+}
+
+TEST_CASE("Recording and trigger into the cutscene being edited; cutscene files told from other JSON") {
+    test::TempDir tmp;
+    remod::Cutscene c = remod::new_cutscene(tmp.path / "door.json");
+    CHECK(c.name == "door");
+    CHECK(remod::check_cutscene(remod::cutscene_text(c)).empty());
+    CHECK_THROWS_AS(remod::apply_recording(c, tmp.path / "recording.json"), remod::PackageError);
+    test::write_file(tmp.path / "recording.json", R"({"camera": [{"t": 0, "position": [1, 2, 3], "rotation": [0, 0, 0, 1],
+        "fov": 70, "ease": "smooth"}, {"t": 7.5, "position": [1, 2, 4], "rotation": [0, 0, 0, 1], "fov": 70}]})");
+    remod::apply_recording(c, tmp.path / "recording.json");
+    REQUIRE(c.camera.size() == 2);
+    CHECK(c.camera[0].fov == 70);
+    CHECK(c.length == 8.5);  // a second past the last key
+    test::write_file(tmp.path / "trigger.json", R"({"near": {"position": [1, 2, 3], "radius": 2}, "stage": "st40_100"})");
+    remod::apply_trigger(c, tmp.path / "trigger.json");
+    CHECK(c.trigger);
+    const std::string text = remod::cutscene_text(c);
+    CHECK(remod::check_cutscene(text).empty());
+    CHECK(nlohmann::json::parse(text)["trigger"]["stage"] == "st40_100");
+
+    remod::write_cutscene(tmp.path / "door.json", c);
+    test::write_file(tmp.path / "graph.json", R"({"schema_version": 0, "length": 1, "nodes": []})");
+    test::write_file(tmp.path / "junk.json", "{ nope");
+    test::write_file(tmp.path / "big.json", R"({"schema_version": 0, "length": 1, "x": ")" + std::string(1 << 20, 'a') + "\"}");
+    CHECK(remod::is_cutscene_file(tmp.path / "door.json"));
+    CHECK_FALSE(remod::is_cutscene_file(tmp.path / "graph.json"));
+    CHECK_FALSE(remod::is_cutscene_file(tmp.path / "junk.json"));
+    CHECK_FALSE(remod::is_cutscene_file(tmp.path / "big.json"));
+    CHECK_FALSE(remod::is_cutscene_file(tmp.path / "recording.json"));  // no schema_version or length
+    for (const auto& e : remod::list_folder(tmp.path))
+        CHECK((e.kind == remod::FileKind::Cutscene) == (e.name == "door.json"));
+}
+
+TEST_CASE("What the game wrote down for the editor: Leon's spot, the picked animation, the puppets") {
+    test::TempDir tmp;
+    const fs::path game = tmp.path / "game", data = game / "reframework/data";
+    CHECK_FALSE(remod::read_spot(game));
+    CHECK_FALSE(remod::read_picked_animation(game));
+    test::write_file(data / "remod_cutscenes/spot.json", R"({"position": [1, 2, 3], "rotation": [0, 0.7071, 0, 0.7071]})");
+    test::write_file(data / "remod_cutscenes/animation.json",
+                     R"({"actor": "luis", "bank": 1000, "motion": 160, "name": "idle", "frame": 12})");
+    const auto spot = remod::read_spot(game);
+    REQUIRE(spot);
+    CHECK(spot->position == std::array<double, 3>{1, 2, 3});
+    const auto picked = remod::read_picked_animation(game);
+    REQUIRE(picked);
+    CHECK(picked->actor == "luis");
+    CHECK(picked->motion == 160);
+    CHECK(picked->frame == 12);
+
+    test::write_file(data / "remod_puppets/rmc001.json", "{}");
+    test::write_file(data / "remod_puppets/luis.json", "{}");  // also remod's: listed once
+    test::write_file(data / "remod_puppets/bad name.json", "{}");
+    CHECK(remod::puppet_names(game, REMOD_RUNTIME_DIR) == std::vector<std::string>{"ashley", "luis", "rmc001"});
+    CHECK(remod::puppet_names({}, REMOD_RUNTIME_DIR) == std::vector<std::string>{"ashley", "luis"});
+}
+
+TEST_CASE("colourize: every pixel the colour at its own lightness, alpha kept") {
+    remod::Bgra img{3, 1, {255, 255, 255, 10, 0, 0, 0, 20, 128, 128, 128, 30}};  // white, black, grey (B G R A)
+    remod::colourize(img, 220, 0.6f);
+    CHECK(img.pixels[0] == 255);  // white stays white
+    CHECK(img.pixels[2] == 255);
+    CHECK(img.pixels[4] == 0);  // black stays black
+    CHECK(img.pixels[8] > img.pixels[10]);  // grey turns blue: more blue than red
+    CHECK(img.pixels[3] == 10);
+    CHECK(img.pixels[11] == 30);
+}
+
+TEST_CASE("New character: Ashley's body at new paths, its outfit recoloured (set REMOD_GAME)") {
+    char* v = nullptr;
+    size_t n = 0;
+    _dupenv_s(&v, &n, "REMOD_GAME");
+    const std::string game = v ? v : "";
+    std::free(v);
+    if (game.empty()) SKIP("set REMOD_GAME to the extracted natives/STM");
+    if (!fs::exists(fs::path(game) / "_chainsaw/character/ch/cha1/cha103/00")) SKIP("needs Ashley's body (cha103)");
+    test::TempDir tmp;
+    const remod::Profile profile = remod::load_profile(REMOD_PROFILES_DIR "/re4r.toml");
+    remod::NativeConverter converter;
+    remod::NewCharacter spec{.name = "rmc001", .definition = fs::path(REMOD_RUNTIME_DIR) / "puppets/ashley.json"};
+    spec.skip = [](const std::string& f) { return f.find("Hand") != std::string::npos; };
+    std::string report;
+    const auto files = remod::make_new_character(spec, game, profile, converter, tmp.path, &report);
+    INFO(report);
+    CHECK_THAT(report, Catch::Matchers::ContainsSubstring("6 colour texture(s) recoloured (6 with their streaming copies)"));
+    CHECK_THAT(report, Catch::Matchers::ContainsSubstring("left as they are: cha103_00_Hand_ALBD.tex"));
+    CHECK_THAT(report, Catch::Matchers::ContainsSubstring("cha103_00c.mdf2 isn't in the game files"));  // the variant
+    CHECK(files.size() == 6 * 2 + 3);  // the textures and their streaming copies, mesh, material, definition
+
+    const auto def = nlohmann::json::parse(test::read_file(tmp.path / "reframework/data/remod_puppets/rmc001.json"));
+    CHECK(def["name"] == "rmc001");
+    CHECK(def["parts"][0]["mesh"] == "_Chainsaw/Character/ch/cha1/rmc001/00/cha103_00.mesh");
+    CHECK(def["parts"][0]["material"] == "_Chainsaw/Character/ch/cha1/rmc001/00/cha103_00.mdf2");
+    CHECK(def["parts"][1]["mesh"] == "_Chainsaw/Character/ch/cha1/cha100/10/cha100_10.mesh");  // the head: the game's
+
+    const auto utf16 = [](const std::string& s) {
+        std::string out;
+        for (const char c : s) out += {c, '\0'};
+        return out;
+    };
+    const std::string mdf2 = test::read_file(tmp.path / "_Chainsaw/Character/ch/cha1/rmc001/00/cha103_00.mdf2.32");
+    CHECK(mdf2.size() == fs::file_size(fs::path(game) / "_chainsaw/character/ch/cha1/cha103/00/cha103_00.mdf2.32"));
+    CHECK(mdf2.find(utf16("rmc001/00/chc103_00_Upper_ALBD.tex")) != std::string::npos);
+    CHECK(mdf2.find(utf16("cha103/00/chc103_00_Upper_ALBD.tex")) == std::string::npos);
+    CHECK(mdf2.find(utf16("cha103/00/cha103_00_Hand_ALBD.tex")) != std::string::npos);  // left as it is
+    CHECK(mdf2.find(utf16("cha103/00/chc103_00_Upper_NRMR.tex")) != std::string::npos);  // data: the game's
+
+    // A recoloured texture keeps the original's size, format and mips.
+    const fs::path upper = tmp.path / "_Chainsaw/Character/ch/cha1/rmc001/00/chc103_00_Upper_ALBD.tex.143221013";
+    const auto a = remod::read_tex_meta(upper, profile);
+    const auto b = remod::read_tex_meta(fs::path(game) / "_chainsaw/character/ch/cha1/cha103/00/chc103_00_upper_albd.tex.143221013", profile);
+    CHECK((a.width == b.width && a.height == b.height && a.format == b.format && a.mip_count == b.mip_count));
+
+    spec.name = "rmc01";
+    CHECK_THROWS_WITH(remod::make_new_character(spec, game, profile, converter, tmp.path / "x"),
+                      Catch::Matchers::ContainsSubstring("must be 6 letters or digits"));
+    spec.name = "rmc001";
+    spec.part = "tail";
+    CHECK_THROWS_WITH(remod::make_new_character(spec, game, profile, converter, tmp.path / "y"),
+                      Catch::Matchers::ContainsSubstring("its parts: body, head, hair, ac2100_10"));
 }
 
 TEST_CASE("Use recording: the recorded camera into a cutscene, keeping the rest") {

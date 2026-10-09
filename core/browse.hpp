@@ -45,7 +45,8 @@ std::string file_name(const std::string& path);
 
 // What a file is, by its name: an RE Engine texture (.tex, .tex.<version>), mesh (.mesh.<version>), an image the
 // edit step reads (png, tga, jpg), a movie, a Wwise sound bank or package (.sbnk.*, .spck.*), anything else.
-enum class FileKind { Folder, Texture, Mesh, Image, Movie, Sound, Other };
+// Cutscene: a cutscene file (is_cutscene_file), known by its contents, so only list_folder gives it.
+enum class FileKind { Folder, Texture, Mesh, Image, Movie, Sound, Cutscene, Other };
 FileKind file_kind(const std::string& name);
 
 struct DirEntry {

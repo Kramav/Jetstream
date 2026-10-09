@@ -367,6 +367,29 @@ with open(os.path.join(OUT, 'cutscenes', 'started_by_itself.json'), 'w', encodin
                'fades': [{'t': 3.5, 'until': 4.0, 'from': 0.0, 'to': 1.0}]}, f, indent=2)
 print('wrote cutscenes/started_by_itself.json')
 
+# 19. Other characters in a cutscene: Luis (remod ships his puppet definition), and a NEW character, rmc002: Ashley's
+# body as new files in purple, made by New character (nothing of the game's replaced). F6 in game: both stand in front
+# of Leon, the real Ashley hidden while it plays. Places are offsets from Leon (right, up, forward), so it plays
+# anywhere; the cutscene editor (the block's Edit cutscene) changes them, or uses a spot written down in game.
+g = Graph()
+character = g.add('NewCharacter', 'Ashley in purple', character='ashley', name='rmc002', hue=280, saturation=55)
+cutscene = g.add('Cutscene', 'Luis and the new character', cutscene='cutscenes/meet_new_character.json')
+pkg = package(g, 'New character', 'Press F6 in game: Luis and a new character (Ashley in purple) meet Leon')
+g.link(character, 'files', pkg, 'file')
+g.link(cutscene, 'files', pkg, 'file')
+g.save('19_a_new_character_in_a_cutscene.json')
+with open(os.path.join(OUT, 'cutscenes', 'meet_new_character.json'), 'w', encoding='utf-8', newline='\n') as f:
+    json.dump({'schema_version': 0, 'name': 'Meet a new character', 'length': 8.0, 'start': {'key': 'F6'},
+               'letterbox': 0.1,
+               'actors': [{'name': 'luis', 'puppet': 'luis', 'offset': [0.8, 0.0, 2.0]},
+                          {'name': 'purple', 'puppet': 'rmc002', 'offset': [-0.8, 0.0, 2.0], 'hides': 'partner'}],
+               'fades': [{'t': 0.0, 'until': 1.0, 'from': 1.0, 'to': 0.0},
+                         {'t': 7.0, 'until': 8.0, 'from': 0.0, 'to': 1.0}],
+               'subtitles': [{'t': 1.5, 'until': 4.0, 'text': 'Luis: Who is your friend, amigo?'},
+                             {'t': 4.5, 'until': 6.5, 'text': 'A new character, made by remod.'}],
+               'motions': []}, f, indent=2)
+print('wrote cutscenes/meet_new_character.json')
+
 
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):

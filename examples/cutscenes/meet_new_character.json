@@ -1,0 +1,57 @@
+{
+  "schema_version": 0,
+  "name": "Meet a new character",
+  "length": 8.0,
+  "start": {
+    "key": "F6"
+  },
+  "letterbox": 0.1,
+  "actors": [
+    {
+      "name": "luis",
+      "puppet": "luis",
+      "offset": [
+        0.8,
+        0.0,
+        2.0
+      ]
+    },
+    {
+      "name": "purple",
+      "puppet": "rmc002",
+      "offset": [
+        -0.8,
+        0.0,
+        2.0
+      ],
+      "hides": "partner"
+    }
+  ],
+  "fades": [
+    {
+      "t": 0.0,
+      "until": 1.0,
+      "from": 1.0,
+      "to": 0.0
+    },
+    {
+      "t": 7.0,
+      "until": 8.0,
+      "from": 0.0,
+      "to": 1.0
+    }
+  ],
+  "subtitles": [
+    {
+      "t": 1.5,
+      "until": 4.0,
+      "text": "Luis: Who is your friend, amigo?"
+    },
+    {
+      "t": 4.5,
+      "until": 6.5,
+      "text": "A new character, made by remod."
+    }
+  ],
+  "motions": []
+}

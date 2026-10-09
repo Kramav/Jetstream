@@ -402,7 +402,98 @@ void Browser::draw_disk_folder(const fs::path& folder, const std::string& label)
 }
 
 // Pinned (the game files first, then the user's pins), then This PC's drives.
+// The Cutscenes place: where cutscene files are, the graph's and the game's, and what the game wrote down for them.
+void Browser::draw_cutscenes() {
+    const fs::path dir = cutscene_game_.empty() ? fs::path() : cutscene_game_ / "reframework" / "data" / "remod_cutscenes";
+    if (cutscenes_read_for_ != dir || ImGui::GetTime() - cutscenes_read_ > 2) {
+        cutscenes_read_for_ = dir;
+        cutscenes_read_ = ImGui::GetTime();
+        std::error_code ec;
+        game_cutscenes_ = !dir.empty() && fs::is_directory(dir, ec) ? remod::list_folder(dir) : std::vector<remod::DirEntry>{};
+    }
+    const auto leaf = [](const std::string& label) {  // true when clicked
+        ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                                             ImGuiTreeNodeFlags_SpanAvailWidth);
+        return ImGui::IsItemClicked();
+    };
+    // How long ago a file was written, e.g. "5 min ago".
+    const auto age = [](const fs::path& file) -> std::string {
+        std::error_code ec;
+        const auto t = fs::last_write_time(file, ec);
+        if (ec) return "";
+        const auto min = std::chrono::duration_cast<std::chrono::minutes>(fs::file_time_type::clock::now() - t).count();
+        return min < 1 ? "just now" : min < 120 ? std::to_string(min) + " min ago" : std::to_string(min / 60) + " h ago";
+    };
+    ImGui::PushID("cutscenes");
+    const bool open = ImGui::TreeNodeEx("##cutscenes", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
+                                                           ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen,
+                                        "Cutscenes");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Cutscene files: this graph's (its Cutscene blocks'), and the game's copies that Test in game "
+                          "made. Click one to open it in the Cutscene layout.");
+    if (open) {
+        ImGui::TextDisabled("This graph's");
+        if (graph_cutscenes_.empty()) ImGui::TextDisabled("  none yet (New cutscene, or a Cutscene block)");
+        for (size_t i = 0; i < graph_cutscenes_.size(); ++i) {
+            const fs::path& f = graph_cutscenes_[i];
+            std::error_code ec;
+            ImGui::PushID(int(i));
+            if (leaf(f.filename().string() + (fs::exists(f, ec) ? "" : "  (new)")))
+                cutscene_request_ = {CutsceneRequest::What::Open, f};
+            if (ImGui::IsItemHovered() && !ImGui::GetDragDropPayload())
+                ImGui::SetTooltip("%s\nClick to open it.", f.string().c_str());
+            drag_source(f.string(), false);
+            ImGui::PopID();
+        }
+        ImGui::TextDisabled("In the game");
+        if (dir.empty()) ImGui::TextDisabled("  set the Game folder in the Pipeline panel");
+        // What the runtime writes down, not cutscenes of their own.
+        static const std::vector<std::pair<std::string, const char*>> written{
+            {"recording.json", "Camera keys you recorded with F10. Click: use them in the open cutscene."},
+            {"trigger.json", "Make a trigger here's spot. Click: the open cutscene starts by itself there."},
+            {"spot.json", "Write down Leon's spot. Used from an actor's settings (At a spot, Use Leon's spot)."},
+            {"animation.json", "The animation previewer's Use in a cutscene. Add picked animation uses it."}};
+        int shown = 0;
+        for (size_t i = 0; i < game_cutscenes_.size(); ++i) {
+            const auto& entry = game_cutscenes_[i];
+            const bool noted = std::ranges::any_of(written, [&](const auto& w) { return w.first == entry.name; });
+            if (entry.kind != FileKind::Cutscene || noted) continue;
+            ++shown;
+            ImGui::PushID(int(1000 + i));
+            if (leaf(entry.name)) cutscene_request_ = {CutsceneRequest::What::Open, dir / entry.name};
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The game's copy (written %s). Test in game replaces it from your file: edit that one to "
+                                  "keep changes.", age(dir / entry.name).c_str());
+            ImGui::PopID();
+        }
+        if (!dir.empty() && !shown) ImGui::TextDisabled("  no cutscenes yet (Test in game puts them there)");
+        bool any_written = false;
+        for (const auto& [name, tip] : written) {
+            std::error_code ec;
+            if (dir.empty() || !fs::is_regular_file(dir / name, ec)) continue;
+            if (!any_written) ImGui::TextDisabled("Written down in game");
+            any_written = true;
+            ImGui::PushID(name.c_str());
+            if (leaf(fs::path(name).stem().string() + "  (" + age(dir / name) + ")")) {
+                if (name == "recording.json") cutscene_request_ = {CutsceneRequest::What::UseRecording, {}};
+                if (name == "trigger.json") cutscene_request_ = {CutsceneRequest::What::UseTrigger, {}};
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+            ImGui::PopID();
+        }
+        if (!dir.empty()) {
+            if (ImGui::SmallButton("Show the folder")) go(dir);
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton("New cutscene...")) cutscene_request_ = {CutsceneRequest::What::New, {}};
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make a new cutscene file (you pick where) and open it.");
+        ImGui::TreePop();
+    }
+    ImGui::PopID();
+}
+
 void Browser::draw_places(const std::string& natives_root) {
+    draw_cutscenes();
     ImGui::TextDisabled("Pinned");
     ImGui::PushID("game");
     const bool indexed = index_ && natives_root == indexed_root_;
@@ -666,7 +757,8 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
         for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
             const Entry& e = entries_[size_t(i)];
             const bool folder = e.kind == FileKind::Folder;
-            const std::string label = full_paths ? rel_in_game(e.path) : display_name(e.path) + (folder ? "\\" : "");
+            const std::string label = (full_paths ? rel_in_game(e.path) : display_name(e.path) + (folder ? "\\" : "")) +
+                                      (e.kind == FileKind::Cutscene ? "   (cutscene)" : "");
             ImGui::PushID(i);
             const std::string& shown = e.kind == FileKind::Mesh    ? mesh_
                                        : e.kind == FileKind::Movie ? movie_
@@ -683,6 +775,8 @@ void Browser::draw_files(const std::vector<remod::Profile>& profiles, std::strin
                     show_movie(e.path);
                 } else if (e.kind == FileKind::Sound) {
                     show_sounds(e.path);
+                } else if (e.kind == FileKind::Cutscene) {
+                    cutscene_request_ = {CutsceneRequest::What::Open, e.path};
                 } else if (e.kind == FileKind::Texture || e.kind == FileKind::Image) {
                     mesh_focus_ = false;  // the 3D view keeps the last mesh
                     select_texture(e.path, profiles);

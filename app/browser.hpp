@@ -18,6 +18,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Browser {
@@ -55,6 +56,20 @@ public:
     }
     bool viewer_shows_external() const { return bool(external_); }
 
+    // The Cutscenes place (user, 2026-10-08: "I have no idea where cutscenes are stored in the browser"): the graph's
+    // Cutscene blocks' files, and the game's remod_cutscenes folder (Test in game's copies and what the runtime writes
+    // down: recording, trigger, spot, picked animation). Set each frame, before draw.
+    void set_cutscenes(std::vector<std::filesystem::path> graph_files, std::filesystem::path game_dir) {
+        graph_cutscenes_ = std::move(graph_files);
+        cutscene_game_ = std::move(game_dir);
+    }
+    // What a click there (or on a cutscene file anywhere) asked for, once; then None until the next.
+    struct CutsceneRequest {
+        enum class What { None, Open, New, UseRecording, UseTrigger } what = What::None;
+        std::filesystem::path file;  // Open
+    };
+    CutsceneRequest take_cutscene_request() { return std::exchange(cutscene_request_, {}); }
+
 private:
     struct Index {
         remod::AssetIndex assets;
@@ -85,6 +100,7 @@ private:
     const Image& image(const std::string& abs, unsigned max_side, bool force = false);
     void release_unused();
     void draw_places(const std::string& natives_root);
+    void draw_cutscenes();
     void draw_tree(const remod::FolderTree& tree, size_t folder, const std::string& path);
     void draw_disk_folder(const std::filesystem::path& folder, const std::string& label);
     void item_menu(const std::string& abs, bool folder);              // right-click the last item: Pin, Name...
@@ -184,4 +200,10 @@ private:
     std::string naming_;  // the nickname being typed
     int frame_ = 0;
     double load_ms_ = 0;  // spent loading images this frame
+    // The Cutscenes place: set_cutscenes's, the game folder's listing (read every 2 s), and the click's request.
+    std::vector<std::filesystem::path> graph_cutscenes_;
+    std::filesystem::path cutscene_game_, cutscenes_read_for_;
+    std::vector<remod::DirEntry> game_cutscenes_;
+    double cutscenes_read_ = -10;
+    CutsceneRequest cutscene_request_;
 };
