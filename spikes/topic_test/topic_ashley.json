@@ -1,0 +1,17 @@
+{
+  "schema_version": 0,
+  "name": "Topic: Ask about Ashley",
+  "length": 4.0,
+  "letterbox": 0.12,
+  "trigger": {
+    "topic": { "npc": "merchant", "label": "Ask about Ashley" },
+    "flags": [ "remod:topic_talk" ]
+  },
+  "subtitles": [
+    { "t": 0.5, "until": 3.5, "text": "remod: Ask about Ashley (shown only once Talk has played in this save)" }
+  ],
+  "fades": [
+    { "t": 0.0, "until": 0.5, "from": 1.0, "to": 0.0 },
+    { "t": 3.5, "until": 4.0, "from": 0.0, "to": 1.0 }
+  ]
+}

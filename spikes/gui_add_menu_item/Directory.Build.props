@@ -1,0 +1,7 @@
+<Project>
+  <!-- Build output under out\ (git-ignored), not bin\ and obj\ beside the source. -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>out\obj\</BaseIntermediateOutputPath>
+    <BaseOutputPath>out\bin\</BaseOutputPath>
+  </PropertyGroup>
+</Project>

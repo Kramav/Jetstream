@@ -1168,7 +1168,7 @@ local function flag_name(c) return (c.file:match("([^/\\]+)%.json$") or c.file) 
 local function fired_before(c, t)
     local s = trigger_state[c.file]
     local once = t.once
-    if once == nil and type(t.talk) == "table" then once = false end  -- the player asks for it: every time
+    if once == nil and (type(t.talk) == "table" or type(t.topic) == "table") then once = false end  -- the player asks: every time
     if once == false then return false end
     if once == "session" then return s.fired end
     return rflags.on[flag_name(c)] == true  -- once per save: its remod flag
@@ -1177,7 +1177,7 @@ end
 local function fire(c)
     local s = trigger_state[c.file]
     -- A talk trigger's prompt comes back once the cutscene ends (no walking away first: the player asks each time).
-    s.fired, s.done, s.talk_ready = true, type(c.data.trigger.talk) ~= "table", false
+    s.fired, s.done, s.talk_ready = true, type(c.data.trigger.talk) ~= "table" and type(c.data.trigger.topic) ~= "table", false
     rflag_set(flag_name(c))
     for _, f in ipairs(type(c.data.sets_flags) == "table" and c.data.sets_flags or {}) do  -- its named flags
         if f:sub(1, 1) == "!" then rflag_clear(f:sub(2)) else rflag_set(f) end
@@ -1353,7 +1353,7 @@ local function check_triggers()
     local chars = nil
     for _, c in ipairs(cutscenes) do
         local t = c.data.trigger
-        if type(t) == "table" then
+        if type(t) == "table" and type(t.topic) ~= "table" then  -- topics are picked from a menu (shop_update)
             local s = trigger_state[c.file] or {}
             trigger_state[c.file] = s
             if type(t.talk) == "table" and not chars then
@@ -1535,7 +1535,160 @@ local function talk_icons()  -- each frame, in the game's update
         end
     end
 end
-re.on_pre_application_entry("UpdateBehavior", function() if game then talk_icons() end end)
+-- ---- Talk topics in the merchant's menu (trigger.topic; spikes/merchant_menu_test.md runs 1-3, topic_test.md) ----
+-- His first menu's layout comes with remod's spare entries (core gui.*: si_menu_4..7 after the game's four). In the
+-- game's update the topics whose conditions hold take the spares in file order: labelled, given the sizes the game
+-- gives its own four in code (copied from the 4th: the layout's defaults are 1000 wide), without the icon (the game
+-- sets its four's only); the other spares are hidden. Confirming one (the game's Decide, or a click) closes the shop
+-- the game's own way, and the cutscene plays once it has closed.
+local shop = { slots = {}, open = false }
+local function shop_flow()
+    local m = instance("chainsaw.InGameShopManager")
+    return m and m:call("get_FlowController")
+end
+local function shop_menu()  -- the first menu's behaviour: searched for once a second until found, then kept
+    if shop.menu_at and now() - shop.menu_at < 1 and not shop.menu then return nil end
+    if not shop.menu then
+        shop.menu_at = now()
+        local scene = sdk.find_type_definition("via.SceneManager"):get_method("get_CurrentScene"):call(nil)
+        local arr = scene and scene:call("findComponents(System.Type)", sdk.typeof("chainsaw.InGameShopSelectGuiBehavior"))
+        shop.menu = arr and arr:get_elements()[1]
+    end
+    return shop.menu
+end
+local function gui_parts(item)  -- every element under a menu entry by its path of names ("cursor_center/mat_rect")
+    local out = {}
+    local function walk(o, path)
+        out[path] = o
+        local kids = o:call("getChildren(System.Type)", sdk.typeof("via.gui.PlayObject"))
+        for _, k in ipairs(kids and kids:get_elements() or {}) do
+            walk(k, (path == "" and "" or path .. "/") .. tostring(k:call("get_Name")))
+        end
+    end
+    walk(item, "")
+    return out
+end
+local function vec_text(v)
+    local ok, s = pcall(function() return string.format("%.1f %.1f %.1f", v.x, v.y, v.z) end)
+    if ok then return s end
+    ok, s = pcall(function() return string.format("%.1f %.1f", v.w, v.h) end)
+    return ok and s or tostring(v)
+end
+local function match_parts(model, ours)  -- our entry's parts sized as the game sizes its own (label and root excepted)
+    local theirs, mine = gui_parts(model), gui_parts(ours)
+    for path, src in pairs(theirs) do
+        local dst = mine[path]
+        if dst and path ~= "" and not path:match("m_list$") then
+            for _, prop in ipairs({ "Size", "Position", "Scale" }) do
+                local ok, v = pcall(src.call, src, "get_" .. prop)
+                if ok and v ~= nil then
+                    local _, w = pcall(dst.call, dst, "get_" .. prop)
+                    if vec_text(v) ~= vec_text(w) then pcall(dst.call, dst, "set_" .. prop, v) end
+                end
+            end
+        end
+    end
+    return mine
+end
+local function shop_state(f)
+    return enum_name("chainsaw.gui.shop.InGameShopGuiState", f and f:call("get_CurrStateType"))
+end
+local function topics_ready()
+    local where_ok, where = pcall(game.where)
+    local out = {}
+    for _, c in ipairs(cutscenes) do
+        local t = c.data.trigger
+        if type(t) == "table" and type(t.topic) == "table" and t.topic.npc == "merchant" then
+            trigger_state[c.file] = trigger_state[c.file] or {}
+            if holds(t, where_ok and where or nil) and not fired_before(c, t) then table.insert(out, c) end
+        end
+    end
+    return out
+end
+local function shop_update()  -- each frame, in the game's update
+    local ok, err = pcall(function()
+        local menu = shop_menu()
+        local list = menu and menu:get_field("_SelectList")
+        local items = list and list:call("get_Items")
+        items = items and items:get_elements() or {}
+        shop.open = #items > 4
+        if #items == 4 and not shop.said_no_spares and #topics_ready() > 0 then
+            shop.said_no_spares = true
+            log.info("[remod_cutscene] the merchant's menu has no spare entries for talk topics: install the mod "
+                .. "through Fluffy (its menu layout is a game file)")
+        end
+        if not shop.open then shop.slots, shop.confirm = {}, nil return end
+        local ready, labels = topics_ready(), {}
+        shop.slots = {}
+        for i = 5, #items do
+            local c, item = ready[i - 4], items[i]
+            if c then
+                local parts = match_parts(items[4], item)
+                local text, icon = parts["m_list"], parts["icon"]
+                if text and text:call("get_Message") ~= c.data.trigger.topic.label then
+                    text:call("set_Message", c.data.trigger.topic.label)
+                end
+                if icon and icon:call("get_Visible") then icon:call("set_Visible", false) end
+                if not item:call("get_Visible") then item:call("set_Visible", true) end
+                shop.slots[i - 1] = c  -- by the list's selected index (0 = the first entry)
+                table.insert(labels, c.data.trigger.topic.label)
+            elseif item:call("get_Visible") then
+                item:call("set_Visible", false)
+            end
+        end
+        local line = (#labels > 0 and table.concat(labels, ", ") or "none")
+            .. (#ready > #items - 4 and string.format(" (%d more than its %d spare entries)", #ready - (#items - 4), #items - 4) or "")
+        if line ~= shop.logged then
+            shop.logged = line
+            log.info("[remod_cutscene] the merchant's menu: talk topics " .. line)
+        end
+        local f = shop_flow()
+        if shop.confirm and shop_state(f) == "Select_Default" then
+            local c = shop.slots[list:call("get_SelectedIndex")]
+            if c then
+                log.info("[remod_cutscene] " .. (c.data.name or c.file) .. ": picked in the merchant's menu ("
+                    .. shop.confirm .. "); closing the shop")
+                f:call("close")
+                shop.pending = { c = c, at = now() }
+            end
+        end
+        shop.confirm = nil
+    end)
+    if not ok then
+        shop.menu = nil  -- searched for again
+        if shop.err ~= tostring(err) then
+            shop.err = tostring(err)
+            log.info("[remod_cutscene] the merchant's menu: " .. shop.err)
+        end
+    end
+end
+local function shop_frame(click)  -- each frame: a confirm on the menu, and a picked topic once the shop has closed
+    if shop.open then
+        local gim = instance("chainsaw.GuiInputManager")
+        local decide = gim and gim:call("isTrigger(chainsaw.GuiCommandType, System.Boolean)",
+            enum("chainsaw.GuiCommandType", "Decide"), false)
+        shop.confirm = (decide and "the game's confirm") or (click and "a click") or shop.confirm
+    end
+    local p = shop.pending
+    if p and not playing then
+        local state = shop_state(shop_flow())
+        local busy_ok, busy = pcall(game.busy)
+        if (state == "Invalid" or state == "nil") and busy_ok and not busy then
+            shop.pending = nil
+            fire(p.c)
+        elseif now() - p.at > 10 then
+            shop.pending = nil
+            log.info("[remod_cutscene] " .. (p.c.data.name or p.c.file) .. ": the shop didn't close (state " .. state
+                .. ", busy " .. tostring(busy) .. "); not played")
+        end
+    end
+end
+
+re.on_pre_application_entry("UpdateBehavior", function()
+    if not game then return end
+    talk_icons()
+    if game == GAMES.re4 then shop_update() end
+end)
 
 -- ---- Each frame: keys, motions, letterbox, fades, subtitles ----
 local key_down = {}
@@ -1583,6 +1736,8 @@ re.on_frame(function()
         end
     end
     check_triggers()
+    local click = pressed(0x01)  -- every frame, so its edge is right when the merchant's menu opens
+    if game == GAMES.re4 then pcall(shop_frame, click) end
     pcall(watch_saves)
     if flag_watch.on then watch_flags() end
     if not playing then  -- talk triggers ready: the game's icon and Interact (talk_icons); a key the file names also

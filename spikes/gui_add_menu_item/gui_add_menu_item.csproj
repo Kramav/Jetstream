@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Spike tool (spikes/merchant_menu_test.md): adds a 5th entry to the merchant's first menu layout with REE-Lib
+       (kagenocookie/RE-Engine-Lib, MIT), cloned to %LOCALAPPDATA%\remod\tools\RE-Engine-Lib (never committed). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(LOCALAPPDATA)\remod\tools\RE-Engine-Lib\REE-Lib\REE-Lib.csproj" />
+  </ItemGroup>
+</Project>

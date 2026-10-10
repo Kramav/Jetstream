@@ -29,6 +29,14 @@ PackageFile cutscene_runtime(const std::filesystem::path& runtime = runtime_dir(
 std::vector<PackageFile> cutscene_files(const std::filesystem::path& cutscene,
                                         const std::filesystem::path& runtime = runtime_dir());
 
+// Whether a cutscene is a talk topic in the merchant's menu (trigger.topic.npc "merchant"): its mod then needs that
+// menu's layout with remod's spare entries (merchant_menu_layout). False for a file that isn't readable.
+bool has_merchant_topic(const std::filesystem::path& cutscene);
+// The merchant's menu layout with kMerchantSpareEntries spare entries (core gui.*), made from the extracted game
+// files `natives` (natives\STM) into `out_dir` (named by the game file's bytes; written if `write` and not there yet),
+// at its game path. Throws PackageError if the game's layout is missing or not one remod can add to.
+PackageFile merchant_menu_layout(const std::filesystem::path& natives, const std::filesystem::path& out_dir, bool write);
+
 // What's wrong with a cutscene file (format v0), one problem per entry, e.g. "camera key 3: t 2 isn't after the key
 // before it (4)"; empty if nothing. For a person or an AI writing one by hand.
 std::vector<std::string> check_cutscene(const std::string& json_text);

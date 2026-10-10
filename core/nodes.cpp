@@ -1228,11 +1228,24 @@ NodeSpec lua_script_node() {
     };
 }
 
-// A Cutscene block's files (cutscene_files: the runtime, then the cutscene) as its list output.
-std::vector<PackageFile> cutscene_list(NodeRun& r) {
+// A Cutscene block's files (cutscene_files: the runtime, then the cutscene) as its list output; a talk topic in the
+// merchant's menu adds his menu's layout with remod's spare entries (made from the game files in the run cache; a
+// preview only names it).
+std::vector<PackageFile> cutscene_list(NodeRun& r, bool make = false) {
     std::vector<PackageFile> files;
     try {
         files = cutscene_files(r.resolve(r.text("cutscene")));
+        if (has_merchant_topic(files[1].source)) {
+            std::string natives;
+            try {
+                natives = fill_game("{game}");
+            } catch (const GraphError&) {
+                throw GraphError("a talk topic in the merchant's menu needs the Game files folder set: his menu's "
+                                 "layout is made from them");
+            }
+            const fs::path& cache = r.run.options.cache_dir;
+            files.push_back(merchant_menu_layout(natives, cache.empty() ? r.run.work_dir : cache, make));
+        }
     } catch (const PackageError& e) {
         throw GraphError(e.what());
     }
@@ -1265,7 +1278,7 @@ NodeSpec cutscene_node() {
         .outputs = {{.name = "files", .type = Path, .label = "cutscene files", .list = true}},
         .family = Family::Source,
         .run = [](NodeRun& r) {
-            const auto files = cutscene_list(r);
+            const auto files = cutscene_list(r, true);
             std::ifstream in(long_path(files[1].source), std::ios::binary);
             const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
             if (const auto problems = check_cutscene(text); !problems.empty()) {
@@ -3025,7 +3038,9 @@ const char* ai_note(std::string_view type) {
                      "actor; actors: [{name, puppet (ashley, luis, or a New character's name), offset [right, up, "
                      "forward] from the player or position + rotation from the game, hides: \"partner\"}]; "
                      "movies: [{t, id}] with a game movie's name (mva000) or a New movie block's name; sounds: "
-                     "[{t, id}] with a New sound block's name). Link "
+                     "[{t, id}] with a New sound block's name; trigger.topic {npc: \"merchant\", label} makes it an "
+                     "entry in the merchant's menu, shown while trigger.flags hold, and adds his menu's layout to the "
+                     "files: needs the Game files folder). Link "
                      "'cutscene files' into Package's 'other file'. A run checks the file and names every problem. "
                      "Camera positions come from the game: the user records them in game (F10) and uses Use recording; "
                      "never invent coordinates."},

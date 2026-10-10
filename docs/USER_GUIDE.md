@@ -467,6 +467,11 @@ The trigger's parts, all optional but at least one needed:
   game's icon and Interact start it. Several talk triggers on one character share one icon: the first ready one by
   file name. Where the icon can't be made (nothing in the area to copy it from), a drawn "[T] Talk" prompt and its
   key (T by default) stand in, and the log says why;
+- `topic`: `{"npc": "merchant", "label": "Ask about Ashley"}`: an entry in the merchant's menu (Buy, Sell, ...)
+  with that text, shown while the trigger's other conditions hold (`flags`, say). Picking it closes his shop and plays
+  the cutscene, every time by default. Not with `near` or `talk`. Up to four topics show at once. The mod then includes
+  his menu's layout with four spare entries, made from your game files (the Game files folder must be set), so install
+  it through Fluffy: Test in game copies only the scripts and cutscenes. Not yet tried in game;
 - `flags`: story flag names that must be on; one starting with `!` must be off. Besides the game's, remod's own:
   `remod:<cutscene>` is on once that cutscene's trigger has started it in this save, e.g. `"remod:meet_luis"` (its
   file was `meet_luis.json`) to play only after it, `"!remod:meet_luis"` only before it;

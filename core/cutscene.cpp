@@ -1,5 +1,6 @@
 #include "cutscene.hpp"
 
+#include "gui.hpp"
 #include "image.hpp"
 #include "texture_converter.hpp"
 
@@ -88,6 +89,42 @@ std::vector<PackageFile> cutscene_files(const fs::path& cutscene, const fs::path
     return files;
 }
 
+bool has_merchant_topic(const fs::path& cutscene) {
+    const json c = json::parse(read_text(cutscene), nullptr, false);
+    const json* t = c.is_object() && c.contains("trigger") ? &c["trigger"] : nullptr;
+    return t && t->is_object() && t->contains("topic") && (*t)["topic"].is_object() &&
+           (*t)["topic"].value("npc", std::string()) == "merchant";
+}
+
+PackageFile merchant_menu_layout(const fs::path& natives, const fs::path& out_dir, bool write) {
+    const fs::path source = natives / kMerchantMenuGui;
+    std::ifstream in(source, std::ios::binary);
+    if (!in) throw PackageError("the merchant's menu layout isn't in the game files: " + source.string());
+    const std::string gui{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    const fs::path out = out_dir / ("merchant_menu_" + std::to_string(std::hash<std::string>{}(gui)) + ".gui.540034");
+    std::error_code ec;
+    if (write && !fs::is_regular_file(out, ec)) {
+        std::vector<std::string> names;
+        for (int i = 0; i < kMerchantSpareEntries; ++i) names.push_back("si_menu_" + std::to_string(4 + i));
+        std::string edited;
+        try {
+            edited = add_gui_entries(gui, kMerchantMenuLast, names);
+        } catch (const std::runtime_error& e) {
+            throw PackageError(source.string() + ": " + e.what());
+        }
+        fs::create_directories(out_dir, ec);
+        fs::path part = out;
+        part += ".part";
+        {
+            std::ofstream o(part, std::ios::binary | std::ios::trunc);
+            o.write(edited.data(), std::streamsize(edited.size()));
+            if (!o) throw PackageError("can't write " + part.string());
+        }
+        fs::rename(part, out);
+    }
+    return {out, kMerchantMenuGui};
+}
+
 std::vector<std::string> check_cutscene(const std::string& json_text) {
     std::vector<std::string> p;
     const json c = json::parse(json_text, nullptr, false);
@@ -117,7 +154,7 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
     if (c.contains("trigger")) {
         const json& t = c["trigger"];
         if (!t.is_object()) {
-            p.push_back("trigger must be an object (near, talk, flags, after, stage, area, location, chapter, delay, once)");
+            p.push_back("trigger must be an object (near, talk, topic, flags, after, stage, area, location, chapter, delay, once)");
         } else {
             bool any = false;
             if (t.contains("near")) {
@@ -154,6 +191,20 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                 if (k.is_object() && k.contains("radius") && !(k["radius"].is_number() && k["radius"].get<double>() > 0))
                     p.push_back("trigger.talk.radius must be a number of metres above 0");
             }
+            // A talk topic: an entry in the merchant's menu (shown while its flags hold); picking it starts the cutscene.
+            if (t.contains("topic")) {
+                any = true;
+                const json& k = t["topic"];
+                if (!k.is_object() || k.value("npc", std::string()) != "merchant")
+                    p.push_back("trigger.topic.npc must be \"merchant\" (an entry in his menu)");
+                const std::string label = k.is_object() && k.contains("label") && k["label"].is_string()
+                                              ? k["label"].get<std::string>() : "";
+                if (label.empty() || label.size() > 40)
+                    p.push_back("trigger.topic.label must be the entry's text, up to 40 characters (e.g. \"Ask about Ashley\")");
+                if (t.contains("near") || t.contains("talk"))
+                    p.push_back("trigger.topic is picked from the merchant's menu: take out near and talk (each is its own "
+                                "way to start)");
+            }
             // Story flags: each must be on ("Name") or off ("!Name"), by the game's names (the menu's Story flags), or
             // remod's own, "remod:<cutscene file's name>": on once that cutscene's trigger started it in this save.
             if (t.contains("flags")) {
@@ -173,7 +224,7 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                     p.push_back("trigger.after must be {\"movie\": id} or {\"event\": id}, the game's names (e.g. "
                                 "\"mva000\", \"csa012\")");
             }
-            if (!any) p.push_back("trigger needs a condition: near, talk, flags, after, stage, area, location or chapter");
+            if (!any) p.push_back("trigger needs a condition: near, talk, topic, flags, after, stage, area, location or chapter");
             if (t.contains("delay") && !(t["delay"].is_number() && t["delay"].get<double>() >= 0))
                 p.push_back("trigger.delay must be seconds, 0 or more");
             if (t.contains("once") && !t["once"].is_boolean() && t["once"] != "session")

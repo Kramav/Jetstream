@@ -545,7 +545,7 @@ TEST_CASE("Triggers: checked, and Make a trigger here's file put into a cutscene
     CHECK(with(R"({"near": {"position": [1, 2, 3], "radius": 2}, "chapter": "chap01_01", "delay": 0.5, "once": false})").empty());
     CHECK(with(R"({"stage": "st40_100"})").empty());
     CHECK(with("{}") ==
-          std::vector<std::string>{"trigger needs a condition: near, talk, flags, after, stage, area, location or chapter"});
+          std::vector<std::string>{"trigger needs a condition: near, talk, topic, flags, after, stage, area, location or chapter"});
     CHECK(with(R"({"near": {"position": [1, 2], "radius": 0}, "chapter": 3, "delay": -1, "once": "yes"})") ==
           std::vector<std::string>{
               "trigger.near.position must be [x, y, z] (from Make a trigger here, never typed)",
@@ -572,6 +572,23 @@ TEST_CASE("Triggers: checked, and Make a trigger here's file put into a cutscene
     CHECK(with(R"({"talk": {"npc": "x", "key": "F123456789012"}})").size() == 1);   // refused, never thrown
     // remod's own flags: read as "remod:name", set by a cutscene's sets_flags ("!" turns one off).
     CHECK(with(R"({"flags": ["remod:meet_luis", "!remod:chose_to_help"]})").empty());
+    // Talk topics: an entry in the merchant's menu.
+    CHECK(with(R"({"topic": {"npc": "merchant", "label": "Ask about Ashley"}, "flags": ["remod:topic_talk"]})").empty());
+    CHECK(with(R"({"topic": {"npc": "ch2_a1z0", "label": ""}, "talk": {"npc": "x"}})") ==
+          std::vector<std::string>{
+              "trigger.topic.npc must be \"merchant\" (an entry in his menu)",
+              "trigger.topic.label must be the entry's text, up to 40 characters (e.g. \"Ask about Ashley\")",
+              "trigger.topic is picked from the merchant's menu: take out near and talk (each is its own way to start)"});
+    {
+        test::TempDir t;
+        test::write_file(t.path / "a.json", R"({"trigger": {"topic": {"npc": "merchant", "label": "Talk"}}})");
+        test::write_file(t.path / "b.json", R"({"trigger": {"talk": {"npc": "merchant"}}})");
+        CHECK(remod::has_merchant_topic(t.path / "a.json"));
+        CHECK_FALSE(remod::has_merchant_topic(t.path / "b.json"));
+        CHECK_FALSE(remod::has_merchant_topic(t.path / "missing.json"));
+        CHECK_THROWS_WITH(remod::merchant_menu_layout(t.path, t.path / "out", true),
+                          Catch::Matchers::ContainsSubstring("isn't in the game files"));
+    }
     const auto sets = [](const std::string& s) {
         return remod::check_cutscene(R"({"schema_version": 0, "length": 2, "sets_flags": )" + s + "}");
     };

@@ -746,7 +746,7 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 |---|---|---|---|
 | Noesis | **Optional** (2026-10-02): texture conversion if chosen; the 3D view's fallback for meshes the tool can't read | Freeware, no redistribution terms found | Don't bundle. Offer `winget install -e --id RichWhitehouse.Noesis`, or detect existing install |
 | fmt_RE_MESH Noesis plugin | **Optional**, with Noesis | Fork checked had **no license file** (all rights reserved by default); original repo not checked | Don't bundle, don't copy from it; the user installs it. Format knowledge is cited from REE-Lib (MIT) instead |
-| REE-Lib (kagenocookie/RE-Engine-Lib) | Reference only: `.tex` and `.mdf2` layouts (`TexFile.cs`, `MdfFile.cs`); later `.mesh` (`MeshFile.cs`) | MIT [official] | Not linked (C#). No code copied; if any ever is, add its MIT notice |
+| REE-Lib (kagenocookie/RE-Engine-Lib) | Reference only: `.tex` and `.mdf2` layouts (`TexFile.cs`, `MdfFile.cs`); later `.mesh` (`MeshFile.cs`). **Spike only (2026-10-10):** `spikes/gui_add_menu_item` links it to edit a `.gui` | MIT [official] | Not linked into remod (C#). The spike tool builds against a local clone (`%LOCALAPPDATA%\remod\tools\RE-Engine-Lib`, needs the .NET 10 SDK), never committed or shipped. No code copied; if any ever is, add its MIT notice |
 | ww2ogg's codebooks (`packed_codebooks_aoTuV_603.bin`, hcs64/ww2ogg commit 14ed9b0) | Wwise's Vorbis codebook library: checks libvorbis's setup against the replaced WEM's before writing (§10 story movies' sound) | BSD 3-clause (Xiph.org, Adam Gashlin) [official, its COPYING] | **Shipped (user, 2026-10-06):** `third_party/ww2ogg/`, installed to `data\`, licence in `licenses\ww2ogg.txt`. No ww2ogg code is used |
 | libvorbis 1.3.7 / libogg 1.3.6, libopus 1.6.1 | Writing (and decoding) Wwise Vorbis / Opus WEMs (`core/wwise.*`) | BSD 3-clause [official] | **Adopted 2026-10-06:** vcpkg, core-private, static in the release zip; in the notices |
 | Lua 5.4.8 | Syntax-checking REFramework scripts (`core/game_code.*`) | MIT [official] | **Adopted 2026-10-07:** vcpkg (override), core-private, static; in the notices |
@@ -1400,6 +1400,108 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       hooks or a C++ plugin, licences), then decide. Don't start it until asked. Starting points from the dump: the
       shop's `chainsaw.gui.shop.InGameShopGuiState_*` states (SelectEnter / SelectExit, ShopEnter, ForceClose ...)
       and `chainsaw.InGameShopManager`.
+      **Started 2026-10-10 (user: "add a new tab to the merchants menu after pressing interact ... ideally one drawn
+      on ashley ... first step would probably be merchant"; tab holds talk topics first, items to buy later).**
+      - **Survey:** one RE4R mod adds a merchant tab ("The Merchant Provides All Weapons", Nexus 2290: a "Classified"
+        tab; how it does it unknown, its page refused the fetch). REE Content Editor (MIT) reads / writes `.gui` and
+        `.msg` (REE-Lib `GuiFile.cs`), so a GUI layout edit is possible as an asset mod. Nothing found that adds menu
+        entries from Lua at runtime.
+      - **The game's menu [dump]:** after Interact, `chainsaw.InGameShopSelectGuiBehavior` (`_SelectList`
+        via.gui.SimpleList of via.gui.SelectItem, `get_SelectedIndex`, `OnDecided` Action<InGameShopMenuKind: Purchase,
+        Sell, Custom, Reward>, `select`, `decide`); then the shop window `chainsaw.InGameShopGuiBehavior` with a tab
+        strip `chainsaw.gui.shop.TabListGui` (in `TabGui._TabListGui`: `_TabElements` TabElement {_NameText via.gui.Text,
+        _RootControl Panel, setElementName(Guid), setState, setUVPtnNo}, `TabElementNum`, `CurrFocusType`
+        InGameShopWindowType: Purchase, Sell, Custom, Case, RePurchase, Reward; `_WindowTypeNameTable`). State:
+        `InGameShopManager` (AppSingleton) `get_FlowController` -> `get_CurrPhase`, `get_CurrStateType` (a closed enum),
+        `close()`. Labels: `via.gui.Text` `set_Message(String)` (any text at runtime, no .msg needed). Lists take their
+        items from the GUI layout: `via.gui.ItemsControl` has `get_Items` / `selectItem`, no runtime add.
+      - **Is the merchant first right?** Yes: same base as Ashley's (driving the game's GUI), and his menu exists to
+        learn from; a new entry is the harder half (fixed layout and state enum). Ashley's could reuse a simpler GUI
+        (`chainsaw.DialogManager`, `GeneralDialogGuiBehavior`, `gui.FloatIconDialogGui`) or partner talk
+        (`CharacterTalkManager`).
+      - **Shop menu probe run 1 (ready, read-only):** `spikes/shop_menu_probe.md`: logs phase / state / select index on
+        change; F5 writes the select menu's and shop window's GUI trees (type, name, visible, text, play state) and
+        each select item. Decides next: a spare (hidden) item to reuse, a GUI layout edit, or our own menu.
+      - **Shop menu probe run 1 (log + JSON, 2026-10-10), no crash:** the first menu is `Gui_ui3510` (layout
+        `natives/STM/_chainsaw/ui/ui3500/gui/cs_ui3510.gui.540034`, prefab `_chainsaw/appsystem/prefab/gui/
+        gui_ui3510.pfb.17`): View > `main` > SimpleList `slist_menu` with exactly **4 SelectItems `si_menu_0..3`, all
+        visible: no spare item** (each: `m_list` a via.gui.MaterialText label, `icon` Texture, `cursor_center`,
+        `c_new`, `hitarea`); plus `c_capital_pos` (money, spinels, tickets) and Text `m_header`. States as read: flow
+        phase WaitOpen -> Move; shop state Select_Enter -> Select_Default (SelectedIndex 0-3 follows the cursor) ->
+        Purchase_Enter on Buy. The shop window `Gui_ui3500` (layout `cs_ui3500.gui`) exists already while the first
+        menu shows (601+ elements; the probe's 600 cap stopped before its tab strip). The four kinds are
+        InGameShopMenuKind Purchase, Sell, Custom, Reward. So a fifth entry can't be shown from a script alone: it
+        needs the layout edited (a 5th SelectItem in `cs_ui3510.gui`), or our own menu.
+      - **Decided (user, 2026-10-10): edit the layout, test first.** Tool: `spikes/gui_add_menu_item` (C#, net8.0,
+        on REE-Lib cloned to `%LOCALAPPDATA%\remod\tools\RE-Engine-Lib`, never committed; REE-Lib needs the **.NET 10
+        SDK**, installed by the user's choice with winget 2026-10-10: 10.0.401; it uses C# 14 throughout). Found
+        [game data]: `cs_ui3510.gui` is version 540034 (GuiVersion RE4 = 34), 9 containers; `slist_menu`'s container
+        holds `hitarea` and `si_menu_0..3`, **all four sharing one child container** (`90c17c58...`), Positions y -90,
+        -10, 70, 150 (step 80), Priority 10-13. REE-Lib's write isn't byte-identical (4 KB larger, offsets moved; its
+        own output round-trips byte-identical), but every container reads back the same (elements, attributes, data,
+        clip counts, 56 overrides, resources, linked GUIs). `add` copies `si_menu_3` as `si_menu_4` (new ID, same
+        child container, Name attribute, Position y 230, Priority 14).
+      - **Merchant menu test run 1 (ready):** `spikes/merchant_menu_test.md`, built by `spikes/make_merchant_menu_test.ps1`
+        (the edited layout from the user's extracted files + `merchant_menu_test.lua`, zipped with tar into
+        `spikes/out/`). The script labels the 5th entry's `m_list` "Talk (remod test)" (set_Message, in UpdateBehavior)
+        and logs entry count, selection and shop state; it picks and closes nothing.
+      - **Run 1 (user + log, 2026-10-10): WORKS.** The menu had 5 entries, the cursor reached index 4, our label took;
+        confirming it **did nothing and didn't crash** (state stayed Select_Default until the user backed out: Close).
+        Its selection highlight was larger than the others' (user; the label "Talk (remod test)" was long).
+      - **Run 2 (ready):** entries 5 and 6 (`si_menu_5` copied from `si_menu_4`: y 310, Priority 15) labelled "Talk"
+        and "Ask about Ashley"; F5 hides / shows the 6th (`set_Visible`); confirm is the game's own
+        `chainsaw.GuiInputManager` (AppSingleton) `isTrigger(GuiCommandType.Decide, false)` [dump] read in
+        UpdateBehavior while the state is Select_Default and the index is 4 or 5, then `FlowController.close()`.
+        Plan if it holds: talk topics as menu entries (one per topic cutscene, shown by flags), confirm closes the
+        shop and fires the topic's cutscene.
+      - **Run 2 (user + log + the user's screenshot, 2026-10-10):** both entries showed, labelled; **`set_Visible`
+        false / true on the 6th worked** (read back too); **no confirm was caught** (no line: `isTrigger(Decide)`
+        read before UpdateBehavior never true; the user clicked with the mouse); new entries show Buy's gun icon (the
+        game sets each entry's icon in code, for its four); **the highlight on ours is wider, stretching left across
+        the screen** (the game sizes entries' parts in code, for its four only).
+      - **Run 3 (ready):** each frame our entries' parts copy Size / Position / Scale from the 4th entry's parts by
+        path of names (labels excluded; what differed logged once per menu); confirm watched in on_frame by
+        `isTrigger(Decide)`, the edge of `isDown(Decide)`, mouse left, Enter, Space (logged which), acted on in the
+        next UpdateBehavior.
+      - **Run 3 (user + log, 2026-10-10): WORKS. "both talk and ask about ashley closes the menu."** Confirm is caught
+        by a mouse click and by `isTrigger(Decide)` read in `on_frame` (keyboard / pad: the player's own bindings);
+        `FlowController.close()` closes the shop (its state still read Select_Default right after the call). **The
+        highlight:** the game sizes its four entries' cursor parts in code; ours had the layout's defaults:
+        `cursor_center/mat_line_top` and `mat_line_bottom` 1000x1 -> 350x1, `cursor_flash` 1000x96 -> 350x106,
+        `mat_rect` 1000x60 -> 350x70, `mat_line_bottom` Position y 60 -> 70. Copying them from entry 4 fixes it.
+        Icons are set in code too, for the four only (ours show Buy's gun): hidden on ours.
+      - **Decided (user, 2026-10-10): build it.** remod writes the layout itself (core `gui.*`: the game's file with
+        spare entries appended, nothing of it moved; no REE-Lib / .NET) and cutscene files get talk topics
+        (`trigger.topic`), shown in the spares by flags; confirming one closes the shop and plays it.
+      - **Built 2026-10-10, not run in game: `spikes/topic_test.md`.**
+        - Core `gui.*`: `gui_list`, `add_gui_entries(gui, copy, names)` (RE4R's GUI version 34 only). The game's bytes
+          stay; appended are, per entry, its name, a Position, a copy of the source's attribute block (Name -> the new
+          name, Position moved on by the step before it, Priority + 1) and its 112-byte element (ID made from the
+          names, so the same file each run); then a new element list, and the container's list offset (8 bytes) is the
+          only change inside the game's part. Reorders, extra attributes and children are the source's (shared).
+          Checked on the real file: our reader and REE-Lib's `dump` agree (9 entries, y 230-470, Priority 14-17, the
+          other containers, 56 overrides, resources unchanged).
+        - `kMerchantSpareEntries` 4 (`si_menu_4..7`), visible in the layout as runs 1-3 had them; the runtime hides the
+          unused.
+        - Cutscene file `trigger.topic` {`npc`: "merchant", `label` (1-40 characters)}, beside `flags` / `once` /
+          `delay`; not with `near` / `talk` (`check_cutscene`). Played every time by default, as talk triggers.
+        - The Cutscene block's list adds `cs_ui3510.gui.540034` (`has_merchant_topic`, `merchant_menu_layout`: made from
+          `{game}` into the run cache, named by the game file's bytes; a preview only names it). Not in
+          `cutscene_files`: Test in game copies that list into the game folder, and the layout is a natives file
+          (Fluffy installs it). No Game files folder: the run fails saying so.
+        - Runtime: `shop_update` (UpdateBehavior; the select menu's behaviour searched once a second until found):
+          ready topics (flags hold, `fired_before`) fill spares 5, 6, ... in file order (`set_Message`, `match_parts`
+          from entry 4, `icon` hidden, shown); unused spares hidden; logged on change ("talk topics ..."); only 4
+          entries with topics waiting logs once that the layout isn't installed. `shop_frame` (on_frame): confirm =
+          `isTrigger(Decide)` or a mouse click while the menu shows; acted on in the update at Select_Default on one of
+          ours: `close()`, then the cutscene fires once the shop state is Invalid and `busy()` is false (10 s limit,
+          logged). `check_triggers` skips topic triggers.
+        - Open (the test): does the cursor skip hidden spares; flags per save slot showing / hiding topics.
+    - **Wanted (user, 2026-10-10): interact with Ashley on command, with a menu, or any NPC: "build a framework for
+      that".** Not started until asked. Starting point [inferred]: the talk icon already works on any character
+      (talk triggers, the game's interact icon); Interact on it would open a remod menu listing that NPC's topics, in
+      the same topic format as the merchant's (`topic.npc` = a character kind). The menu itself: a game GUI to reuse
+      (`chainsaw.DialogManager`, `GeneralDialogGuiBehavior`) or our own, to survey then.
     - **The game's movies and cutscenes [dump]:** `MovieMediator` / `TimelineEventMediator` `isPlaying()`,
       `getWork(ID)` (`MovieWork.get_IsPlaying`; `TimelineEventWork._EventPhase`, `EventPhase.Playing`); ids are
       `chainsaw.MovieDefine.ID` / `TimelineEventDefine.ID` names (`csa000`...). Play time: `share.GameClock`
