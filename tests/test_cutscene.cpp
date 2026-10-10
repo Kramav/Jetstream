@@ -570,6 +570,15 @@ TEST_CASE("Triggers: checked, and Make a trigger here's file put into a cutscene
               "trigger.after must be {\"movie\": id} or {\"event\": id}, the game's names (e.g. \"mva000\", \"csa012\")"});
     CHECK(with(R"({"talk": {"npc": "x", "key": "g"}, "flags": []})").size() == 2);  // lower-case key; an empty list
     CHECK(with(R"({"talk": {"npc": "x", "key": "F123456789012"}})").size() == 1);   // refused, never thrown
+    // remod's own flags: read as "remod:name", set by a cutscene's sets_flags ("!" turns one off).
+    CHECK(with(R"({"flags": ["remod:meet_luis", "!remod:chose_to_help"]})").empty());
+    const auto sets = [](const std::string& s) {
+        return remod::check_cutscene(R"({"schema_version": 0, "length": 2, "sets_flags": )" + s + "}");
+    };
+    CHECK(sets(R"(["chose_to_help", "!met_luis"])").empty());
+    for (const char* bad : {R"("x")", R"(["a b"])", R"(["!"])", R"([3])", R"(["remod:x"])"})
+        CHECK(sets(bad) == std::vector<std::string>{
+                               "sets_flags must be a list of flag names (letters, digits, _), \"!\" before one to turn off"});
 
     test::TempDir tmp;
     const fs::path trig = tmp.path / "game/reframework/data/remod_cutscenes/trigger.json";

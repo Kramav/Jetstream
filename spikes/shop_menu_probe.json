@@ -1,0 +1,10 @@
+{
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {"id": 1, "type": "LuaScript", "params": {"script": "shop_menu_probe.lua"}},
+    {"id": 2, "type": "PackageMod", "params": {"name": "remod shop menu probe", "out": "out", "version": "1",
+      "replace": "true", "description": "Read-only: what the merchant's menu is made of (spikes/shop_menu_probe.md)"}}
+  ],
+  "links": [{"from": [1, "files"], "to": [2, "file"]}]
+}

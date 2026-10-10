@@ -106,6 +106,13 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
     if (c.contains("letterbox") && !(c["letterbox"].is_number() && c["letterbox"].get<double>() >= 0 &&
                                      c["letterbox"].get<double>() < 0.5))
         p.push_back("letterbox must be a number from 0 to below 0.5 (each bar's share of the screen's height)");
+    // remod flags its trigger turns on ("name") or off ("!name") as it starts it; triggers read them as "remod:name".
+    if (c.contains("sets_flags") &&
+        !(c["sets_flags"].is_array() && std::ranges::all_of(c["sets_flags"], [](const json& f) {
+            const std::string s = f.is_string() ? f.get<std::string>() : "";
+            return plain_name(s.starts_with('!') ? s.substr(1) : s);
+        })))
+        p.push_back("sets_flags must be a list of flag names (letters, digits, _), \"!\" before one to turn off");
     // The cutscene starts by itself when every condition its trigger names becomes true.
     if (c.contains("trigger")) {
         const json& t = c["trigger"];
@@ -147,7 +154,8 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                 if (k.is_object() && k.contains("radius") && !(k["radius"].is_number() && k["radius"].get<double>() > 0))
                     p.push_back("trigger.talk.radius must be a number of metres above 0");
             }
-            // Story flags: each must be on ("Name") or off ("!Name"), by the game's names (the menu's Story flags).
+            // Story flags: each must be on ("Name") or off ("!Name"), by the game's names (the menu's Story flags), or
+            // remod's own, "remod:<cutscene file's name>": on once that cutscene's trigger started it in this save.
             if (t.contains("flags")) {
                 any = true;
                 if (!t["flags"].is_array() || t["flags"].empty() ||

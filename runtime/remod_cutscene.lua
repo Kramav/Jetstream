@@ -335,7 +335,8 @@ local GAMES = {
                         local pos = ctx and ctx:call("get_Position")
                         if pos then
                             table.insert(out, { kind = enum_name("chainsaw.CharacterKindID", ctx:call("get_KindID")),
-                                                position = pos, list = getter:match("get_(%a-)Context") })
+                                                position = pos, list = getter:match("get_(%a-)Context"),
+                                                body = ctx:call("get_BodyGameObject") })
                         end
                     end)
                 end
@@ -350,11 +351,13 @@ local GAMES = {
                 for _, m in ipairs(found and found:get_elements() or {}) do table.insert(merchants, m) end
             end
             for _, m in ipairs(merchants) do
-                pcall(function()
+                local ok = pcall(function()
                     local body = m:get_field("NpcBodyObj") or m:call("get_GameObject")
                     table.insert(out, { kind = "merchant", position = body:call("get_Transform"):call("get_Position"),
-                                        list = "Gimmick" })
+                                        list = "Gimmick", body = body })
                 end)
+                -- A merchant whose area unloaded throws (and REFramework logs it every check, run 8): search again.
+                if not ok then merchants_at = nil end
             end
             return out
         end,
@@ -391,8 +394,6 @@ local GAMES = {
         difficulty = function()
             return enum_name("chainsaw.CampaignManager.Difficulty", instance("chainsaw.CampaignManager"):call("get_CurrentDifficulty"))
         end,
-        -- The save's play time (share.GameClock, counts while playing; a save loaded brings its own): for "once per save".
-        play_time = function() return instance("share.GameClock"):call("get_ActualPlayingTime") end,
         -- The game's own movie or cutscene playing now: "movie" or "event", and its id's name (e.g. mva000, csa012), or
         -- nil [dump: MovieMediator / TimelineEventMediator isPlaying and getWork(ID); MovieWork get_IsPlaying;
         -- TimelineEventWork _EventPhase Playing]. Its id is looked for only while one plays. [Not seen in game yet.]
@@ -438,8 +439,10 @@ local function load_all()
         local rel = path:match("[/\\]data[/\\](.*)$") or path  -- relative to reframework\data, as json.load_file wants
         if not rel:match("recording%.json$") then
             local data = json.load_file(rel)
-            if type(data) == "table" then
+            if type(data) == "table" and data.schema_version and data.length then
                 table.insert(cutscenes, { file = rel, data = data })
+            elseif type(data) == "table" then
+                -- what the game wrote down beside them (trigger.json, spot.json, flags.json ...): not cutscenes
             else
                 load_error = "couldn't read " .. rel
             end
@@ -1096,8 +1099,8 @@ end
 -- (chapter, location, area, stage, as the menu's Now line shows); talk (near a character of that kind: a prompt shows
 -- and its key starts it); flags (story flags on, or off with "!"); after (one of the game's movies or cutscenes ended
 -- in the last 10 s). It starts when they become true and have held for `delay` seconds (a talk trigger: when its key
--- is pressed then); not again until they've stopped holding. `once`: true (the default) once per save, by the save's
--- play time (loading a save from before it lets it play again); "session" once each time the game runs; false every
+-- is pressed then); not again until they've stopped holding. `once`: true (the default) once per save, by its remod
+-- flag (below: a save from before it lets it play again); "session" once each time the game runs; false every
 -- time (a talk trigger's default: the player asks for it). Never while a cutscene plays or the game is busy (its own movie, a pause). Checked 5 times a second.
 local trigger_state = {}  -- cutscene file -> {held, since, fired, done, talk_ready}
 local next_check = 0
@@ -1107,50 +1110,60 @@ local function player_position()
     return body and body:call("get_Transform"):call("get_Position")
 end
 
--- Once per save: the play time each cutscene file last started at by its trigger, in remod_cutscenes\fired.json.
--- ponytail: one record per cutscene, not per save slot; a save from another playthrough with more play time counts
--- as after it.
--- A save played before it iff the save's play time when it loaded is at least that (not the play time now: playing
--- on from an older save passes it; trigger test 3 run 6). A load is a jump in the play time (back, or forward more
--- than the time passed); the first reading counts as one (Reset Scripts mid-game).
-local fired_at = nil
-local save = { loaded_pt = nil, last_pt = nil, at = 0 }  -- the loaded save's play time; the last reading, when
-local function track_load()
-    local ok, pt = pcall(game.play_time)
-    if not ok then return end
-    local real = now() - save.at
-    if not save.last_pt or pt < save.last_pt or (pt - save.last_pt) / 1e6 > real + 2 then
-        save.loaded_pt = pt
-        for _, s in pairs(trigger_state) do s.fired_this_save = false end
-        local sok, slot = pcall(function()
-            return sdk.get_managed_singleton("share.SaveDataManager"):call("get_LastLoadSlot")
-        end)
-        log.info(string.format("[remod_cutscene] a save loaded: play time %.1f s, slot %s", pt / 1e6,
-            sok and tostring(slot) or "?"))
-    end
-    save.last_pt, save.at = pt, now()
+-- ---- remod's own story flags (2026-10-09, trigger test 3 runs 7-8) ----
+-- Flags of our own that follow the player's saves as the game's do, without touching the save file: the flags on now,
+-- a copy per save slot taken when the game saves there, put back when it loads one (a death retry is a load of the
+-- slot played: run 8). In remod_cutscenes\flags.json {on = {name = true}, slots = {"<slot>" = {name = true}}}.
+-- A cutscene started by its trigger turns on the flag named after its file ("meet_luis.json": meet_luis), and those its
+-- `sets_flags` names ("chose_to_help" on, "!chose_to_help" off); triggers test them in `flags` as "remod:meet_luis" /
+-- "!remod:meet_luis". Started by a key or the menu (testing), it sets nothing. The game's save requests come from
+-- share.SaveDataManager._CurrentRequest {Command, SlotId} [dump], read each frame without hooks; slot -1 follows
+-- every save and load (inferred: system data) and isn't a game slot.
+-- ponytail: a save of a slot from before remod gets no copy, so loading it means no remod flags (right: nothing played).
+local has_flags = select(2, pcall(fs.glob, DIR .. "[/\\\\]flags\\.json$"))  -- a missing file logs a JSON error
+local rflags = type(has_flags) == "table" and #has_flags > 0 and json.load_file(DIR .. "/flags.json") or nil
+if type(rflags) ~= "table" then rflags = {} end
+rflags.on, rflags.slots = rflags.on or {}, rflags.slots or {}
+local function copy_set(t) local o = {} for k in pairs(t or {}) do o[k] = true end return o end
+local function rflags_list(t) local o = {} for k in pairs(t) do table.insert(o, k) end table.sort(o) return table.concat(o, ", ") end
+local function rflags_write() pcall(json.dump_file, DIR .. "/flags.json", rflags) end
+local function rflag_set(name)
+    if rflags.on[name] then return end
+    rflags.on[name] = true
+    rflags_write()
+    log.info("[remod_cutscene] remod flag on: " .. name)
 end
--- The game's saves and loads as they happen (share.SaveDataManager _CurrentRequest {Command, SlotId}, CurrentProcess
--- [dump]), logged when they change: the base for remod's own flags kept per save slot (2026-10-09; a same-save
--- reload doesn't move the play time, run 7). Read each frame, read-only.
+local function rflag_clear(name)
+    if not rflags.on[name] then return end
+    rflags.on[name] = nil
+    rflags_write()
+    log.info("[remod_cutscene] remod flag off: " .. name)
+end
+
 local save_watch = {}
 local function watch_saves()
     local mgr = sdk.get_managed_singleton("share.SaveDataManager")
     if not mgr then return end
     local req = mgr:get_field("_CurrentRequest")
-    local line = "process " .. enum_name("share.SaveDataManager.Process", mgr:call("get_CurrentProcess"))
-    if req then
-        line = line .. ", request " .. enum_name("share.SaveDataManager.Request.CommandType", req:get_field("Command"))
-            .. " slot " .. tostring(req:get_field("SlotId"))
-    end
-    if line ~= save_watch.line then
-        save_watch.line = line
-        local gui = sdk.get_managed_singleton("chainsaw.SaveLoadMenuGuiManager")
-        local cont = gui and select(2, pcall(gui.call, gui, "get_IsLastDataLoadContinueData"))
-        log.info(string.format("[remod_cutscene] saves: %s; last load slot %s, last good %s, continue data %s", line,
-            tostring(mgr:call("get_LastLoadSlot")), tostring(mgr:call("get_LastLoadSuccessedGameSlot")), tostring(cont)))
+    local cmd = req and enum_name("share.SaveDataManager.Request.CommandType", req:get_field("Command"))
+    local slot = req and tonumber(req:get_field("SlotId"))
+    local key = req and (tostring(cmd) .. " " .. tostring(slot))
+    if key == save_watch.key then return end
+    save_watch.key = key  -- each request acted on once (no request between two: PreIdle / Idle)
+    if not slot or slot < 0 then return end
+    if cmd == "Save" then
+        rflags.slots[tostring(slot)] = copy_set(rflags.on)
+        rflags_write()
+        log.info("[remod_cutscene] saved to slot " .. slot .. ": remod flags " .. (rflags_list(rflags.on) ~= "" and rflags_list(rflags.on) or "none"))
+    elseif cmd == "Load" then
+        rflags.on = copy_set(rflags.slots[tostring(slot)])
+        rflags_write()
+        for _, s in pairs(trigger_state) do s.done, s.icon, s.icon_failed = false, nil, nil end  -- icons copied again
+        log.info("[remod_cutscene] loading slot " .. slot .. ": remod flags " .. (rflags_list(rflags.on) ~= "" and rflags_list(rflags.on) or "none"))
     end
 end
+
+local function flag_name(c) return (c.file:match("([^/\\]+)%.json$") or c.file) end
 
 local function fired_before(c, t)
     local s = trigger_state[c.file]
@@ -1158,25 +1171,18 @@ local function fired_before(c, t)
     if once == nil and type(t.talk) == "table" then once = false end  -- the player asks for it: every time
     if once == false then return false end
     if once == "session" then return s.fired end
-    if s.fired_this_save then return true end
-    fired_at = fired_at or (json.load_file(DIR .. "/fired.json") or {})
-    local at = fired_at[c.file]
-    if not at then return false end
-    return not save.loaded_pt or save.loaded_pt >= at  -- the play time unknown: taken as after it
+    return rflags.on[flag_name(c)] == true  -- once per save: its remod flag
 end
 
 local function fire(c)
     local s = trigger_state[c.file]
     -- A talk trigger's prompt comes back once the cutscene ends (no walking away first: the player asks each time).
-    s.fired, s.done, s.talk_ready, s.fired_this_save = true, type(c.data.trigger.talk) ~= "table", false, true
-    local ok, pt = pcall(game.play_time)
-    if ok then
-        fired_at = fired_at or (json.load_file(DIR .. "/fired.json") or {})
-        fired_at[c.file] = pt
-        pcall(json.dump_file, DIR .. "/fired.json", fired_at)
+    s.fired, s.done, s.talk_ready = true, type(c.data.trigger.talk) ~= "table", false
+    rflag_set(flag_name(c))
+    for _, f in ipairs(type(c.data.sets_flags) == "table" and c.data.sets_flags or {}) do  -- its named flags
+        if f:sub(1, 1) == "!" then rflag_clear(f:sub(2)) else rflag_set(f) end
     end
-    log.info("[remod_cutscene] " .. (c.data.name or c.file) .. " triggered"
-        .. (ok and string.format(" (play time %.1f s)", pt / 1e6) or ""))
+    log.info("[remod_cutscene] " .. (c.data.name or c.file) .. " triggered")
     if not (playing and playing.data == c.data) then request_toggle(c.data, "triggered") end
 end
 
@@ -1216,6 +1222,8 @@ local function read_flags()
     end
 end
 local function flag_is_on(name)  -- nil if there's no such flag (yet)
+    local own = name:match("^remod:(.+)$")
+    if own then return rflags.on[own] == true end
     read_flags()
     local f = flags_by_name and flags_by_name[name]
     if not f then  -- one the game's code names itself, if it's that
@@ -1226,6 +1234,19 @@ local function flag_is_on(name)  -- nil if there's no such flag (yet)
     local ok, on = pcall(game.flag_on, f)
     if not ok then return nil end
     return on
+end
+
+-- The story flag the game turns on as its cutscene starts or ends ("Start" / "End"): csa038 turned on
+-- EventTimelineStart00_038 and EventTimelineEnd00_038 (trigger test 3 run 4). For other ids the name is inferred
+-- (hundreds in the group?), so only a name the game has is given; nil otherwise.
+local function event_flag(id, which)
+    local n = tonumber(tostring(id):match("^%a+(%d+)$") or "")
+    if not n then return nil end
+    read_flags()
+    for _, name in ipairs({ string.format("EventTimeline%s%02d_%03d", which, n // 100, n),
+                            string.format("EventTimeline%s%02d_%03d", which, n // 100, n % 100) }) do
+        if flags_by_name and flags_by_name[name] then return name end
+    end
 end
 
 -- The game's own movie or cutscene: the one playing now, and the last of each kind that ended (for `after`).
@@ -1263,16 +1284,18 @@ local function holds(t, where, pos, chars)
         local on = flag_is_on(off and f:sub(2) or f)
         if on == nil or on == off then return false end
     end
+    local who = nil  -- a talk trigger's character: the nearest of its kind in reach (its icon goes on it)
     if type(t.talk) == "table" then
         if not pos then return false end
-        local r, near = t.talk.radius or 2.5, false
+        local r, best = t.talk.radius or 2.5, nil
         for _, ch in ipairs(chars or {}) do
             local dx, dy, dz = pos.x - ch.position.x, pos.y - ch.position.y, pos.z - ch.position.z
-            if ch.kind == t.talk.npc and dx * dx + dy * dy + dz * dz <= r * r then near = true end
+            local d = dx * dx + dy * dy + dz * dz
+            if ch.kind == t.talk.npc and d <= r * r and (not best or d < best) then best, who = d, ch end
         end
-        if not near then return false end
+        if not who then return false end
     end
-    return true
+    return true, who
 end
 
 -- What triggers can see, into the log when it changes (every 2 s): characters within 8 m of Leon, the difficulty and
@@ -1318,7 +1341,6 @@ end
 local function check_triggers()
     if playing or not game.where or now() < next_check then return end
     next_check = now() + 0.2
-    track_load()
     watch_game()
     local busy_ok, busy = pcall(game.busy)
     if busy_ok and busy then
@@ -1338,7 +1360,7 @@ local function check_triggers()
                 local cok, list = pcall(game.characters)
                 chars = cok and list or {}
             end
-            local now_holds = holds(t, where_ok and where or nil, type(pos) == "userdata" and pos or nil, chars)
+            local now_holds, who = holds(t, where_ok and where or nil, type(pos) == "userdata" and pos or nil, chars)
             if now_holds and not s.held then s.since = now() end
             s.held = now_holds
             if not now_holds then s.done = false end
@@ -1347,7 +1369,11 @@ local function check_triggers()
                 if ready ~= (s.talk_ready or false) then
                     log.info("[remod_cutscene] " .. (c.data.name or c.file) .. ": talk prompt " .. (ready and "shown" or "gone"))
                 end
-                s.talk_ready = ready  -- its key starts it (each frame, below)
+                s.talk_ready = ready  -- the game's icon and Interact start it (talk_icons), else its key (each frame, below)
+                s.talk_who = ready and who or nil
+                if where_ok and where.stage ~= s.icon_stage then  -- a new area: copy again (and try again)
+                    s.icon_stage, s.icon, s.icon_failed = where.stage, nil, nil
+                end
             elseif ready then
                 fire(c)
                 return
@@ -1359,6 +1385,7 @@ end
 -- "Make a trigger here": Leon's spot (2 m around him) and the game's names for where he is, into
 -- remod_cutscenes\trigger.json; remod's Use trigger puts it into a cutscene file. The menu's other buttons add to it.
 local trigger_shown = {}  -- the menu's view of trigger.json: { at, t }
+local story_window = {}   -- the menu's typed game cutscene id
 local function make_trigger()
     local pos = player_position()
     if not pos then error("no player (load a save first)") end
@@ -1406,18 +1433,6 @@ local function watch_flags()
             local p = flag_watch.pass
             log.info("[remod_cutscene] story flags changed: " .. (#p <= 20 and table.concat(p, ", ")
                 or (#p .. " at once (a save loaded?), e.g. " .. table.concat(p, ", ", 1, 5))))
-            if #p > 20 then  -- the game's clocks then: once per save needs one a loaded save brings back (run 4:
-                -- ActualPlayingTime went on counting across a reload)
-                pcall(function()
-                    local clock, out = instance("share.GameClock"), {}
-                    for _, m in ipairs({ "ActualPlayingTime", "ActualRecordTime", "GameElapsedTime", "InSceneTime",
-                                         "SystemElapsedTime", "GameSaveDataHash" }) do
-                        local ok, v = pcall(clock.call, clock, "get_" .. m)
-                        table.insert(out, m .. " " .. (ok and tostring(v) or "?"))
-                    end
-                    log.info("[remod_cutscene] clocks: " .. table.concat(out, ", "))
-                end)
-            end
             flag_watch.pass = {}
         end
     end
@@ -1432,6 +1447,95 @@ local function draw_prompt(talk, row)
     draw.filled_rect(x - 12, y - 6, #text * 8 + 24, 28, 0xA0000000)
     draw.text(text, x, y, 0xFFFFFFFF)
 end
+
+-- ---- Talk triggers with the game's own interact icon (spikes/interact_icon_probe.md, runs 2-3, 2026-10-10) ----
+-- The game draws its icon for a key trigger (chainsaw.InteractTriggerKey) whose work asks each frame. We copy a key
+-- trigger of something loaded nearby (MemberwiseClone; a typewriter's "Use", the merchant's "Button", a file's
+-- "Read"...), point its icon at a marker object of ours kept above the character's Head joint, make its work the
+-- game's way (generateWork, applyTarget on Leon), and each frame in the game's update ask for the icon
+-- (requestDrawKeyIcon) and read the press (checkInput: true one frame per Interact press). So the icon shows the
+-- Interact key for keyboard or gamepad, and Interact starts the cutscene. One icon per character: the first ready
+-- talk trigger (by file name) on it. If none can be made, the drawn "[T] Talk" prompt and its key stand in.
+-- ponytail: each copy is kept for good (handed to the game); one per trigger per area or load, a few small objects.
+local ICON_UP = 0.3          -- metres above the Head joint (run 3: looked right)
+local ICON_NO_JOINT_UP = 1.9 -- metres above the character's origin when it has no Head joint (the merchant gimmick)
+local function talk_icon_marker(name)  -- one per trigger, never destroyed, found by name after Reset Scripts
+    local s = sdk.find_type_definition("via.SceneManager"):get_method("get_CurrentScene"):call(nil)
+    local go = s and select(2, pcall(s.call, s, "findGameObject(System.String)", sdk.create_managed_string(name)))
+    if type(go) ~= "userdata" then go = create_object(name) end
+    return keep(go)
+end
+local function key_trigger_to_copy()  -- a loaded key trigger, preferring ones known to show the Interact icon
+    local s = sdk.find_type_definition("via.SceneManager"):get_method("get_CurrentScene"):call(nil)
+    local holders = s and s:call("findComponents(System.Type)", sdk.typeof("chainsaw.InteractHolder"))
+    local best, rank = nil, 99
+    local prefer = { Use = 1, Button = 2, Read = 3 }
+    for _, h in ipairs(holders and holders:get_elements() or {}) do
+        local acts = h:get_field("_TrgAct")
+        for _, t in ipairs(acts and acts:get_elements() or {}) do
+            if t:get_type_definition():get_full_name() == "chainsaw.InteractTriggerKey" then
+                local r = prefer[tostring(t:get_field("UniqueName"))] or 9
+                if r < rank then best, rank = t, r end
+            end
+        end
+        if rank == 1 then break end
+    end
+    return best
+end
+local function make_talk_icon(c, who)
+    local source = key_trigger_to_copy()
+    if not source then error("no key trigger loaded to copy (no typewriter, door, file... in this area)") end
+    local marker = talk_icon_marker("remod_talk_icon_" .. flag_name(c))
+    local copy = keep(source:call("MemberwiseClone"))
+    copy:set_field("_ObjIconPos", marker:call("get_Transform"))
+    copy:call("set_Owner", who.body)
+    local work = keep(copy:call("generateWork", enum("chainsaw.InteractTrigger.TargetType", "Pl00"),
+                                enum("chainsaw.InteractManager.WorkIndex", "Pl1")))
+    -- A null in the game's code crashes it or throws each frame (probe run 1): only use a fully linked work.
+    if not work or work:get_type_definition():get_full_name() ~= "chainsaw.InteractTriggerKey.WorkKey"
+        or not work:call("get_TriggerKey") or not work:get_field("_FloatIconOpenParam") then
+        error("the game's work for it isn't linked")
+    end
+    local ud = keep(sdk.create_instance("chainsaw.collision.GimmickSensorUserData", true))
+    ud:call("set_Kind", enum("chainsaw.collision.GimmickSensorUserData.KindType", "Interact"))
+    work:call("applyTarget", game.player(), ud)
+    log.info(string.format("[remod_cutscene] %s: the game's interact icon on %s (copied from '%s' of %s)",
+        c.data.name or c.file, tostring(who.kind), tostring(source:get_field("UniqueName")),
+        tostring(source:call("get_Owner") and source:call("get_Owner"):call("get_Name"))))
+    return { work = work, marker = marker, body = who.body:get_address() }
+end
+local function talk_icons()  -- each frame, in the game's update
+    if playing then return end
+    local taken = {}  -- characters that already have an icon this frame
+    for _, c in ipairs(cutscenes) do
+        local s = trigger_state[c.file]
+        local who = s and s.talk_ready and s.talk_who
+        local id = who and who.body and who.body:get_address()  -- the same object comes back as a new userdata
+        if id and not taken[id] and not s.icon_failed then
+            taken[id] = true
+            local ok, err = pcall(function()
+                if not s.icon or s.icon.body ~= id then s.icon = make_talk_icon(c, who) end
+                local x = who.body:call("get_Transform")
+                local joint = x:call("getJointByName", "Head")
+                local p = joint and joint:call("get_Position")
+                local up = p and ICON_UP or ICON_NO_JOINT_UP
+                p = p or x:call("get_Position")
+                s.icon.marker:call("get_Transform"):call("set_Position", Vector3f.new(p.x, p.y + up, p.z))
+                s.icon.work:call("requestDrawKeyIcon", enum("chainsaw.InteractTriggerKey.OverrideDisable", "None"))
+                if s.icon.work:call("checkInput") == true then
+                    log.info("[remod_cutscene] " .. (c.data.name or c.file) .. ": Interact pressed")
+                    fire(c)
+                end
+            end)
+            if not ok then  -- the drawn prompt and its key stand in for it from now on
+                s.icon_failed = tostring(err)
+                log.info("[remod_cutscene] " .. (c.data.name or c.file) .. ": no game icon (" .. s.icon_failed
+                    .. "); the drawn prompt and its key instead")
+            end
+        end
+    end
+end
+re.on_pre_application_entry("UpdateBehavior", function() if game then talk_icons() end end)
 
 -- ---- Each frame: keys, motions, letterbox, fades, subtitles ----
 local key_down = {}
@@ -1481,15 +1585,18 @@ re.on_frame(function()
     check_triggers()
     pcall(watch_saves)
     if flag_watch.on then watch_flags() end
-    if not playing then  -- talk triggers ready: their prompt, and their key starts them
+    if not playing then  -- talk triggers ready: the game's icon and Interact (talk_icons); a key the file names also
+        -- starts it; where the icon couldn't be made, the drawn prompt and its key (T by default) stand in
         local row = 0
         for _, c in ipairs(cutscenes) do
             local s = trigger_state[c.file]
             local talk = s and s.talk_ready and c.data.trigger.talk
             if talk then
-                draw_prompt(talk, row)
-                row = row + 1
-                local key = KEY_CODES[talk.key or "T"]
+                if s.icon_failed then
+                    draw_prompt(talk, row)
+                    row = row + 1
+                end
+                local key = (s.icon_failed or talk.key) and KEY_CODES[talk.key or "T"]
                 if key and pressed(key) then fire(c) end
             end
         end
@@ -1591,6 +1698,16 @@ re.on_draw_ui(function()
     local bok, busy = pcall(game.busy)
     imgui.text(wok and string.format("Now: chapter %s, location %s, area %s, stage %s%s", w.chapter, w.location, w.area,
         w.stage, bok and busy and " (busy: triggers wait)" or "") or ("Now: unknown (" .. tostring(w) .. ")"))
+    local own = rflags_list(rflags.on)
+    imgui.text("remod flags on: " .. (own ~= "" and own or "none"))
+    if own ~= "" then
+        imgui.same_line()
+        if imgui.button("Clear") then  -- for trying a once-per-save cutscene again; saved slots keep theirs
+            rflags.on = {}
+            rflags_write()
+            log.info("[remod_cutscene] remod flags cleared from the menu")
+        end
+    end
     if imgui.button("Make a trigger here") then
         local mok, err = pcall(make_trigger)
         problem = mok and nil or ("making the trigger: " .. tostring(err))
@@ -1636,7 +1753,53 @@ re.on_draw_ui(function()
                 e.name, now() - e.at))
             imgui.same_line()
             if imgui.button("Start after it##" .. kind) then trigger_add("after", { [kind] = e.name }) end
+            local done = kind == "event" and event_flag(e.name, "End")
+            if done then  -- lasting: its story flag stays on, in every save past it
+                imgui.same_line()
+                if imgui.button("Any time after it") then trigger_add("flags", done) end
+            end
         end
+    end
+    -- Story windows: after one of the game's cutscenes, until the next (its story flags; the id from the log or the
+    -- line above, e.g. csa039).
+    local _, until_id = imgui.input_text("The game's cutscene (e.g. csa039)", story_window.id or "")
+    story_window.id = until_id or ""
+    if story_window.id ~= "" then
+        local before, after = event_flag(story_window.id, "Start"), event_flag(story_window.id, "End")
+        if before then
+            if imgui.button("Until it starts") then trigger_add("flags", "!" .. before) end
+            imgui.same_line()
+        end
+        if after then
+            if imgui.button("Any time after it##typed") then trigger_add("flags", after) end
+        end
+        if not before and not after then imgui.text("No story flag found for " .. story_window.id .. " (yet: load a save).") end
+    end
+    if imgui.tree_node("remod's flags (this mod's cutscenes)") then
+        -- Each cutscene's own (on once its trigger started it in this save) and the names their sets_flags give.
+        local named = {}
+        for i, c in ipairs(cutscenes) do
+            local n = flag_name(c)
+            if imgui.button("After it##rf" .. i) then trigger_add("flags", "remod:" .. n) end
+            imgui.same_line()
+            if imgui.button("Until it##rf" .. i) then trigger_add("flags", "!remod:" .. n) end
+            imgui.same_line()
+            imgui.text(n .. (rflags.on[n] and "  (played in this save)" or ""))
+            for _, f in ipairs(type(c.data.sets_flags) == "table" and c.data.sets_flags or {}) do
+                named[(tostring(f):gsub("^!", ""))] = true
+            end
+        end
+        local names = {}
+        for n in pairs(named) do table.insert(names, n) end
+        table.sort(names)
+        for i, n in ipairs(names) do
+            if imgui.button("Must be on##rn" .. i) then trigger_add("flags", "remod:" .. n) end
+            imgui.same_line()
+            if imgui.button("Must be off##rn" .. i) then trigger_add("flags", "!remod:" .. n) end
+            imgui.same_line()
+            imgui.text(n .. (rflags.on[n] and "  (on)" or "  (off)"))
+        end
+        imgui.tree_pop()
     end
     if imgui.tree_node("Characters near Leon (talk triggers)") then
         local cok, chars = pcall(game.characters)
@@ -1656,7 +1819,7 @@ re.on_draw_ui(function()
             imgui.same_line()
             imgui.text(string.format("%s, %.1f m", ch.kind, ch.d))
         end
-        imgui.text("Talk trigger: near that character, \"[G] Talk\" shows; G starts the cutscene (key, prompt and\n" ..
+        imgui.text("Talk trigger: near that character, \"[T] Talk\" shows; T starts the cutscene (key, prompt and\n" ..
                    "radius can be changed in the cutscene file).")
         imgui.tree_pop()
     end

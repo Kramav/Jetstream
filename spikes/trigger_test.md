@@ -29,6 +29,34 @@ into remod's cutscene script, so this is a test of the real feature, not a separ
 - **Runs 5-7 (2026-10-09):** prompts stack now (J showed); an in-game load of an *older* slot restores the play time,
   but reloading the *same* save doesn't, so once per save can't rest on it. Next: remod's own flags, kept per save
   slot. **Run 8:** see "Saves and loads" below.
+- **Run 8 (log + user, 2026-10-09):** a typewriter save (slot 18) and every load (18, 17, 5, 5 again) showed in the
+  log with their slot; the second slot-5 load was a death retry (user). No autosave: Professional has none. So
+  remod now keeps flags of its own per save slot, and once per save uses them. **Run 9:** below.
+
+- **Run 9 (user + log, 2026-10-09): remod's own flags work.** J and "J played in this save" played once; an older
+  slot brought J back; the new slot didn't.
+
+## Run 10: the game's icon on talk triggers
+
+The rebuilt `spikes\out\remod trigger test 3.zip`: talk triggers now show the game's own interact icon over the
+character and start on Interact (no F5, nothing to set up). Uninstall the interact icon probe in Fluffy, reinstall
+this one, load your usual save, then:
+1. At Ashley: the icon over her head; Interact plays "once per save" (J's), then later Ashley's (H's) on the next
+   press. (One icon per character; the first by file name goes first.)
+2. At the merchant: the icon near him; press Interact. Does his cutscene play, does his shop open, or both?
+3. Quit the game. Tell Claude what you saw at 1 and 2.
+
+## Run 9: remod's own flags
+
+The rebuilt `spikes\out\remod trigger test 3.zip` (reinstall it in Fluffy) keeps remod's flags with your saves. A new
+test cutscene, "J played in this save", plays 2 s after J's cutscene, once per save.
+1. Load your usual save. Near Ashley press J: J's cutscene, then about 2 s later "J played in this save".
+2. Walk away and back: no J prompt.
+3. Save to a **new** slot at a typewriter.
+4. Load an **older** slot (from before J): J's prompt is back near Ashley.
+5. Load the slot you saved in step 3: no J prompt, and "J played in this save" doesn't play again.
+6. Die and retry once anywhere (nothing should change).
+7. Quit the game. Tell Claude only what you saw at steps 1, 4 and 5.
 
 ## Run 8: saves and loads
 

@@ -447,9 +447,10 @@ You make the trigger in game (REFramework's menu > Script Generated UI > remod c
 condition to `trigger.json`, and the menu shows what it holds so far (**Start a new trigger** empties it):
 - **Make a trigger here:** Leon's spot, plus the game's names for the chapter and stage he's in (this one starts the
   file afresh).
-- **Characters near Leon > Talk trigger:** talking to that character. Near him, "[G] Talk" shows at the bottom of the
-  screen, and G starts the cutscene: a new conversation with the merchant, say. The characters are listed by the
-  game's names for their kind (the merchant is probably `ch3_a8z0`), nearest first.
+- **Characters near Leon > Talk trigger:** talking to that character. Near them the game's own interact icon shows
+  over their head (the one doors and the merchant show, with your Interact key or button), and Interact starts the
+  cutscene: a new conversation with the merchant, say. The characters are listed by the game's names for their kind
+  (the merchant is `merchant`, Ashley `ch2_a1z0`), nearest first.
 - **Story flags:** the game's flags for what has happened in the story. Tick **Watch** and play: flags that change are
   listed, so you can see what a moment sets, and **Add** one (it must be on; one that went off must be off). **Find a
   flag** searches them by name.
@@ -461,14 +462,39 @@ cutscene file (the rest stays; the previous version is kept as `.bak`).
 The trigger's parts, all optional but at least one needed:
 - `near`: the spot and a `radius` in metres;
 - `chapter`, `stage`, `area`, `location`: the game's names, as the menu's **Now** line shows them where you stand;
-- `talk`: `npc` (the character's kind, or `merchant` for the merchant), and optionally `key` (A-Z or F1-F12 but F10; T by default), `prompt` (the
-  words after the key, "Talk" by default) and `radius` (2.5 m by default);
-- `flags`: story flag names that must be on; one starting with `!` must be off;
+- `talk`: `npc` (the character's kind, or `merchant` for the merchant), and optionally `radius` (2.5 m by default),
+  `key` (A-Z or F1-F12 but F10: a keyboard key that also starts it) and `prompt` (words for the stand-in below). The
+  game's icon and Interact start it. Several talk triggers on one character share one icon: the first ready one by
+  file name. Where the icon can't be made (nothing in the area to copy it from), a drawn "[T] Talk" prompt and its
+  key (T by default) stand in, and the log says why;
+- `flags`: story flag names that must be on; one starting with `!` must be off. Besides the game's, remod's own:
+  `remod:<cutscene>` is on once that cutscene's trigger has started it in this save, e.g. `"remod:meet_luis"` (its
+  file was `meet_luis.json`) to play only after it, `"!remod:meet_luis"` only before it;
 - `after`: `{"movie": "mva000"}` or `{"event": "csa012"}`, for the 10 seconds after that one ends;
 - `delay`: seconds the conditions must hold first;
-- `once`: `true` (the default) once per save: loading a save from before it played lets it play again; `"session"`
-  once each time you start the game; `false` every time. A `talk` trigger plays every time by default (its prompt
-  comes back when the cutscene ends); give it `once` to limit it.
+- `once`: `true` (the default) once per save; `"session"` once each time you start the game; `false` every time. A
+  `talk` trigger plays every time by default (its prompt comes back when the cutscene ends); give it `once` to limit
+  it.
+
+**Flags with names of your own:** a cutscene file's `"sets_flags": ["chose_to_help", "!met_luis"]` turns those on (a
+`!` turns one off) when its trigger starts it; other triggers then need `"remod:chose_to_help"`. A cutscene started
+by its key or the menu (testing) sets nothing.
+
+**Shortcuts in the menu** (each adds to trigger.json):
+- beside the game's last cutscene, **Any time after it**: its story flag (lasting, unlike Start after it's 10 s);
+- type one of the game's cutscene ids (e.g. `csa039`): **Until it starts** / **Any time after it**. Both together
+  make a story window: between two of the game's cutscenes;
+- **remod's flags**: per cutscene of this mod **After it** / **Until it**, and each `sets_flags` name **Must be on** /
+  **Must be off**.
+
+The game's cutscene flags are `EventTimelineStart00_038` / `EventTimelineEnd00_038` for csa038 (seen); for other ids
+the menu offers only a flag the game really has, and says when it finds none.
+
+**remod's flags follow your saves** like the game's own: saving to a slot keeps them with that slot, and loading a
+slot (a death retry too) puts that slot's back. So loading a save from before a cutscene played lets it play again.
+A save made before you installed the mod has none. They live in the game's
+`reframework\data\remod_cutscenes\flags.json`; the menu shows the ones on now, and **Clear** turns them off (to
+try a cutscene again; saved slots keep theirs).
 
 It doesn't start while another cutscene plays, the game plays one of its own movies, or the game is paused. It
 starts when the conditions become true (a talk trigger: when you press its key then), and not again until they've

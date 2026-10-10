@@ -38,6 +38,13 @@
       }
     },
     {
+      "id": 6,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "trigger_test3/after_j.json"
+      }
+    },
+    {
       "id": 7,
       "type": "PackageMod",
       "params": {
@@ -83,6 +90,16 @@
     {
       "from": [
         4,
+        "files"
+      ],
+      "to": [
+        7,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        6,
         "files"
       ],
       "to": [

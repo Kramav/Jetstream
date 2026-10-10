@@ -978,7 +978,8 @@ propose them as next steps before then.
   bank's first part and a package together); does a sound of another length play fully (Same length off); and a
   sound embedded in a bank (no package).
 - [ ] **Lua scripts through Fluffy (§10 M2 plan, step 1).** Does Fluffy install a mod's `reframework/autorun` files
-  at the game's root, and remove them on uninstall?
+  at the game's root, and remove them on uninstall? **Install: yes** (examples 16-18 and the trigger test mods ran
+  from Fluffy installs, 2026-10-08/09; reinstalling a new build replaced the script). Removal not looked at.
 - [ ] **Replaced movie sound (§10 Story movies' sound).** Example 12 also replaces mva000's sound packages: is the
   beep heard each second, and the original's music, dialogue and effects gone; does a WEM one zero byte longer per
   packet (libvorbis) play cleanly; with Same length off, does a sound of another length play fully without a bank
@@ -992,12 +993,19 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 - **NEXT (user, 2026-10-07, in this order):** the SDK dump loading fixed (done the same day: 1.1 s, M2 step 2);
   then **M3 route 2** (play a movie when we choose; "heavy scripting for all this movie stuff"; its new-id probe is
   a game movie in a cinematic state works and is example 15; **a new movie id works** (run 3), all in
-  docs/re4r_movies.md; the New movie block and example 16 built, not yet seen in game); then **triggers** (built 2026-10-08,
-  not run: M3 route 3 "Triggers")
+  docs/re4r_movies.md; the New movie block and example 16 work in game); then **triggers** (example 18 works in
+  game: M3 route 3 "Triggers")
   (cutscenes starting by themselves; M5's first piece; survey with §9's "finding a game's switch" method); **other
   characters in cutscenes** matter a lot (user). **Done 2026-10-08: the game's cutscene animations on characters**
-  (works in game; in cutscene files, not run yet: M3 "Event animations" below). **More triggers: built 2026-10-09,
-  not run** (talking to a character, story flags, after the game's movie or event X, once per save: M3 "Triggers").
+  (works in game; in cutscene files, not run yet: M3 "Event animations" below). **More triggers: work in game
+  (2026-10-09)** (talking to a character, story flags, after the game's event X, once per save through remod's own
+  flags: M3 "Triggers"; `after` a game *movie* not seen yet).
+  **Parked (user, 2026-10-09: "we can park cutscene work like that for now. understanding flags is more important
+  currently"):** the cutscene paths built but never run in game (example 15's movie in a cutscene, example 19, event
+  animation files in a cutscene file, the actors' sides fix, a cutscene from the user's own recording, an animation
+  on frozen Leon, trigger test part 2, `after` a game movie) and the cutscene gaps (sound, Write with Claude for
+  cutscenes, strand hair from files, chains, the face, pinning root motion). Suggested when picked up again: one
+  ready-made test mod covering the first five. **Now: flags, and the talk prompt as the game's own interact icon.**
   **Still to do: a better-looking Cutscene layout** (user, 2026-10-08: "looks bad but its good enough for now"; two
   fixes done 2026-10-08: the layout switch stays put, an empty cutscene with nothing open; ask what else is bad).
   **Wanted, survey first, not started:** a real new entry in the merchant's menu that starts a cutscene (M3
@@ -1403,7 +1411,7 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       checked by `check_cutscene` (2026-10-09: talk, flags, after, once values added).
     - **Runtime:** `check_triggers` every 0.2 s. A trigger fires when its conditions become true, once they've held
       for `delay`; not again until they stop holding. Never while a cutscene plays or `GAMES.re4.busy()`
-      (MovieMediator `isPlaying`, PauseManager `isPaused()`). **Added 2026-10-09 (not run in game):**
+      (MovieMediator `isPlaying`, PauseManager `isPaused()`). **Added 2026-10-09 (work in game, trigger test 3 runs 1-9, below):**
       - `talk`: ready while Leon is within its radius of a character of that kind; each frame a ready one draws
         "[G] Talk" near the bottom and its key fires it.
       - `flags`: by name (or "Group/Name"), read once the groups exist (`read_flags`, retried every 10 s while
@@ -1484,6 +1492,84 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
         an interface Lua can't implement), `OnGameSaveCompleted` (a delegate). The runtime now logs every change of
         those ("saves: ..."). Run 8: save to a slot, load another, reload the same, die and retry; the log says
         which of them are seen.
+      - **Run 8 (log, 2026-10-09): saves and loads are readable without hooks.** A typewriter save showed as
+        `_CurrentRequest` Save slot 18 (Processing -> SaveWait -> PreIdle -> Idle); every load as Load slot N (18, 17,
+        5, and 5 again while in slot 5's save), `get_LastLoadSlot` = N at LoadWait, `get_LastLoadSuccessedGameSlot` =
+        N once loaded (-1 while loading). **Slot -1 isn't a game slot:** a Save slot -1 follows every save and every
+        load (inferred: system data); ignore it. The reload of slot 5 again didn't restore the play time (13,443 s, not
+        13,230), confirming run 7, but its Load request was seen: so remod's flags can key on the request.
+        `get_IsLastDataLoadContinueData` read nil throughout. Not seen: an autosave (no Save of another slot) or a
+        death retry, unless the second slot-5 load was one. Also: `via.Component.get_GameObject` threw each check for
+        ~5 s when a merchant's area unloaded (the 5 s cache); a failure now searches again. **The second slot-5 load
+        was a death retry (user): a retry is a Load request of the slot played.** No autosave: the user plays
+        Professional (none there). In run 8's log `Difficulty/Difficulty_03` went off on leaving the save: difficulty
+        may be a story flag after all (not followed up).
+      - **remod's own flags: WORK in game (run 9, user + log, 2026-10-09):** slot 5 loaded with none, J and "after J"
+        (`remod:once_per_save`) played; the new slot 18 saved all three; slot 5 again: J back; slot 18: no J, no
+        after-J. (The death retry wasn't tried this run; run 8 showed it's a Load request.) Fixed after it: the
+        runtime took every `.json` in `remod_cutscenes` for a cutscene (trigger.json, spot.json, flags.json ...); now
+        only ones with `schema_version` and `length`. A missing flags.json no longer logs a JSON error.
+        Built 2026-10-09: The runtime's `rflags`
+        (`remod_cutscenes/flags.json` {`on`, `slots` {"<slot>": set}}): a Save request of slot N >= 0 copies `on` to
+        slot N, a Load request of N puts its copy back (none: no flags), each acted on once (`watch_saves`, keyed on
+        command + slot). A trigger's fire turns on the flag named after its file's stem; `flags` reads `remod:<stem>`
+        (`flag_is_on`); `once` true = that flag (fired.json, the play-time `track_load` and the clocks logging are
+        gone). Menu: "remod flags on: ..." and **Clear**. Logged: each flag on, each save / load with the flags.
+        A slot deleted in game keeps its copy (harmless: the next save there overwrites it).
+      - **Flags with names and menu shortcuts: built 2026-10-09, no in-game test (user: "I think we can move on";
+        both sit on the confirmed parts: remod flags, trigger.json, the game's flags).**
+        - Cutscene file `sets_flags` ["name", "!name"] (`check_cutscene`: plain names), applied with the played flag
+          when its trigger fires (`rflag_set` / `rflag_clear`); a key or menu start sets nothing.
+        - Menu: beside the game's last cutscene **Any time after it** (its `EventTimelineEnd` flag); a typed game
+          cutscene id gives **Until it starts** (`!EventTimelineStart...`) / **Any time after it**; **remod's flags**
+          lists this mod's cutscenes (**After it** / **Until it**) and every `sets_flags` name (**Must be on / off**).
+        - `event_flag(id, which)`: tries `EventTimeline<which><n // 100 as 2 digits>_<n as 3 digits>` then `..._<n % 100
+          as 3 digits>` and gives only a name the game's flag list has (only csa038's form is seen; csa1xx's is
+          inferred).
+        - Not done: the Cutscene layout has no field for `sets_flags` (kept in the file, edited by hand).
+      - **Wanted long term (user, 2026-10-09): readable names for the game's story flags** (like texture nicknames:
+        `Location47_002` -> what it means), "fine for now, dont do anything for this".
+      - **Talk prompts as the game's own interact icon (user, 2026-10-09: replace our "[T] Talk" text with "the large
+        E graphic" the merchant shows; chose the game's real icon over a look-alike).** [dump] An object's
+        `chainsaw.InteractHolder` holds triggers (`_TrgAct`); a key trigger `chainsaw.InteractTriggerKey` (fields
+        `_InputKey`, `<IconTop>`, `RangeSize`, `ObjectNameIconPos` / `_ObjIconPos` Transform, delegates `FuncIconPos`
+        ...) gets a `chainsaw.InteractTriggerKey.WorkKey` in range (`setup(InteractTrigger)`, `requestDrawKeyIcon(
+        OverrideDisable)`, `checkInput`, `_FloatIconOpenParam`); the icon is `chainsaw.FloatIconGuiBehavior` (`_OpenParam`
+        {WorldPos, KeyType (GimmickKeyType: Interact ...), IconType, TopType, Owner}, `get_CurrStep`). Opening it
+        directly takes an `IGuiOpener` (an interface Lua can't implement), so the probe goes through a WorkKey.
+        `InteractManager` (AppSingleton): `noticeHitArea` / `activateHitArea(GameObject, GimmickSensorUserData)` are
+        how sensors report. **Probe run 1 ready:** `spikes/interact_icon_probe.md` (F5 writes down the merchant's
+        holder; F6 a MemberwiseClone of his key trigger with `_ObjIconPos` on Ashley's head, a new WorkKey set up with
+        it, `requestDrawKeyIcon(None)` each frame, `checkInput` read back).
+        - **Run 1 (log, 2026-10-09): no icon.** `create_instance` WorkKey + `setup(copy)` left `get_TriggerKey` nil;
+          `checkInput` then threw (c0000005, caught by REFramework) every frame; the game went on. Seen [game]: the
+          scene holds a pool of ~20 `Gui_FloatIcon` objects, idle at step Invalid; the merchant's icon is one of them
+          with KeyType Interact, IconType RD, TopType None, text `<ICON INTERACT-F>`, WorldPos his icon spot, Owner his
+          gimmick `gm84_623_00_0_武器商人` (steps PreEnd / WaitEnd as read every 0.5 s). His holder has key triggers
+          `Button` and `CantUse` (`ObjectNameIconPos` "IconPos"); doors have 12, typewriters `Use` / `CantUse`.
+        - **Run 2 (user + log, 2026-10-10): WORKS.** The work from the game's own
+          `InteractTriggerActivated.generateWork(TargetType.Pl00, WorkIndex.Pl1)` (reads back a WorkKey with TriggerKey,
+          Trigger, TriggerAct and `_FloatIconOpenParam`), then `WorkAct.applyTarget(Leon, a new GimmickSensorUserData
+          kind Interact)` (Status Processed); `requestDrawKeyIcon(None)` each frame in UpdateBehavior shows the game's
+          icon (a pooled Gui_FloatIcon: key Interact, `<ICON INTERACT-F>`) at `_ObjIconPos`, following it; stopping
+          the requests takes it away. **`checkInput` is true for one frame per Interact press** (12 presses, 12 trues):
+          that's what a talk trigger starts on. The icon sat at Ashley's feet: her `head` part's transform is at her
+          origin (the skeleton moves the mesh).
+        - **Run 3 (ready):** `_ObjIconPos` = a marker GameObject of ours (`remod_icon_marker`, never destroyed, found by
+          name after a reset) moved each frame to her `getJointByName("Head")` + 0.3 m up; the copy's Owner set to
+          Ashley. Open: the height; whether the merchant's shop opens too when Interact is pressed near him.
+        - **Run 3 (user + log, 2026-10-10): "this looks great".** Icon owned by Ashley, ~0.3 m above her head,
+          following her; each press registered. (Whether the merchant's shop also opens on Interact near him wasn't
+          looked at.)
+        - **In the runtime (built 2026-10-10, not run; user: no F5 copy step):** `talk_icons` in UpdateBehavior. A ready
+          talk trigger's character (`holds` now returns the nearest one in reach; `characters()` entries carry
+          `body`) gets an icon: `key_trigger_to_copy` finds a loaded key trigger by itself (prefers `Use`, then
+          `Button`, `Read`), MemberwiseClone, `_ObjIconPos` = marker `remod_talk_icon_<stem>` (above the Head joint
+          by 0.3 m; no joint: origin + 1.9 m, the merchant gimmick), Owner = the character, `generateWork` +
+          `applyTarget` (refused unless linked), then `requestDrawKeyIcon` / `checkInput` each frame; a press fires
+          the trigger. One icon per character (first ready trigger by file name). Copied again on a new stage or a
+          load; a failure is logged once and the drawn "[T] Talk" prompt + key stand in. A `key` the file names still
+          works too. Ponytail: copies are kept for good (a few small objects per area).
       - After csa038 Ashley is the player character, and her H prompt (a talk to `ch2_a1z0`) doesn't show: intended
         (user).
     - **Not used:** `OccupiedMediator.checkBusy()` (meaning unknown).
@@ -1835,8 +1921,7 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
           mdf2 patched in place, wrong name length and part refused; 24 s), and example 19 from the CLI. Its texture
           was looked at as an image: purple.
       - **Example 19** (`19_a_new_character_in_a_cutscene`, F6): New character rmc002 (purple) and Luis as actors,
-        hiding the partner. All 229 tests pass with REMOD_GAME. The guide's order is F8, F11, F8; then F8 twice;
-          then reset and F8. Not found yet.
+        hiding the partner. All 229 tests pass with REMOD_GAME. Not run in game yet.
       - **Scripts in the game (built 2026-10-08; user: scripts left installed by accident, "we should have the
         ability to see all currently inserted scripts in remod").**
         - Core `installed_scripts(game_dir)` lists each top-level `.lua` in `reframework\autorun` (whoever put it
