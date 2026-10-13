@@ -153,7 +153,7 @@ void set_rows_shown(Graph& graph, int node, int count);  // 0 = none: the param 
 Graph load_graph(const std::filesystem::path& file, bool* added_blocks = nullptr);
 // Refuses (GraphError) to write into the shipped examples folder (is_example_path).
 void save_graph(const Graph& graph, const std::filesystem::path& file);
-// In the tool's examples folder (<tool>\examples, beside profiles\)? Examples are read-only (user, 2026-10-03):
+// In the tool's examples folder (<tool>\examples, beside profiles\; a folder per game in it)? Examples are read-only (user, 2026-10-03):
 // save_graph refuses them, so neither the app nor a program (the API, an AI) changes one; front ends save a copy.
 bool is_example_path(const std::filesystem::path& file);
 

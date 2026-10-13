@@ -404,23 +404,28 @@ struct BlockLook {
 struct State {
     const std::filesystem::path settings_file = remod::default_settings_path();
     remod::Settings saved = remod::load_settings(settings_file);
-    std::string graph_path = saved.graph_path.empty() ? "graph.json" : saved.graph_path;
+    // The game workspace open (CLAUDE.md §10 "Games"): the fields below marked "the game's" are its; the other games'
+    // wait in other_games until switched to (switch_workspace).
+    std::string game = saved.game;
+    std::map<std::string, remod::GameSettings> other_games = saved.other_games;
+    bool baking = false;  // remod-app --bake: examples opened one by one, the user's settings left alone
+    std::string graph_path = saved.graph_path.empty() ? "graph.json" : saved.graph_path;  // the game's last graph
     // Remembered path, else found automatically (REMOD_NOESIS, PATH, winget).
     std::string noesis_path = [this] {
         const auto found = remod::find_noesis(saved.noesis_path);
         return found.empty() ? saved.noesis_path : found.string();
     }();
     bool noesis_textures = saved.noesis_textures;  // convert textures with Noesis, not the built-in converter
-    std::string game_files = saved.game_files_dir;  // REtool folder; empty = ask the RE plugin (see game_files_dir)
-    std::string game_dir = saved.game_dir;  // the installed game's folder: a Lua script's Test in game
-    std::string sdk_dump = saved.sdk_dump;  // REFramework's il2cpp_dump.json: game names scripts are checked against
+    std::string game_files = saved.game_files_dir;  // the game's REtool folder; empty = ask the RE plugin (game_files_dir)
+    std::string game_dir = saved.game_dir;  // the game's installed folder: a Lua script's Test in game
+    std::string sdk_dump = saved.sdk_dump;  // the game's il2cpp_dump.json (REFramework): names scripts are checked against
     bool show_help = saved.show_help;
     bool build_mode = saved.build_mode;  // Build layout (edit structure) vs Use layout (fill in and run)
     bool overview = false;  // zoomed out: blocks show only their title, status and linked rows
     float detail = 1;       // eases to 0 in the overview, back to 1 zoomed in
     bool tidy_requested = false;  // Tidy up clicked: arrange the blocks this frame
     bool show_descriptions = saved.show_descriptions;  // blocks' description text (else a tooltip on the title)
-    std::vector<std::string> pinned = saved.pinned_folders;  // the Browser's pinned folders
+    std::vector<std::string> pinned = saved.pinned_folders;  // the game's pinned Browser folders
     // Where a menu was opened, and on what: right-click / let-go position, pin, link index, node.
     ImVec2 menu_pos;
     ed::PinId menu_pin;
@@ -447,8 +452,8 @@ struct State {
     remod::Graph saved_graph;
     bool baseline_pending = true;
     // Asked before New, Load or closing with unsaved changes: what to do once the user has answered.
-    enum class Pending { None, New, Load, Close, Back } pending = Pending::None;
-    std::string pending_path;  // the graph to load
+    enum class Pending { None, New, Load, Close, Back, Game } pending = Pending::None;
+    std::string pending_path;  // the graph to load, or the game to switch to
     bool quit = false;
     remod::RunValues values;  // what every output gave in the last run (linked fields show it)
     // What links hold before a run (core preview_values), worked out again when the graph or its file changes.
@@ -617,6 +622,18 @@ struct State {
     ImVec2 mini_view_min, mini_view_max;
 };
 
+// The open game's profile (nullptr if its profile is missing).
+const remod::Profile* game_profile(const State& s) {
+    const auto p = std::ranges::find(s.profiles, s.game, &remod::Profile::id);
+    return p == s.profiles.end() ? nullptr : &*p;
+}
+
+// Whether the open game's menus and Nodes panel offer a block: what it needs, the game has (core block_available).
+bool offered(const State& s, std::string_view type) {
+    const remod::Profile* p = game_profile(s);
+    return !p || remod::block_available(type, *p);
+}
+
 // The REtool folder: the one set in the panel, else the one the RE plugin remembers for the graph's game.
 std::string game_files_dir(const State& s) {
     if (!s.game_files.empty()) return s.game_files;
@@ -632,8 +649,9 @@ void detect_game(State& s, const std::string& field) {
     } catch (const remod::GraphError&) {
     }
     if (const remod::Profile* p = remod::profile_for_texture(texture, s.profiles)) {
-        s.graph.profile = p->id;
-        s.status = "Detected a " + p->name + " texture.";
+        s.status = p->id == s.game ? "Detected a " + p->name + " texture."
+                                   : "That's a " + p->name + " texture, but " + (game_profile(s) ? game_profile(s)->name
+                                     : s.game) + " is open: switch game (top bar) to use it.";
     } else if (const auto version = remod::read_tex_version(texture)) {
         s.status = "This is an RE Engine texture of version " + std::to_string(*version) +
                    ", but no game profile uses that version yet. Add one to the profiles folder.";
@@ -675,18 +693,26 @@ void accept_path(State& s, std::string& value, remod::PathKind kind, const char*
     ImGui::EndDragDropTarget();
 }
 
+// The settings as the app has them now: the open game's, and the other games'.
+remod::Settings current_settings(const State& s) {
+    return {.game = s.game,
+            .graph_path = s.graph_path,
+            .noesis_path = s.noesis_path,
+            .noesis_textures = s.noesis_textures,
+            .show_help = s.show_help,
+            .game_files_dir = s.game_files,
+            .game_dir = s.game_dir,
+            .sdk_dump = s.sdk_dump,
+            .build_mode = s.build_mode,
+            .show_descriptions = s.show_descriptions,
+            .pinned_folders = s.pinned,
+            .other_games = s.other_games};
+}
+
 // Writes the settings file only when something changed.
 void remember_paths(State& s) {
-    const remod::Settings now{.graph_path = s.graph_path,
-                              .noesis_path = s.noesis_path,
-                              .noesis_textures = s.noesis_textures,
-                              .show_help = s.show_help,
-                              .game_files_dir = s.game_files,
-                              .game_dir = s.game_dir,
-                              .sdk_dump = s.sdk_dump,
-                              .build_mode = s.build_mode,
-                              .show_descriptions = s.show_descriptions,
-                              .pinned_folders = s.pinned};
+    if (s.baking) return;
+    const remod::Settings now = current_settings(s);
     if (now == s.saved || s.settings_file.empty()) return;
     try {
         remod::save_settings(now, s.settings_file);
@@ -696,11 +722,36 @@ void remember_paths(State& s) {
     }
 }
 
+// Opens another game's workspace (CLAUDE.md §10 "Games"): this game's settings put aside (its last graph: the one
+// last remembered), that game's taken out. The graph isn't touched.
+void switch_workspace(State& s, const std::string& id) {
+    if (id == s.game) return;
+    remod::Settings now = current_settings(s);
+    now.graph_path = s.saved.graph_path;
+    remod::switch_game(now, id);
+    s.game = id;
+    s.other_games = now.other_games;
+    s.graph_path = now.graph_path.empty() ? "graph.json" : now.graph_path;
+    s.game_files = now.game_files_dir;
+    s.game_dir = now.game_dir;
+    s.sdk_dump = now.sdk_dump;
+    s.pinned = now.pinned_folders;
+    const remod::Profile* p = game_profile(s);
+    if (s.cutscene_mode && !(p && p->has("cutscenes"))) s.cutscene_mode = false;
+    s.status = "Opened " + (p ? p->name : id) + ".";
+}
+
 void load_graph_file(State& s) {
     s.graph_path = unquote(s.graph_path);
     try {
         bool added = false;
-        s.graph = remod::load_graph(s.graph_path, &added);
+        remod::Graph loaded = remod::load_graph(s.graph_path, &added);
+        if (loaded.profile != s.game && !s.baking) {  // a graph belongs to its game: open that game
+            const std::string path = s.graph_path;
+            switch_workspace(s, loaded.profile);
+            s.graph_path = path;
+        }
+        s.graph = std::move(loaded);
         s.tidy_after_load = added;  // blocks an old file gained have no place yet
         s.statuses.clear();
         s.values.clear();
@@ -796,6 +847,7 @@ bool save_graph_file(State& s) {
 
 void new_graph(State& s) {
     s.graph = {};
+    s.graph.profile = s.game;
     s.statuses.clear();
     s.values.clear();
     s.baseline_pending = true;
@@ -812,6 +864,17 @@ void do_pending(State& s) {
     if (s.pending == State::Pending::Load) {
         s.graph_path = s.pending_path;
         load_graph_file(s);
+    }
+    if (s.pending == State::Pending::Game) {  // that game's last graph, else a new one
+        s.parent.reset();
+        switch_workspace(s, s.pending_path);
+        if (std::error_code ec; !s.graph_path.empty() && std::filesystem::is_regular_file(unquote(s.graph_path), ec)) {
+            load_graph_file(s);
+        } else {
+            s.graph_path = "graph.json";
+            new_graph(s);
+        }
+        remember_paths(s);
     }
     if (s.pending == State::Pending::Close) s.quit = true;
     s.pending = State::Pending::None;
@@ -835,6 +898,7 @@ void draw_unsaved_prompt(State& s) {
     const char* what = s.pending == State::Pending::New    ? "starting a new layout"
                        : s.pending == State::Pending::Load ? "loading another graph"
                        : s.pending == State::Pending::Back ? "going back to the layout"
+                       : s.pending == State::Pending::Game ? "switching game"
                                                            : "closing";
     const std::string subject = s.parent ? "the custom node" : std::filesystem::path(s.graph_path).filename().string();
     ImGui::Text("Save the changes to %s before %s?", subject.c_str(), what);
@@ -969,7 +1033,7 @@ std::vector<remod::PackageFile> game_files_of(const State& s, int node) {
         const std::filesystem::path cutscene = path_field(s, node, "cutscene");
         std::error_code ec;
         // No file yet: the runtime alone, to record camera keys with (F10) for Use recording.
-        if (cutscene.empty() || !std::filesystem::exists(cutscene, ec)) return {remod::cutscene_runtime()};
+        if (cutscene.empty() || !std::filesystem::exists(cutscene, ec)) return remod::cutscene_runtime();
         return remod::cutscene_files(cutscene);
     }
     const std::filesystem::path script = script_of(s, node);
@@ -1393,15 +1457,19 @@ void draw_side_panel(State& s) {
                               "ObjectExplorer > Dump SDK. It's written to the game's folder as il2cpp_dump.json.");
     }
 
-    // Which game (profile) the graph targets. Picking a texture sets this automatically.
-    const auto current = std::ranges::find(s.profiles, s.graph.profile, &remod::Profile::id);
-    if (ImGui::BeginCombo("Game", current != s.profiles.end() ? current->name.c_str() : s.graph.profile.c_str())) {
-        for (const auto& p : s.profiles)
-            if (ImGui::Selectable(p.name.c_str(), p.id == s.graph.profile)) s.graph.profile = p.id;
-        ImGui::EndCombo();
+    // The game is the workspace's (top bar); what remod can't do for it yet, in its profile's words.
+    if (const remod::Profile* p = game_profile(s)) {
+        ImGui::Text("Game: %s", p->name.c_str());
+        for (const std::string& note : p->notes) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::Bullet();
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", note.c_str());
+            ImGui::PopStyleColor();
+        }
+    } else {
+        ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "No profile '%s' in the profiles folder.", s.game.c_str());
     }
-    if (current == s.profiles.end())
-        ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "No profile '%s' in the profiles folder.", s.graph.profile.c_str());
     for (const auto& e : s.profile_errors) ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", e.c_str());
     if (s.build_mode) {
         game_scripts_list(s);  // in every layout (user, 2026-10-09: looked for it outside Use layout)
@@ -1867,8 +1935,8 @@ void draw_nodes_panel(State& s) {
     };
     const std::string want = lower(filter);
     auto matches = [&](const remod::NodeSpec& spec) {
-        return want.empty() || lower(spec.title).find(want) != std::string::npos ||
-               lower(spec.summary).find(want) != std::string::npos;
+        return offered(s, spec.type) && (want.empty() || lower(spec.title).find(want) != std::string::npos ||
+                                         lower(spec.summary).find(want) != std::string::npos);
     };
     // One folder per family, the main steps first and the utilities (flow, values) last; closed until opened, open
     // while a search finds something in it. Each block is shown as it will look, at most 55% size (less if the panel
@@ -2112,6 +2180,21 @@ void draw_route(ImDrawList* draw, const std::vector<remod::Pt>& path, float radi
 // edit images), Build one (add, link, arrange blocks), or the open cutscene. The active one highlighted.
 void draw_layout_switch(State& s) {
     if (!ImGui::BeginMainMenuBar()) return;
+    // The game workspace (CLAUDE.md §10 "Games"): switching asks about unsaved changes, then opens that game's last
+    // graph. Each game has its own blocks, folders and settings.
+    {
+        const remod::Profile* now = game_profile(s);
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize("Resident Evil 2 (2019)").x + ImGui::GetFrameHeight() * 2);
+        if (ImGui::BeginCombo("##game", now ? now->name.c_str() : s.game.c_str())) {
+            for (const remod::Profile& p : s.profiles)
+                if (ImGui::Selectable(p.name.c_str(), p.id == s.game) && p.id != s.game) ask(s, State::Pending::Game, p.id);
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The game you're modding. Each keeps its own graphs, blocks, folders and settings.");
+    }
+    const remod::Profile* game = game_profile(s);
+    const bool cutscenes = !game || game->has("cutscenes");
     struct Mode { const char* label; int mode; const char* tip; };  // mode: 0 Use, 1 Build, 2 Cutscene
     static constexpr Mode modes[]{
         {"Use layout", 0, "Fill in the fields, Run, edit the images. The blocks and links stay as they are."},
@@ -2119,10 +2202,12 @@ void draw_layout_switch(State& s) {
         {"Cutscene layout", 2, nullptr}};
     const ImGuiStyle& style = ImGui::GetStyle();
     float width = -style.ItemSpacing.x;
-    for (const auto& m : modes) width += ImGui::CalcTextSize(m.label).x + style.FramePadding.x * 2 + style.ItemSpacing.x;
+    for (const auto& m : modes)
+        if (m.mode != 2 || cutscenes) width += ImGui::CalcTextSize(m.label).x + style.FramePadding.x * 2 + style.ItemSpacing.x;
     ImGui::SetCursorPosX(ImMax(0.0f, (ImGui::GetMainViewport()->Size.x - width) * 0.5f));
     const int now = s.cutscene_mode ? 2 : int(s.build_mode);
     for (const auto& m : modes) {
+        if (m.mode == 2 && !cutscenes) continue;  // remod's cutscenes run only where its cutscene script knows the game
         const bool active = now == m.mode;
         if (active) ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_ButtonActive]);
         if (ImGui::Button(m.label) && !active) {
@@ -3958,7 +4043,8 @@ void draw_canvas(State& s, ed::EditorContext* editor) {
     }
 
     // A menu entry for a node type: its readable name, the description on hover.
-    auto node_item = [](const remod::NodeSpec& spec) {
+    auto node_item = [&s](const remod::NodeSpec& spec) {
+        if (!offered(s, spec.type)) return false;  // not for this game (yet): not listed
         const std::string label = std::string(spec.manual ? "Your step: " : "") + spec.title;
         const bool picked = ImGui::MenuItem(label.c_str());
         if (ImGui::IsItemHovered()) spec_tooltip(spec);
@@ -4427,6 +4513,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         } else if (!ImGui::IsAnyItemActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !state.place_new) {
             state.history.track(state.graph);
         }
+        state.baking = !bake.empty();
         if (!bake.empty()) {
             if (bake_frames == 0) {
                 state.graph_path = bake.back().string();

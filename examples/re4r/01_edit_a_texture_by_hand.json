@@ -1,0 +1,167 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "png"
+      ],
+      "to": [
+        4,
+        "png"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "image"
+      ],
+      "to": [
+        5,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        6,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        6,
+        "original"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "tex"
+      ],
+      "to": [
+        7,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        7,
+        "preview"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
+        "title": "The texture to change"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        400.0,
+        37.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {
+        "png": "edits/file_008.png"
+      },
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 4,
+      "params": {
+        "editor": "",
+        "title": "Your edit"
+      },
+      "pos": [
+        0.0,
+        204.0
+      ],
+      "type": "EditImage"
+    },
+    {
+      "id": 5,
+      "params": {},
+      "pos": [
+        220.0,
+        194.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        448.0,
+        204.0
+      ],
+      "type": "SaveTex"
+    },
+    {
+      "id": 7,
+      "params": {
+        "author": "",
+        "description": "A document, edited by hand",
+        "name": "My first texture mod",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        0.0,
+        383.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
+}

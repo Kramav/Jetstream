@@ -337,24 +337,29 @@ TEST_CASE("built-in blocks: each one loads and validates; a block inside another
     CHECK(recolour->inputs[1].widget == remod::Widget::Text);  // materials
 }
 
-// ---- The shipped examples (examples\): each one runs on the real game files ----
+// ---- The shipped examples (examples\<game>): each one runs on that game's real files ----
 
 #include "texture_converter.hpp"
 
-TEST_CASE("every example graph runs on the game files (set REMOD_GAME to the extracted natives/STM)") {
+namespace {
+
+// The examples in examples\<game> run on the files an environment variable names (that game's extracted natives
+// root); skipped when it isn't set. Returns how many ran.
+int run_examples(const char* env, const std::string& id, std::string& game) {
     char* v = nullptr;
     size_t n = 0;
-    _dupenv_s(&v, &n, "REMOD_GAME");
-    const std::string game = v ? v : "";
+    _dupenv_s(&v, &n, env);
+    game = v ? v : "";
     std::free(v);
-    if (game.empty()) SKIP("set REMOD_GAME to your extracted natives/STM folder to run the examples");
-
+    if (game.empty()) return -1;
+    const remod::Profile profile = remod::load_profile(REMOD_PROFILES_DIR "/" + id + ".toml");
+    const fs::path folder = fs::path(REMOD_EXAMPLES_DIR).parent_path() / id;
     for (const remod::CustomNode& c : remod::load_custom_library(REMOD_BLOCKS_DIR)) remod::register_custom(c);
     remod::set_game_files_dir(game);
     TempDir tmp;  // a copy: they write next to themselves (edits\, mods\, backups\)
-    fs::copy(REMOD_EXAMPLES_DIR, tmp.path);  // files only: not mods etc. left by the user's own runs
-    fs::copy(fs::path(REMOD_EXAMPLES_DIR) / "cutscenes", tmp.path / "cutscenes");  // the cutscene files examples use
-    fs::copy(fs::path(REMOD_EXAMPLES_DIR) / "pictures", tmp.path / "pictures");  // example 20's
+    fs::copy(folder, tmp.path);  // files only: not mods etc. left by the user's own runs
+    for (const char* sub : {"cutscenes", "pictures"})  // RE4R's cutscene files and example 20's pictures
+        if (fs::exists(folder / sub)) fs::copy(folder / sub, tmp.path / sub);
     const auto converter = remod::make_converter({});
     int ran = 0;
     for (const auto& e : fs::directory_iterator(tmp.path)) {
@@ -367,8 +372,9 @@ TEST_CASE("every example graph runs on the game files (set REMOD_GAME to the ext
             fs::copy_file(fs::path(game) / "streaming/_chainsaw/movie/mv/mva402/mva402.mov.1.x64",
                           (fs::create_directories(tmp.path / "videos"), tmp.path / "videos/mva402.mp4"));
         const Graph g = remod::load_graph(e.path());
+        CHECK(g.profile == id);
         CHECK(g.validate().empty());
-        const remod::RunOptions opt{.profile = re4r(), .converter = *converter, .base_dir = tmp.path,
+        const remod::RunOptions opt{.profile = profile, .converter = *converter, .base_dir = tmp.path,
                                     .edits_done = true, .cache_dir = tmp.path / "cache"};
         const auto result = remod::run_graph(g, opt);
         CHECK_FALSE(result.paused);
@@ -377,6 +383,29 @@ TEST_CASE("every example graph runs on the game files (set REMOD_GAME to the ext
         }));
         ++ran;
     }
-    CHECK(ran >= 11);
     remod::set_game_files_dir({});
+    return ran;
+}
+
+}  // namespace
+
+TEST_CASE("every RE4R example runs on the game files (set REMOD_GAME to the extracted natives/STM)") {
+    std::string game;
+    const int ran = run_examples("REMOD_GAME", "re4r", game);
+    if (ran < 0) SKIP("set REMOD_GAME to your extracted natives/STM folder to run the examples");
+    CHECK(ran >= 22);
+}
+
+TEST_CASE("every RE3R example runs on its files (set REMOD_GAME_RE3R to its extracted natives/STM)") {
+    std::string game;
+    const int ran = run_examples("REMOD_GAME_RE3R", "re3r", game);
+    if (ran < 0) SKIP("set REMOD_GAME_RE3R to RE3R's extracted natives/STM folder to run its examples");
+    CHECK(ran >= 10);
+}
+
+TEST_CASE("every RE2R example runs on its files (set REMOD_GAME_RE2R to its extracted natives/x64)") {
+    std::string game;
+    const int ran = run_examples("REMOD_GAME_RE2R", "re2r", game);
+    if (ran < 0) SKIP("set REMOD_GAME_RE2R to RE2R's extracted natives/x64 folder to run its examples");
+    CHECK(ran >= 10);
 }

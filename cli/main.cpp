@@ -31,6 +31,7 @@ constexpr const char* kUsage =
     "remod " REMOD_VERSION "\n"
     "usage:\n"
     "  remod run --graph <file.json> [--profiles <dir>] [--edited true] [--noesis <Noesis64.exe>]\n"
+    "            [--game-files <the game's extracted natives folder>]\n"
     "            --edited true: treat Edit image / Edit video steps as done (you've made your edits)\n"
     "  remod tex2png --profile <toml> --tex <file.tex.N> --out <file.png|.tga|.jpg> [--noesis <Noesis64.exe>]\n"
     "  remod png2tex --profile <toml> --png <edited.png|.tga|.jpg> --original <file.tex.N> --out <new.tex.N>\n"
@@ -60,7 +61,7 @@ struct Command {
 };
 
 const std::map<std::string, Command> kCommands{
-    {"run", {{"graph"}, {"profiles", "edited", "noesis"}}},
+    {"run", {{"graph"}, {"profiles", "edited", "noesis", "game-files"}}},
     {"api", {{}, {}}},
     {"mcp", {{}, {}}},
     {"tex2png", {{"profile", "tex", "out"}, {"noesis"}}},
@@ -108,13 +109,18 @@ int run(int argc, char** argv) {
         }
     }
 
-    // {game} in graphs: the app's Game files folder, else the one the RE plugin remembers (first profile with one).
+    // {game} in graphs: the app's Game files folder for the graph's game (else the game open in the app), else the one
+    // the RE plugin remembers for that game.
     {
-        const remod::Settings settings = remod::load_settings(remod::default_settings_path());
-        std::filesystem::path game = settings.game_files_dir;
-        if (game.empty())
+        remod::Settings settings = remod::load_settings(remod::default_settings_path());
+        if (args.contains("graph")) try {
+            settings = remod::for_game(settings, remod::load_graph(args["graph"]).profile);
+        } catch (const std::exception&) {  // the command itself reports a graph that can't be read
+        }
+        std::filesystem::path game = args.contains("game-files") ? args["game-files"] : settings.game_files_dir;
+        if (game.empty())  // the game's own, as the RE plugin remembers it (never another game's)
             for (const remod::Profile& p : remod::load_profiles(remod::find_profiles_dir()))
-                if (game.empty()) game = remod::game_files_dir(settings.noesis_path, p);
+                if (p.id == settings.game) game = remod::game_files_dir(settings.noesis_path, p);
         remod::set_game_files_dir(game);
         remod::set_sdk_dump(args.contains("dump") ? args["dump"] : settings.sdk_dump);
     }

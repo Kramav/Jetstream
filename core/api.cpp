@@ -42,9 +42,19 @@ const char* family(Family f) {
     return names[static_cast<int>(f)];
 }
 
-json types() {
+// The graph's game, if its profile can be read.
+std::optional<Profile> game_of(const Graph& g) {
+    if (const fs::path profiles = find_profiles_dir(); !profiles.empty()) try {
+            return load_profile_by_id(profiles, g.profile);
+        } catch (const std::exception&) {
+        }
+    return std::nullopt;
+}
+
+json types(const std::optional<Profile>& game) {
     json all = json::array();
-    for (const NodeSpec* spec : all_specs()) {  // built in, then custom nodes
+    for (const NodeSpec* spec : all_specs()) {  // built in, then custom nodes; only those the graph's game can do
+        if (game && !block_available(spec->type, *game)) continue;
         const NodeSpec& s = *spec;
         json inputs = json::array(), outputs = json::array();
         for (const InputSpec& in : s.inputs) {
@@ -173,7 +183,7 @@ std::string ApiSession::call(const std::string& request) {
         const json r = json::parse(request);
         const std::string op = r.at("op").get<std::string>();
         if (op == "types") {
-            reply["types"] = types();
+            reply["types"] = types(game_of(graph_));
         } else if (op == "new") {
             graph_ = Graph{};
             graph_.profile = r.value("profile", graph_.profile);
@@ -200,7 +210,11 @@ std::string ApiSession::call(const std::string& request) {
             // ponytail: placed in a row to the right; the app's Tidy up arranges it properly.
             float right = -400;
             for (const Node& n : graph_.nodes) right = std::max(right, n.x);
-            Node& n = graph_.add_node(r.at("type").get<std::string>());
+            const std::string type = r.at("type").get<std::string>();
+            if (const auto game = game_of(graph_); game && find_spec(type) && !block_available(type, *game))
+                throw GraphError(type + " isn't available for " + game->name + " (it needs a feature remod doesn't "
+                                 "support for that game yet)");
+            Node& n = graph_.add_node(type);
             n.x = right + 400;
             reply["id"] = n.id;
         } else if (op == "remove") {

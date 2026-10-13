@@ -1,0 +1,13 @@
+[game]
+id              = "re8"
+name            = "Resident Evil Village"
+tex_suffix      = "30"                        # [REE-Lib]
+natives_root    = "natives/STM"               # [game data]
+packaging       = ["loose_archive"]           # [guide] Fluffy installs loose files
+pak_script      = "Create-PAK-2023.bat"       # [guide] REtool script for 2023-or-older games
+file_list       = "TBD"                       # [TBD-spike]
+noesis_game     = "RE8"                       # optional: the RE plugin's name (its RE8NativesPath.txt)
+reframework     = "re8"
+features        = ["textures"]
+notes           = ["Textures: not yet checked on this game's files (none extracted yet).",
+                   "Meshes, sounds, movies and cutscenes aren't supported yet."]

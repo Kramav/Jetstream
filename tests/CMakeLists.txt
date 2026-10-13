@@ -8,7 +8,7 @@ target_compile_definitions(remod_tests PRIVATE
     REMOD_PROFILES_DIR="${PROJECT_SOURCE_DIR}/profiles"
     REMOD_SCHEMAS_DIR="${PROJECT_SOURCE_DIR}/schemas"
     REMOD_BLOCKS_DIR="${PROJECT_SOURCE_DIR}/blocks"
-    REMOD_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples"
+    REMOD_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples/re4r"
     REMOD_RUNTIME_DIR="${PROJECT_SOURCE_DIR}/runtime")
 
 include(Catch)

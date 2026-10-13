@@ -1,0 +1,309 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        11,
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "full"
+      ],
+      "to": [
+        4,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "png"
+      ],
+      "to": [
+        5,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        10,
+        "base"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        6,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        9,
+        "match"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "image"
+      ],
+      "to": [
+        7,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        8,
+        "image"
+      ],
+      "to": [
+        9,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "image"
+      ],
+      "to": [
+        10,
+        "colour"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "image"
+      ],
+      "to": [
+        11,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "streaming"
+      ],
+      "to": [
+        11,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        11,
+        "out9"
+      ],
+      "to": [
+        12,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        11,
+        "out10"
+      ],
+      "to": [
+        12,
+        "tex"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/sectionroot/character/player/pl0000/pl0000/pl0000_body_albm.tex.10",
+        "title": "Leon's uniform"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        261.0,
+        6.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        498.0,
+        0.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        202.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
+      "params": {},
+      "pos": [
+        -73.0,
+        644.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 6,
+      "params": {
+        "channel": "alpha",
+        "image": "",
+        "save_to": "",
+        "title": "Its alpha: data, not transparency"
+      },
+      "pos": [
+        0.0,
+        794.0
+      ],
+      "type": "PickChannel"
+    },
+    {
+      "id": 7,
+      "params": {
+        "size": "320"
+      },
+      "pos": [
+        456.0,
+        794.0
+      ],
+      "type": "Preview"
+    },
+    {
+      "id": 8,
+      "params": {
+        "png": "picture.png",
+        "title": "Your picture (change me)"
+      },
+      "pos": [
+        0.0,
+        371.0
+      ],
+      "type": "ImportImage"
+    },
+    {
+      "id": 9,
+      "params": {
+        "fit": "fill",
+        "height": "0",
+        "image": "",
+        "match": "",
+        "save_to": "",
+        "width": "0"
+      },
+      "pos": [
+        0.0,
+        550.0
+      ],
+      "type": "ResizeImage"
+    },
+    {
+      "id": 10,
+      "params": {
+        "alpha": "",
+        "base": "",
+        "blue": "",
+        "colour": "",
+        "green": "",
+        "red": "",
+        "save_to": "",
+        "title": "Picture as colour, alpha kept"
+      },
+      "pos": [
+        456.0,
+        550.0
+      ],
+      "type": "MergeChannels"
+    },
+    {
+      "id": 11,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        999.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 12,
+      "params": {
+        "author": "",
+        "description": "A picture as Leon's uniform texture, keeping its alpha data",
+        "name": "Picture uniform",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        486.0,
+        999.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re2r",
+  "schema_version": 0
+}

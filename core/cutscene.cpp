@@ -60,11 +60,17 @@ fs::path runtime_dir() {
     return profiles.empty() ? fs::path() : profiles.parent_path() / "runtime";
 }
 
-PackageFile cutscene_runtime(const fs::path& runtime) {
+std::vector<PackageFile> cutscene_runtime(const fs::path& runtime) {
     std::error_code ec;
     const fs::path script = runtime / "remod_cutscene.lua";
     if (!fs::is_regular_file(script, ec)) throw PackageError("remod's cutscene runtime is missing: " + script.string());
-    return {script, "reframework/autorun/remod_cutscene.lua"};
+    std::vector<PackageFile> files{{script, "reframework/autorun/remod_cutscene.lua"}};
+    std::vector<fs::path> games;
+    for (const auto& e : fs::directory_iterator(runtime / "remod_cutscene", ec))
+        if (e.path().extension() == ".lua") games.push_back(e.path());
+    std::ranges::sort(games);
+    for (const fs::path& g : games) files.push_back({g, "reframework/autorun/remod_cutscene/" + g.filename().string()});
+    return files;
 }
 
 std::vector<PackageFile> cutscene_files(const fs::path& cutscene, const fs::path& runtime) {
@@ -73,8 +79,8 @@ std::vector<PackageFile> cutscene_files(const fs::path& cutscene, const fs::path
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (ext != ".json" || !fs::is_regular_file(cutscene, ec))
         throw PackageError("not a cutscene file (.json): " + cutscene.string());
-    std::vector<PackageFile> files{cutscene_runtime(runtime),
-                                   {cutscene, "reframework/data/remod_cutscenes/" + cutscene.filename().string()}};
+    std::vector<PackageFile> files = cutscene_runtime(runtime);
+    files.push_back({cutscene, "reframework/data/remod_cutscenes/" + cutscene.filename().string()});
     // Its actors' definitions that remod ships (runtime/puppets: game file paths only). Others come from the mod that
     // adds the character (e.g. a new character's own definition).
     const json c = json::parse(read_text(cutscene), nullptr, false);

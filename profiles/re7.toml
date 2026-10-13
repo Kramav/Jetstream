@@ -1,0 +1,14 @@
+[game]
+id              = "re7"
+name            = "Resident Evil 7"
+tex_suffix      = "8"                         # [REE-Lib] the DX11 (non-ray-tracing) version's textures; the ray-tracing update's are 35
+natives_root    = "natives/x64"               # [game data] the DX11 version's
+packaging       = ["loose_archive"]           # [guide] Fluffy installs loose files
+pak_script      = "Create-PAK-2023.bat"       # [guide] REtool script for 2023-or-older games
+file_list       = "TBD"                       # [TBD-spike]
+noesis_game     = "RE7"                       # optional: the RE plugin's name (its RE7NativesPath.txt)
+reframework     = "re7"
+features        = ["textures"]
+notes           = ["Made for the DX11 version (Steam beta dx11_non-rt), as installed here: the ray-tracing update's files differ.",
+                   "Textures: the older header layout, not yet checked on this game's files (none extracted yet).",
+                   "Meshes, sounds, movies and cutscenes aren't supported yet."]

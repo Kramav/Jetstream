@@ -1,4 +1,5 @@
 #include "profile.hpp"
+#include "nodes.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -76,4 +77,28 @@ TEST_CASE("the Noesis keys are optional; empty, they're still refused") {
     CHECK(p.noesis_game.empty());
     CHECK_THROWS_WITH(remod::parse_profile(replace(kValid, "noesis_game   = \"X\"", "noesis_game = \"\"")),
                       ContainsSubstring("noesis_game"));
+}
+
+TEST_CASE("profiles say what works for each game; blocks needing more aren't available") {
+    const auto p = remod::parse_profile(kValid + "features = [\"textures\"]\nnotes = [\"Meshes not yet.\"]\nreframework = \"x9\"\n");
+    CHECK(p.has("textures"));
+    CHECK_FALSE(p.has("meshes"));
+    CHECK(p.notes == std::vector<std::string>{"Meshes not yet."});
+    CHECK(p.reframework == "x9");
+    CHECK_THROWS_WITH(remod::parse_profile(kValid + "features = [\"wings\"]\n"), ContainsSubstring("'features' values"));
+    CHECK_THROWS_WITH(remod::parse_profile(kValid + "notes = \"one\"\n"), ContainsSubstring("'notes' must be a list"));
+
+    CHECK(remod::block_available("LoadTex", p));
+    CHECK_FALSE(remod::block_available("PartTexture", p));  // meshes too
+    CHECK(remod::block_available("AdjustColour", p));       // images: any game
+    CHECK(remod::block_available("LuaScript", remod::parse_profile(kValid)));
+    CHECK_FALSE(remod::block_available("Cutscene", p));
+
+    // The shipped games, in release order; RE4R can do everything built so far, RE9 nothing of its own yet.
+    std::vector<std::string> ids;
+    for (const remod::Profile& g : remod::load_profiles(REMOD_PROFILES_DIR)) ids.push_back(g.id);
+    CHECK(ids == std::vector<std::string>{"re2r", "re3r", "re4r", "re7", "re8", "re9"});
+    const auto re4r = remod::load_profile_by_id(REMOD_PROFILES_DIR, "re4r");
+    for (std::string_view f : remod::kFeatures) CHECK(re4r.has(f));
+    CHECK(remod::load_profile_by_id(REMOD_PROFILES_DIR, "re9").features.empty());
 }

@@ -22,62 +22,92 @@
     },
     {
       "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        7,
+        "in2"
+      ]
+    },
+    {
+      "from": [
         3,
-        "png"
+        "full"
       ],
       "to": [
         4,
-        "png"
+        "tex"
       ]
     },
     {
       "from": [
         4,
-        "image"
+        "png"
       ],
       "to": [
         5,
+        "png"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "image"
+      ],
+      "to": [
+        6,
         "in"
       ]
     },
     {
       "from": [
-        5,
-        "out"
-      ],
-      "to": [
         6,
-        "image"
-      ]
-    },
-    {
-      "from": [
-        2,
-        "out"
-      ],
-      "to": [
-        6,
-        "original"
-      ]
-    },
-    {
-      "from": [
-        6,
-        "tex"
-      ],
-      "to": [
-        7,
-        "tex"
-      ]
-    },
-    {
-      "from": [
-        5,
         "out"
       ],
       "to": [
         7,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        8,
         "preview"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "streaming"
+      ],
+      "to": [
+        7,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "out9"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "out10"
+      ],
+      "to": [
+        8,
+        "tex"
       ]
     }
   ],
@@ -86,8 +116,8 @@
       "id": 1,
       "params": {
         "game_path": "",
-        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
-        "title": "The texture to change"
+        "tex": "{game}/escape/character/player/pl2000/mesh/pl2000_body_albm.tex.34",
+        "title": "Jill's outfit"
       },
       "pos": [
         0.0,
@@ -106,62 +136,75 @@
     },
     {
       "id": 3,
-      "params": {
-        "png": "edits/file_008.png"
-      },
+      "params": {},
       "pos": [
         473.0,
         0.0
       ],
-      "type": "ExportImage"
+      "type": "StreamingCopy"
     },
     {
       "id": 4,
+      "params": {
+        "png": "edits/jill_outfit.png"
+      },
+      "pos": [
+        0.0,
+        316.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
       "params": {
         "editor": "",
         "title": "Your edit"
       },
       "pos": [
-        0.0,
-        290.0
+        448.0,
+        316.0
       ],
       "type": "EditImage"
-    },
-    {
-      "id": 5,
-      "params": {},
-      "pos": [
-        383.0,
-        386.0
-      ],
-      "type": "Split"
     },
     {
       "id": 6,
       "params": {},
       "pos": [
-        456.0,
-        290.0
+        -73.0,
+        758.0
       ],
-      "type": "SaveTex"
+      "type": "Split"
     },
     {
       "id": 7,
       "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        607.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 8,
+      "params": {
         "author": "",
-        "description": "A document, edited by hand",
-        "name": "My first texture mod",
+        "description": "Jill's outfit, edited by hand",
+        "name": "My outfit",
         "out": "mods",
         "replace": "true",
         "version": "1.0"
       },
       "pos": [
-        0.0,
-        575.0
+        491.0,
+        607.0
       ],
       "type": "PackageMod"
     }
   ],
-  "profile": "re4r",
+  "profile": "re3r",
   "schema_version": 0
 }

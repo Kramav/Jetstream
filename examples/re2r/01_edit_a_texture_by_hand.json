@@ -2,6 +2,36 @@
   "links": [
     {
       "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "png"
+      ],
+      "to": [
+        4,
+        "png"
+      ]
+    },
+    {
+      "from": [
         4,
         "image"
       ],
@@ -49,46 +79,6 @@
         7,
         "preview"
       ]
-    },
-    {
-      "from": [
-        1,
-        "tex"
-      ],
-      "to": [
-        2,
-        "in"
-      ]
-    },
-    {
-      "from": [
-        2,
-        "out"
-      ],
-      "to": [
-        3,
-        "tex"
-      ]
-    },
-    {
-      "from": [
-        3,
-        "png"
-      ],
-      "to": [
-        4,
-        "image"
-      ]
-    },
-    {
-      "from": [
-        7,
-        "mod"
-      ],
-      "to": [
-        8,
-        "source"
-      ]
     }
   ],
   "nodes": [
@@ -96,7 +86,7 @@
       "id": 1,
       "params": {
         "game_path": "",
-        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
+        "tex": "{game}/sectionroot/ui/ui3200/tex/ui3210_file_17_iam.tex.10",
         "title": "The texture to change"
       },
       "pos": [
@@ -110,14 +100,14 @@
       "params": {},
       "pos": [
         400.0,
-        37.0
+        64.0
       ],
       "type": "Split"
     },
     {
       "id": 3,
       "params": {
-        "png": ""
+        "png": "edits/document.png"
       },
       "pos": [
         473.0,
@@ -128,25 +118,21 @@
     {
       "id": 4,
       "params": {
-        "brightness": "-25",
-        "contrast": "0",
-        "hue": "0",
-        "image": "",
-        "saturation": "0",
-        "save_to": ""
+        "editor": "",
+        "title": "Your edit"
       },
       "pos": [
-        769.0,
-        0.0
+        0.0,
+        290.0
       ],
-      "type": "AdjustColour"
+      "type": "EditImage"
     },
     {
       "id": 5,
       "params": {},
       "pos": [
-        -73.0,
-        205.0
+        383.0,
+        386.0
       ],
       "type": "Split"
     },
@@ -154,8 +140,8 @@
       "id": 6,
       "params": {},
       "pos": [
-        0.0,
-        168.0
+        456.0,
+        290.0
       ],
       "type": "SaveTex"
     },
@@ -163,34 +149,19 @@
       "id": 7,
       "params": {
         "author": "",
-        "description": "A darker document, with a backup of each build",
-        "name": "Darker document",
+        "description": "A R.P.D. paper, edited by hand",
+        "name": "My first texture mod",
         "out": "mods",
         "replace": "true",
         "version": "1.0"
       },
       "pos": [
-        208.0,
-        168.0
+        0.0,
+        575.0
       ],
       "type": "PackageMod"
-    },
-    {
-      "id": 8,
-      "params": {
-        "create_dirs": "true",
-        "dest": "backups/",
-        "if_exists": "overwrite",
-        "source": "",
-        "title": "Back up the build"
-      },
-      "pos": [
-        353.0,
-        168.0
-      ],
-      "type": "CopyFile"
     }
   ],
-  "profile": "re4r",
+  "profile": "re2r",
   "schema_version": 0
 }

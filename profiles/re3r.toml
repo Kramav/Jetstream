@@ -1,0 +1,14 @@
+[game]
+id              = "re3r"
+name            = "Resident Evil 3 (2020)"
+tex_suffix      = "34"                        # [game data] the ray-tracing version's textures (RE2's ray-tracing update shares 34)
+natives_root    = "natives/STM"               # [game data]
+packaging       = ["loose_archive"]           # [guide] Fluffy installs loose files
+pak_script      = "Create-PAK-2023.bat"       # [guide] REtool script for 2023-or-older games
+file_list       = "TBD"                       # [TBD-spike]
+noesis_game     = "RE3"                       # optional: the RE plugin's name (its RE3NativesPath.txt)
+reframework     = "re3"
+features        = ["textures"]
+notes           = ["Made for the ray-tracing version (Steam's default), as installed here.",
+                   "Textures: checked on this game's files (its examples), not in game yet.",
+                   "Meshes, sounds, movies (WMV here) and cutscenes aren't supported yet."]

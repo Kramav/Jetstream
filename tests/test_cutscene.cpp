@@ -83,8 +83,39 @@ TEST_CASE("cutscene runtime: the camera between its keys") {
     CHECK(run_lua(REMOD_RUNTIME_DIR "/remod_cutscene.lua").empty());
 }
 
+// A game's part loads without touching the game and gives every function the shared script calls on it.
+TEST_CASE("cutscene runtime: RE4R's part gives the game's functions") {
+    lua_State* L = luaL_newstate();
+    luaL_openlibs(L);
+    const char* check = R"lua(
+local make = ...
+assert(type(make) == "function", "the file gives a function of the shared script's helpers")
+local none = function() end
+local g = make({ now = function() return 0 end, enum = none, instance = none, keep = function(o) return o end,
+                 enum_name = none, enum_values = none, new_movies = function() return {} end, MOVIES_DIR = "remod_movies" })
+for _, f in ipairs({ "player", "partners", "hold_player", "hud", "movie_start", "movie_update", "movie_stop", "where",
+                     "busy", "characters", "story_flags", "flag_on", "named_flag_on", "difficulty", "playing_now",
+                     "sound_play", "sound_stop", "movie_id", "save_request", "gui_command", "flag_diagnostics",
+                     "make_icon", "icon_frame", "update", "frame" }) do
+    assert(type(g[f]) == "function", "missing game." .. f)
+end
+assert(type(g.camera_hooks) == "table" and g.hud_off == 0)
+)lua";
+    std::string error;
+    if (luaL_dostring(L, kStandIns) != LUA_OK || luaL_loadfile(L, REMOD_RUNTIME_DIR "/remod_cutscene/re4.lua") != LUA_OK ||
+        lua_pcall(L, 0, 1, 0) != LUA_OK || luaL_loadstring(L, check) != LUA_OK) {
+        error = lua_tostring(L, -1);
+    } else {
+        lua_insert(L, -2);
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) error = lua_tostring(L, -1);
+    }
+    lua_close(L);
+    CHECK(error.empty());
+}
+
 TEST_CASE("cutscene runtime and probe: Lua 5.4 syntax; the example cutscene's shape") {
-    for (const char* file : {REMOD_RUNTIME_DIR "/remod_cutscene.lua", REMOD_RUNTIME_DIR "/../spikes/cutscene_probe.lua",
+    for (const char* file : {REMOD_RUNTIME_DIR "/remod_cutscene.lua", REMOD_RUNTIME_DIR "/remod_cutscene/re4.lua",
+                             REMOD_RUNTIME_DIR "/../spikes/cutscene_probe.lua",
                              REMOD_RUNTIME_DIR "/../spikes/new_movie_probe.lua",
                              REMOD_RUNTIME_DIR "/../spikes/sound_probe.lua",
                              REMOD_RUNTIME_DIR "/../spikes/character_probe.lua"}) {
@@ -110,24 +141,25 @@ TEST_CASE("cutscene files: the runtime and the cutscene, where the game reads th
     test::TempDir tmp;
     test::write_file(tmp.path / "cutscenes/door.json", "{}");
     const auto files = remod::cutscene_files(tmp.path / "cutscenes/door.json", REMOD_RUNTIME_DIR);
-    REQUIRE(files.size() == 2);
+    REQUIRE(files.size() == 3);  // the shared script, each game's part (RE4R's only, so far), the cutscene
     CHECK(files[0].game_path == "reframework/autorun/remod_cutscene.lua");
     CHECK(files[0].source == fs::path(REMOD_RUNTIME_DIR) / "remod_cutscene.lua");
-    CHECK(files[1].game_path == "reframework/data/remod_cutscenes/door.json");
-    CHECK(remod::cutscene_files(tmp.path / "cutscenes/door.json").size() == 2);  // the runtime found beside profiles
+    CHECK(files[1].game_path == "reframework/autorun/remod_cutscene/re4.lua");
+    CHECK(files[2].game_path == "reframework/data/remod_cutscenes/door.json");
+    CHECK(remod::cutscene_files(tmp.path / "cutscenes/door.json").size() == 3);  // the runtime found beside profiles
     CHECK_THROWS_WITH(remod::cutscene_files(tmp.path / "missing.json", REMOD_RUNTIME_DIR),
                       Catch::Matchers::ContainsSubstring("not a cutscene file"));
     test::write_file(tmp.path / "door.txt", "{}");
     CHECK_THROWS_AS(remod::cutscene_files(tmp.path / "door.txt", REMOD_RUNTIME_DIR), remod::PackageError);
     CHECK_THROWS_WITH(remod::cutscene_files(tmp.path / "cutscenes/door.json", tmp.path),
                       Catch::Matchers::ContainsSubstring("runtime is missing"));
-    CHECK(remod::cutscene_runtime(REMOD_RUNTIME_DIR).game_path == "reframework/autorun/remod_cutscene.lua");
+    CHECK(remod::cutscene_runtime(REMOD_RUNTIME_DIR).at(0).game_path == "reframework/autorun/remod_cutscene.lua");
 }
 
 TEST_CASE("check_cutscene names every problem") {
     CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/cutscene.v0.example.json")).empty());
     CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/../spikes/cutscene_test.json")).empty());
-    CHECK(remod::check_cutscene(test::read_file(REMOD_SCHEMAS_DIR "/../examples/cutscenes/play_a_movie.json")).empty());
+    CHECK(remod::check_cutscene(test::read_file(REMOD_EXAMPLES_DIR "/cutscenes/play_a_movie.json")).empty());
     CHECK(remod::check_cutscene("{ nope") == std::vector<std::string>{"not readable JSON"});
     const std::vector<std::string> p = remod::check_cutscene(R"({
         "schema_version": 1, "length": 5, "start": {"key": "F10"}, "letterbox": 0.6,
@@ -195,10 +227,10 @@ TEST_CASE("Actors: checked, motions name them, and remod's own puppet definition
 
     // luis is remod's (runtime/puppets), rmc001 comes from the mod that adds it: only luis's definition goes along.
     const auto files = remod::cutscene_files(REMOD_SCHEMAS_DIR "/../spikes/actor_test.json", REMOD_RUNTIME_DIR);
-    REQUIRE(files.size() == 3);
-    CHECK(files[1].game_path == "reframework/data/remod_cutscenes/actor_test.json");
-    CHECK(files[2].game_path == "reframework/data/remod_puppets/luis.json");
-    CHECK(files[2].source == fs::path(REMOD_RUNTIME_DIR) / "puppets/luis.json");
+    REQUIRE(files.size() == 4);
+    CHECK(files[2].game_path == "reframework/data/remod_cutscenes/actor_test.json");
+    CHECK(files[3].game_path == "reframework/data/remod_puppets/luis.json");
+    CHECK(files[3].source == fs::path(REMOD_RUNTIME_DIR) / "puppets/luis.json");
     for (const char* def : {"luis", "ashley"}) {  // remod's definitions: game paths, as the runtime reads them
         const auto d = nlohmann::json::parse(test::read_file(fs::path(REMOD_RUNTIME_DIR) / "puppets" / (std::string(def) + ".json")));
         CHECK(d.at("skeleton").get<std::string>().starts_with("_Chainsaw/"));

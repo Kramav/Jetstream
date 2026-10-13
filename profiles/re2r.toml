@@ -1,0 +1,14 @@
+[game]
+id              = "re2r"
+name            = "Resident Evil 2 (2019)"
+tex_suffix      = "10"                        # [game data] the DX11 (non-ray-tracing) version's textures; the ray-tracing update's are 34
+natives_root    = "natives/x64"               # [game data] the DX11 version's (the ray-tracing update's: natives/STM)
+packaging       = ["loose_archive"]           # [guide] Fluffy installs loose files
+pak_script      = "Create-PAK-2023.bat"       # [guide] REtool script for 2023-or-older games
+file_list       = "TBD"                       # [TBD-spike]
+noesis_game     = "RE2"                       # optional: the RE plugin's name (its RE2NativesPath.txt)
+reframework     = "re2"
+features        = ["textures"]
+notes           = ["Made for the DX11 version (Steam beta dx11_non-rt), as installed here: the ray-tracing update's files differ.",
+                   "Textures: checked on this game's files (its examples), not in game yet.",
+                   "Meshes, sounds, movies and cutscenes aren't supported yet."]

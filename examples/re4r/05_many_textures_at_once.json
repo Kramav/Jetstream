@@ -1,0 +1,166 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "files"
+      ],
+      "to": [
+        2,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "tex"
+      ],
+      "to": [
+        3,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "png"
+      ],
+      "to": [
+        5,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "out"
+      ],
+      "to": [
+        4,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "out"
+      ],
+      "to": [
+        7,
+        "original"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "image"
+      ],
+      "to": [
+        7,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "tex"
+      ],
+      "to": [
+        6,
+        "tex"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "folder": "{game}/_chainsaw/ui/ui3200/tex",
+        "on_fail": "stop",
+        "pattern": "cs_ui3210_file_00*_iam.tex.*",
+        "subfolders": "",
+        "title": "The documents"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "FilesInFolder"
+    },
+    {
+      "id": 2,
+      "params": {
+        "game_path": "",
+        "tex": ""
+      },
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        -224.0,
+        170.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        168.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "-40",
+        "image": "",
+        "saturation": "-30",
+        "save_to": ""
+      },
+      "pos": [
+        461.0,
+        168.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 6,
+      "params": {
+        "author": "",
+        "description": "The first documents of the files, faded",
+        "name": "Faded documents",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        448.0,
+        390.0
+      ],
+      "type": "PackageMod"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        0.0,
+        390.0
+      ],
+      "type": "SaveTex"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
+}

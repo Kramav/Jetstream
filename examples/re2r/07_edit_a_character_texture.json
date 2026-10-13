@@ -1,0 +1,210 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        7,
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "full"
+      ],
+      "to": [
+        4,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "png"
+      ],
+      "to": [
+        5,
+        "png"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "image"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        7,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        8,
+        "preview"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "streaming"
+      ],
+      "to": [
+        7,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "out9"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "out10"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/sectionroot/character/player/pl0000/pl0000/pl0000_body_albm.tex.10",
+        "title": "Leon's uniform"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        261.0,
+        6.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        498.0,
+        0.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": "edits/leon_uniform.png"
+      },
+      "pos": [
+        0.0,
+        202.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "editor": "",
+        "title": "Your edit"
+      },
+      "pos": [
+        448.0,
+        202.0
+      ],
+      "type": "EditImage"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        -243.0,
+        398.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        405.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 8,
+      "params": {
+        "author": "",
+        "description": "Leon's uniform, edited by hand",
+        "name": "My uniform",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        448.0,
+        405.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re2r",
+  "schema_version": 0
+}

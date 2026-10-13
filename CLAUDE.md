@@ -711,7 +711,7 @@ amed pictures`). Core `match_pictures`: a picture
   required when it goes to an Edit image (validate says so). Export image now makes its file's folder.
 - **`{game}` (2026-10-03):** in any field, the Game files folder (`set_game_files_dir`, `fill_game`; `NodeRun::text`
   and thumbnails fill it in). The app sets it from its Game files setting (else the RE plugin's NativesPath), the CLI
-  from the app's settings. ponytail: one folder for every game. So graphs (the examples, shared mods) run on any PC.
+  from the app's settings (the graph's game's, §10 "Games"). So graphs (the examples, shared mods) run on any PC.
 - **Loading fills missing fields with their initial values** (`migrate`), as add_node does: graphs a program wrote,
   and graphs from before a block gained a field. **A graph with no block positions is tidied on load**
   (`load_graph`'s `added_blocks`).
@@ -719,8 +719,9 @@ amed pictures`). Core `match_pictures`: a picture
   needing the natives root, Streaming copy and Part texture, were unknown before a run).
 - **Files in folder into texture inputs lists only textures** (a pattern like `*.tex*` matched a Noesis leftover
   `x.texout.tga` in the real game folder).
-- **Examples (2026-10-03; user: "a lot of example graphs for users"):** `examples/` (shipped), written by
-  `scripts/make_examples.py` (no positions; `{game}` paths; sample `picture.png`, `logo.png`), then **every example tidied up and saved by `remod-app --bake examples\*.json` (user, 2026-10-13: every time they're regenerated, all of them; replaces restoring 01-11 with git checkout)**, listed
+- **Examples (2026-10-03; user: "a lot of example graphs for users"):** `examples/<game>/` (shipped; RE4R's in
+  `examples/re4r/` since 2026-10-13, §10 "Games"), written by
+  `scripts/make_examples.py` (no positions; `{game}` paths; sample `picture.png`, `logo.png`), then **every example tidied up and saved by `remod-app --bake examples\re4r\*.json` (user, 2026-10-13: every time they're regenerated, all of them; replaces restoring 01-11 with git checkout)**, listed
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
@@ -800,7 +801,11 @@ packaging       = ["loose_archive", "pak"]    # [TBD-spike] which Fluffy accepts
 pak_script      = "Create-PAK-2023.bat"       # [guide] REtool script for 2023-or-older games
 noesis_export   = "TBD"                       # [TBD-spike] ?cmode option selecting RE4R tex output
 file_list       = "TBD"                       # [TBD-spike] PAK file list source/version
+reframework     = "re4"                       # optional: REFramework's name for the game (its cutscene script file)
+features        = ["textures", "meshes", "sounds", "movies", "cutscenes"]  # what remod can do for it (kFeatures)
+notes           = ["..."]                     # optional: what isn't supported or checked yet, shown in the app
 ```
+One profile per game (§10 "Games"): re2r, re3r, re4r, re7, re8, re9.
 
 ## 6. External dependencies — "managed dependencies"
 
@@ -836,8 +841,9 @@ in a txt file next to the plugin — the tool must set/verify this.
 - `modinfo.ini` contents and package folder layout.
 - Profile loading/validation.
 - Round-trip: original TEX → image → TEX reproduces the original's TexMeta and image data.
-  Fixtures are **local only**, located via env var `REMOD_FIXTURES`. Tests skip if unset. `REMOD_GAME` (the
-  extracted natives\STM) runs the shipped examples on the real game files.
+  Fixtures are **local only**, located via env var `REMOD_FIXTURES`. Tests skip if unset. `REMOD_GAME` (RE4R's
+  extracted natives\STM) runs the shipped RE4R examples on the real game files; `REMOD_GAME_RE3R` (RE3R's natives\STM)
+  and `REMOD_GAME_RE2R` (RE2R's DX11 natives\x64) run theirs.
   Never commit fixture game files.
 
 ## 9. Open questions / spike results  [TBD-spike]
@@ -1050,6 +1056,82 @@ propose them as next steps before then.
   edit.
 
 ## 10. Milestones after M1
+
+- **Games: one app, a workspace per game (user, 2026-10-13: "partition remod such that RE4R has a different layout
+  than re9 or re3"; RE4R "fleshed out well enough for now", expanding to the others).** User's choices: game workspaces
+  in one app (not separate apps or a code split only); blocks a game can't do hidden; one game per graph; per game:
+  game folder, game files folder, SDK dump, pins, last graph; a game with nothing of its own yet shows what works
+  (shared blocks) and notes; picker in the top bar, switching closes the graph; the cutscene script to become a shared
+  core plus a file per game (not done yet: phase 3).
+  - **Games (profiles):** RE2R (`re2r`, the DX11 non-ray-tracing version as installed here: Steam beta dx11_non-rt;
+    tex 10, `natives/x64`), RE3R (`re3r`, ray-tracing, tex 34, at `H:\SteamLibrary 1`), RE4R, RE7 (`re7`, DX11: tex 8,
+    `natives/x64`), RE8 Village (`re8`, tex 30), RE9 Requiem (`re9`, tex 250813143 GDeflate) [game data, REE-Lib's
+    version table]. All six installed with REFramework. Extracted files: RE2 (non-RT), RE3 (RT), RE4R. Sorted by id
+    (release order).
+  - **Features:** `Profile::features` from `kFeatures` (textures, meshes, sounds, movies, cutscenes); RE4R all, RE2R /
+    RE3R / RE7 / RE8 textures (header layouts known; not yet checked on their files), RE9 none. `Profile::notes`: what
+    isn't supported or checked, shown in the Pipeline panel.
+  - **Blocks:** `block_needs` (one table in nodes.cpp; a custom node needs what its blocks need), `block_available`.
+    The app lists only those (Nodes panel, every add / insert menu through `node_item`); the API's `types` too, and its
+    `add` refuses; `run_expanded` refuses a graph holding one ("X needs meshes, which remod doesn't support for Y
+    yet"). Shared: images, files, values, flow, Package, Lua script, Run program.
+  - **Settings per game:** `GameSettings` {graph_path, game_files_dir, game_dir, sdk_dump, pinned_folders}. `Settings`
+    keeps the open game's in its old fields (so code using them needs no game id) and the others in `other_games`;
+    `switch_game`, `for_game`. File: `{"game", "games": {id: {...}}, ...}`; a file from before is RE4R's set. The CLI
+    uses the graph's game's set (`for_game`), `remod mcp` the open game's.
+  - **App:** a game combo at the top bar's left (`draw_layout_switch`); picking one asks about unsaved changes
+    (`Pending::Game`), then `switch_workspace` and that game's last graph, else a new one for it. Opening a graph of
+    another game switches to it. New graphs are the open game's. The Pipeline panel shows the game and its notes (the
+    old per-graph Game combo is gone); a texture of another game says to switch. The Cutscene layout only where the game
+    has cutscenes. `--bake` never switches or saves settings (`State::baking`).
+  - **Examples:** `examples/<game>/`; RE4R's moved to `examples/re4r/` (tests' `REMOD_EXAMPLES_DIR`, make_examples'
+    OUT, .gitignore's `examples/*/mods/`); `examples/README.md` lists the folders.
+  - **Examples per game (user, 2026-10-13: "they each do the same thing, but likely need slightly different graphs"):**
+    `scripts/make_examples.py` writes examples 1-11 for each game from a table of its files (`GAMES`: a document, where a
+    logo goes on it, a framed photo, a few documents, a character colour texture with a streaming copy, the colour
+    pattern), and 6, 12-22 for RE4R only (meshes, movies, sounds, cutscenes). Numbers match across games. Each folder
+    has its README; `remod-app --bake` every folder's graphs after regenerating.
+    - **RE3R** (`examples/re3r`, 10): `escape/ui/ui3200/tex/ui3210_file_03` (an R.P.D. paper), `_58` (a printed photo),
+      `_32`-`_34`; Jill's `escape/character/player/pl2000/mesh/pl2000_body_albm`. Its documents have streaming copies
+      (same size, 1024): examples 1-5, 10, 11 go through Streaming copy and Convert with streaming (`document()` in
+      the script) where RE4R's go straight to Convert.
+    - **RE2R** (`examples/re2r`, 10, the DX11 files in `natives/x64`): `sectionroot/ui/ui3200/tex/ui3210_file_17`, `_57`
+      (a statue photo), `_6?`; Leon's `sectionroot/character/player/pl0000/pl0000/pl0000_body_albm`.
+    - The differences: RE2R / RE3R reach the character's texture by its file (no meshes); their colour textures are
+      `_albm` (pattern `*_alb*`; RE4R's `*_albd*`); their photos are colour, so Replace photo's Stains is 0 (it carried
+      RE3's lock dials and RE2's marks over; looked at).
+    - Picked from contact sheets of the decoded textures (images looked at, not screenshots); whose outfit: by eye (RE3
+      `pl2000` the blue top and black jeans, Jill; RE2 `pl0000` the R.P.D. uniform, Leon).
+    - **Checked:** the examples test runs each game's on its files (`REMOD_GAME` RE4R, `REMOD_GAME_RE3R`,
+      `REMOD_GAME_RE2R`; skipped when unset): all 10 + 10 run, so RE2R's version-10 (legacy header) and RE3R's 34
+      textures decode, convert back over the original and package, streaming copies too; the photo and logo results
+      looked at. 246 tests pass with all three set. **Not checked in game** for either game.
+    - RE7, RE8, RE9: no examples until their files are extracted (no guessed paths).
+    - The CLI's `run` takes `--game-files <folder>` (that run's `{game}`, else the settings').
+  - Checked: tests (profiles' features and notes, block availability, all six profiles load in order, per-game settings
+    and an old file's migration), all 243 with REMOD_GAME; the app started and closed on the user's settings. **Seen
+    (user, 2026-10-13):** RE9's Nodes panel down to the shared blocks with its notes; back to RE4R, the last graph, game
+    folder and pins as they were.
+  - **The CLI's `{game}`:** the graph's game's Game files folder, else the one the RE plugin remembers for **that**
+    game. (It took the first profile with one; once RE2R sorted first, an RE4R graph got RE2's files.)
+  - **The cutscene script, split (phase 3, 2026-10-13):** `runtime/remod_cutscene.lua` (shared: cutscene format,
+    camera, actors and puppets (via.* only), previewer, triggers, remod flags, the talk menu, the menu) and
+    `runtime/remod_cutscene/re4.lua` (everything naming RE4's code: the old `GAMES.re4` table, event pause, new movies'
+    catalog and prefabs, new sounds' container, `save_request`, `gui_command`, `flag_diagnostics`, the Interact icon's
+    `make_icon` / `icon_frame`, the merchant's menu as `update` / `frame`, `sound_play` / `sound_stop`, `movie_id`).
+    - The shared script `require`s `remod_cutscene.<REFramework's game name>` (autorun\remod_cutscene\re4.lua: a
+      subfolder, so REFramework doesn't run it alone); the file returns `function(R)`, R the shared helpers (`now`,
+      `enum`, `instance`, `keep`, `enum_name`, `enum_values`, `new_movies`, and later `topics_ready(npc)`, `fire`,
+      `playing`, looked up when called), and gives `game`. No file for the game: the menu says why, nothing runs.
+    - `cutscene_runtime` is now a list: the shared script and every `runtime/remod_cutscene/*.lua` (all shipped, small);
+      Cutscene, New movie and New sound add them all. The Cutscene block finds its cutscene by path, not list position.
+    - Moved by a script (blocks cut and pasted, the glue written by hand); a scan for names used but never declared
+      found none new. Tests: re4.lua loads with stand-in helpers and gives every function the shared script calls;
+      both files' syntax; the shared one under a game it doesn't know. **Not run in game yet:** the re-test is
+      `spikes/talk_menu_test.md` (example 21's mod, plus example 17's F7).
+  - **Next (phase 4), per game:** RE3R textures on its files, the older texture layout on RE2R's, RE9 (GDeflate:
+    Microsoft's reference, Apache-2.0 with libdeflate MIT; a PAK writer after REE-Lib's, MIT, and zstd; user's OK
+    needed for both dependencies).
 
 **Order (user, 2026-10-03):** M2 REFramework scripting, M3 movies and cutscenes, M4 AI (was M2), M5 the REFramework
 runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.

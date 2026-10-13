@@ -3,11 +3,15 @@
 **What it answers:**
 - Does talking to Ashley open remod's talk menu, and does picking a topic there play its cutscene?
 - Do topics show in the order their files ask for?
+- **Since 2026-10-13:** does remod's cutscene script still work in RE4R now that it's split in two (a shared part,
+  and `remod_cutscene\re4.lua` with everything that names RE4's own code)? This test runs most of the moved code:
+  the Interact icon, the talk menu's input, the merchant's menu, saves and loads, playing a cutscene. Step 7 adds
+  new sounds.
 
 remod draws this menu itself: the game has no list menu a script can open. It's opened by the game's own Interact
 icon over her.
 
-**What's in it:** example 21, built: `examples\mods\Talk topics.zip`.
+**What's in it:** example 21, built: `examples\re4r\mods\Talk topics.zip`.
 
 | Where | Entry | Shows |
 |---|---|---|
@@ -27,7 +31,7 @@ Each topic is a 4-second test cutscene: a subtitle and fades.
 ## Steps
 
 1. In Fluffy, **uninstall `remod topic test`**: it changes the same menu. Then install
-   `examples\mods\Talk topics.zip`.
+   `examples\re4r\mods\Talk topics.zip`.
 2. Load your save. Walk up to Ashley.
    - Does the game's Interact icon show over her?
    - Press Interact: does a **Talk** list open with only **How are you holding up?**
@@ -39,11 +43,14 @@ Each topic is a 4-second test cutscene: a subtitle and fades.
 6. Back at Ashley, open the list. Is it now **How are you holding up?** then **About the merchant**?
    - Move between them with the arrow keys or W / S, and with your controller if you play with one.
    - Pick **About the merchant**: does its cutscene play?
-7. Quit the game.
+7. Optional, for the split: also install `examples\re4r\mods\New sound.zip` (example 17) and press **F7**. Do you
+   hear three beeps?
+8. Quit the game.
 
 ## Taking it out
 
-Uninstall **Talk topics** in Fluffy. It replaces the merchant's menu layout while installed.
+Uninstall **Talk topics** (and **New sound**) in Fluffy. Talk topics replaces the merchant's menu layout while
+installed.
 
 ## Tell Claude
 
@@ -58,4 +65,4 @@ The log has the rest: what the list held, which key or button moved it, what pla
 
 ## Rebuilding it
 
-`remod run --graph examples\21_talk_topics.json` (the CLI finds your game files as the app does).
+`remod run --graph examples\re4r\21_talk_topics.json` (the CLI finds your game files as the app does).

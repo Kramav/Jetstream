@@ -19,9 +19,10 @@ namespace {
 
 constexpr std::array kStringKeys{"id",         "name",          "tex_suffix", "natives_root",
                                  "pak_script", "noesis_export", "file_list",  "noesis_game", "sound_dir",
-                                 "movie_sound"};
-const std::set<std::string_view> kOptionalKeys{"noesis_export", "noesis_game", "sound_dir", "movie_sound"};
+                                 "movie_sound", "reframework"};
+const std::set<std::string_view> kOptionalKeys{"noesis_export", "noesis_game", "sound_dir", "movie_sound", "reframework"};
 constexpr std::array kPackagingValues{"loose_archive", "pak"};
+constexpr std::array<std::string_view, 3> kListKeys{"packaging", "features", "notes"};
 
 Profile from_table(const toml::table& root) {
     std::vector<std::string> errors;
@@ -32,7 +33,7 @@ Profile from_table(const toml::table& root) {
 
     std::string* fields[] = {&p.id,         &p.name,          &p.tex_suffix, &p.natives_root,
                              &p.pak_script, &p.noesis_export, &p.file_list,  &p.noesis_game, &p.sound_dir,
-                             &p.movie_sound};
+                             &p.movie_sound, &p.reframework};
     for (size_t i = 0; i < kStringKeys.size(); ++i) {
         auto v = (*game)[kStringKeys[i]].value<std::string>();
         if (!v && kOptionalKeys.contains(kStringKeys[i])) continue;  // optional: Noesis is optional
@@ -54,11 +55,26 @@ Profile from_table(const toml::table& root) {
         }
     }
 
+    // What works for the game (CLAUDE.md §10 "Games"): blocks needing a feature it lacks aren't offered.
+    for (const char* key : {"features", "notes"}) {
+        const toml::node* n = (*game)[key].node();
+        if (!n) continue;
+        const toml::array* arr = n->as_array();
+        auto& into = std::string_view(key) == "features" ? p.features : p.notes;
+        if (arr)
+            for (const auto& el : *arr)
+                if (auto v = el.value<std::string>(); v && !v->empty()) into.push_back(*v);
+        if (!arr || into.size() != arr->size()) errors.push_back(std::string("'") + key + "' must be a list of texts");
+    }
+    for (const std::string& f : p.features)
+        if (std::ranges::find(kFeatures, f) == kFeatures.end())
+            errors.push_back("'features' values must be among: textures, meshes, sounds, movies, cutscenes ('" + f + "')");
+
     if (!p.natives_root.empty() && !is_safe_relative(p.natives_root))
         errors.push_back("'natives_root' must be a relative path without '..'");
 
     for (const auto& [key, _] : *game) {
-        const bool known = key.str() == "packaging" ||
+        const bool known = std::ranges::find(kListKeys, key.str()) != kListKeys.end() ||
                            std::find(kStringKeys.begin(), kStringKeys.end(), key.str()) != kStringKeys.end();
         if (!known) errors.push_back("unknown key '" + std::string(key.str()) + "'");
     }
@@ -77,7 +93,7 @@ std::vector<std::string> Profile::unresolved() const {
     std::vector<std::string> out;
     const std::string* fields[] = {&id,         &name,          &tex_suffix, &natives_root,
                                    &pak_script, &noesis_export, &file_list,  &noesis_game, &sound_dir,
-                                   &movie_sound};
+                                   &movie_sound, &reframework};
     for (size_t i = 0; i < kStringKeys.size(); ++i)
         if (*fields[i] == "TBD") out.emplace_back(kStringKeys[i]);
     return out;
@@ -111,7 +127,7 @@ std::vector<Profile> load_profiles(const std::filesystem::path& profiles_dir, st
         }
     }
     if (ec && errors) errors->push_back("can't read profiles folder " + profiles_dir.string() + ": " + ec.message());
-    std::ranges::sort(out, {}, &Profile::name);
+    std::ranges::sort(out, {}, &Profile::id);  // re2r, re3r, re4r, re7, re8, re9: release order
     return out;
 }
 

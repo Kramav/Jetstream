@@ -1,0 +1,13 @@
+[game]
+id              = "re9"
+name            = "Resident Evil Requiem"
+tex_suffix      = "250813143"                 # [REE-Lib] GDeflate-compressed: not read yet
+natives_root    = "natives/STM"               # [game data]
+packaging       = ["pak"]                     # [guide] changed textures load only from a .pak (pak_mods); other files load loose
+pak_script      = "TBD"                       # [TBD-spike] REtool's RE9 update makes PAKs; remod has no PAK writer yet
+file_list       = "TBD"                       # [TBD-spike]
+reframework     = "re9"
+features        = []
+notes           = ["Textures: GDeflate-compressed, not read yet; changed textures must go in a .pak, which remod can't write yet.",
+                   "No game files extracted yet: REtool's RE9 update extracts them.",
+                   "Meshes, sounds, movies and cutscenes aren't supported yet."]

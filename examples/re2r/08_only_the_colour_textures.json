@@ -1,0 +1,284 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "files"
+      ],
+      "to": [
+        2,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "tex"
+      ],
+      "to": [
+        3,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "out"
+      ],
+      "to": [
+        5,
+        "value"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "out"
+      ],
+      "to": [
+        4,
+        "text"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "yes"
+      ],
+      "to": [
+        5,
+        "condition"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "value"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        7,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        10,
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "full"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        8,
+        "png"
+      ],
+      "to": [
+        9,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "image"
+      ],
+      "to": [
+        10,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "streaming"
+      ],
+      "to": [
+        10,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "out9"
+      ],
+      "to": [
+        11,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "out10"
+      ],
+      "to": [
+        11,
+        "tex"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "folder": "{game}/sectionroot/character/player/pl0000/pl0000",
+        "on_fail": "stop",
+        "pattern": "pl0000_*.tex*",
+        "subfolders": "",
+        "title": "Leon's textures"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "FilesInFolder"
+    },
+    {
+      "id": 2,
+      "params": {
+        "game_path": "",
+        "tex": ""
+      },
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        -224.0,
+        6.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 4,
+      "params": {
+        "pattern": "*_alb*",
+        "text": "",
+        "title": "Is it a colour texture?"
+      },
+      "pos": [
+        0.0,
+        194.0
+      ],
+      "type": "TextMatches"
+    },
+    {
+      "id": 5,
+      "params": {
+        "condition": "true",
+        "title": "Only colour textures"
+      },
+      "pos": [
+        220.0,
+        0.0
+      ],
+      "type": "If"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        375.0,
+        63.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        448.0,
+        194.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 8,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        481.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 9,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "0",
+        "image": "",
+        "saturation": "-100",
+        "save_to": "",
+        "title": "Grey"
+      },
+      "pos": [
+        486.0,
+        481.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 10,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        752.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 11,
+      "params": {
+        "author": "",
+        "description": "Leon's colour textures without colour",
+        "name": "Grey Leon",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        465.0,
+        752.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re2r",
+  "schema_version": 0
+}

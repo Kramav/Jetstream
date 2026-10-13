@@ -18,11 +18,13 @@ class ITextureConverter;
 // remod's REFramework runtime scripts: <tool>/runtime, beside profiles (empty if there are no profiles).
 std::filesystem::path runtime_dir();
 
-// The cutscene runtime as the game reads it: <runtime>/remod_cutscene.lua at reframework/autorun/remod_cutscene.lua.
-// Alone, it's enough to record camera keys (F10) before a cutscene file exists. Throws PackageError if it's missing.
-PackageFile cutscene_runtime(const std::filesystem::path& runtime = runtime_dir());
+// The cutscene runtime as the game reads it: <runtime>/remod_cutscene.lua at reframework/autorun/remod_cutscene.lua,
+// then each game's part, <runtime>/remod_cutscene/<REFramework's game name>.lua at reframework/autorun/remod_cutscene/
+// (CLAUDE.md §10 "Games": every one is shipped, small; the script loads the running game's). Alone, it's enough to
+// record camera keys (F10) before a cutscene file exists. Throws PackageError if the script is missing.
+std::vector<PackageFile> cutscene_runtime(const std::filesystem::path& runtime = runtime_dir());
 
-// What a mod ships for a cutscene: the runtime at reframework/autorun/remod_cutscene.lua, then the cutscene at
+// What a mod ships for a cutscene: the runtime (cutscene_runtime), then the cutscene at
 // reframework/data/remod_cutscenes/<file name>, then each of its actors' puppet definitions that remod ships
 // (<runtime>/puppets/<puppet>.json at reframework/data/remod_puppets/; others come from the mod adding that
 // character). Throws PackageError if the runtime or the cutscene is missing or the file isn't .json.

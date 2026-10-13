@@ -1,0 +1,445 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "full"
+      ],
+      "to": [
+        4,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "yes"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        7,
+        "condition"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        8,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        8,
+        "yes"
+      ],
+      "to": [
+        9,
+        "condition"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "value"
+      ],
+      "to": [
+        7,
+        "value"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "value"
+      ],
+      "to": [
+        11,
+        "png"
+      ]
+    },
+    {
+      "from": [
+        11,
+        "image"
+      ],
+      "to": [
+        12,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "out"
+      ],
+      "to": [
+        12,
+        "match"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "out"
+      ],
+      "to": [
+        9,
+        "value"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "value"
+      ],
+      "to": [
+        13,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        13,
+        "png"
+      ],
+      "to": [
+        14,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        12,
+        "image"
+      ],
+      "to": [
+        15,
+        "first"
+      ]
+    },
+    {
+      "from": [
+        14,
+        "image"
+      ],
+      "to": [
+        15,
+        "second"
+      ]
+    },
+    {
+      "from": [
+        15,
+        "value"
+      ],
+      "to": [
+        16,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        16,
+        "out"
+      ],
+      "to": [
+        17,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        17,
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "streaming"
+      ],
+      "to": [
+        17,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        17,
+        "out9"
+      ],
+      "to": [
+        18,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        17,
+        "out10"
+      ],
+      "to": [
+        18,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        16,
+        "out"
+      ],
+      "to": [
+        18,
+        "preview"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/escape/ui/ui3200/tex/ui3210_file_03_iam.tex.34",
+        "title": "The texture to change"
+      },
+      "pos": [
+        0.0,
+        144.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        400.0,
+        181.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        473.0,
+        144.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 4,
+      "params": {},
+      "pos": [
+        -224.0,
+        800.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 5,
+      "params": {
+        "path": "my_picture.png",
+        "title": "Is my picture there?"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "FileExists"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        247.0,
+        -60.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {
+        "condition": "true",
+        "title": "Then: my picture"
+      },
+      "pos": [
+        -232.0,
+        670.0
+      ],
+      "type": "If"
+    },
+    {
+      "id": 8,
+      "params": {},
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "Not"
+    },
+    {
+      "id": 9,
+      "params": {
+        "condition": "true",
+        "title": "Else: recolour"
+      },
+      "pos": [
+        -236.0,
+        941.0
+      ],
+      "type": "If"
+    },
+    {
+      "id": 10,
+      "params": {
+        "title": "My picture",
+        "value": "my_picture.png"
+      },
+      "pos": [
+        473.0,
+        310.0
+      ],
+      "type": "Value"
+    },
+    {
+      "id": 11,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        613.0
+      ],
+      "type": "ImportImage"
+    },
+    {
+      "id": 12,
+      "params": {
+        "fit": "fill",
+        "height": "0",
+        "image": "",
+        "match": "",
+        "save_to": "",
+        "width": "0"
+      },
+      "pos": [
+        491.0,
+        613.0
+      ],
+      "type": "ResizeImage"
+    },
+    {
+      "id": 13,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        557.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 14,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "90",
+        "image": "",
+        "saturation": "0",
+        "save_to": ""
+      },
+      "pos": [
+        491.0,
+        557.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 15,
+      "params": {},
+      "pos": [
+        -224.0,
+        20.0
+      ],
+      "type": "FirstOf"
+    },
+    {
+      "id": 16,
+      "params": {},
+      "pos": [
+        -243.0,
+        186.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 17,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        896.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 18,
+      "params": {
+        "author": "",
+        "description": "my_picture.png if it is there, else a recoloured R.P.D. paper",
+        "name": "Picture or colour",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        465.0,
+        896.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re3r",
+  "schema_version": 0
+}

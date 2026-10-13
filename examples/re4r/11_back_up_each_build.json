@@ -3,61 +3,41 @@
     {
       "from": [
         1,
-        "files"
-      ],
-      "to": [
-        2,
-        "tex"
-      ]
-    },
-    {
-      "from": [
-        2,
         "tex"
       ],
       "to": [
-        3,
+        2,
         "in"
       ]
     },
     {
       "from": [
-        3,
-        "out"
+        4,
+        "image"
       ],
       "to": [
-        4,
-        "tex"
+        5,
+        "in"
       ]
     },
     {
       "from": [
-        3,
+        5,
+        "out"
+      ],
+      "to": [
+        6,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        2,
         "out"
       ],
       "to": [
         6,
         "original"
-      ]
-    },
-    {
-      "from": [
-        4,
-        "png"
-      ],
-      "to": [
-        5,
-        "image"
-      ]
-    },
-    {
-      "from": [
-        5,
-        "image"
-      ],
-      "to": [
-        6,
-        "image"
       ]
     },
     {
@@ -69,78 +49,113 @@
         7,
         "tex"
       ]
+    },
+    {
+      "from": [
+        5,
+        "out"
+      ],
+      "to": [
+        7,
+        "preview"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "png"
+      ],
+      "to": [
+        4,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "mod"
+      ],
+      "to": [
+        8,
+        "source"
+      ]
     }
   ],
   "nodes": [
     {
       "id": 1,
       "params": {
-        "folder": "{game}/_chainsaw/ui/ui3200/tex",
-        "on_fail": "stop",
-        "pattern": "cs_ui3210_file_00*_iam.tex.*",
-        "subfolders": "",
-        "title": "The documents"
+        "game_path": "",
+        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
+        "title": "The texture to change"
       },
       "pos": [
         0.0,
-        0.0
-      ],
-      "type": "FilesInFolder"
-    },
-    {
-      "id": 2,
-      "params": {
-        "game_path": "",
-        "tex": ""
-      },
-      "pos": [
-        473.0,
         0.0
       ],
       "type": "LoadTex"
     },
     {
-      "id": 3,
+      "id": 2,
       "params": {},
       "pos": [
-        -224.0,
-        170.0
+        400.0,
+        37.0
       ],
       "type": "Split"
     },
     {
-      "id": 4,
+      "id": 3,
       "params": {
         "png": ""
       },
       "pos": [
-        0.0,
-        168.0
+        473.0,
+        0.0
       ],
       "type": "ExportImage"
     },
     {
-      "id": 5,
+      "id": 4,
       "params": {
-        "brightness": "0",
+        "brightness": "-25",
         "contrast": "0",
-        "hue": "-40",
+        "hue": "0",
         "image": "",
-        "saturation": "-30",
+        "saturation": "0",
         "save_to": ""
       },
       "pos": [
-        461.0,
-        168.0
+        769.0,
+        0.0
       ],
       "type": "AdjustColour"
+    },
+    {
+      "id": 5,
+      "params": {},
+      "pos": [
+        -73.0,
+        205.0
+      ],
+      "type": "Split"
     },
     {
       "id": 6,
       "params": {},
       "pos": [
         0.0,
-        391.0
+        168.0
       ],
       "type": "SaveTex"
     },
@@ -148,17 +163,32 @@
       "id": 7,
       "params": {
         "author": "",
-        "description": "The first documents of the files, faded",
-        "name": "Faded documents",
+        "description": "A darker document, with a backup of each build",
+        "name": "Darker document",
         "out": "mods",
         "replace": "true",
         "version": "1.0"
       },
       "pos": [
-        145.0,
-        391.0
+        208.0,
+        168.0
       ],
       "type": "PackageMod"
+    },
+    {
+      "id": 8,
+      "params": {
+        "create_dirs": "true",
+        "dest": "backups/",
+        "if_exists": "overwrite",
+        "source": "",
+        "title": "Back up the build"
+      },
+      "pos": [
+        353.0,
+        168.0
+      ],
+      "type": "CopyFile"
     }
   ],
   "profile": "re4r",

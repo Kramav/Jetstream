@@ -1,10 +1,16 @@
 #pragma once
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace remod {
+
+// A game's features (Profile::features): textures (.tex read and written), meshes (.mesh read), sounds (Wwise banks
+// and packages), movies (game movies replaced), cutscenes (remod's cutscene script runs there).
+inline constexpr std::array<std::string_view, 5> kFeatures{"textures", "meshes", "sounds", "movies", "cutscenes"};
 
 struct ProfileError : std::runtime_error {
     using std::runtime_error::runtime_error;
@@ -26,6 +32,14 @@ struct Profile {
     std::string sound_dir;
     // optional: a movie's sound packages there, a file name prefix with {id} for the movie's, e.g. "ch_{id}_".
     std::string movie_sound;
+    // optional: REFramework's name for the game (reframework:get_game_name(), e.g. "re4"): the cutscene script's game
+    // file (runtime/remod_cutscene/<name>.lua).
+    std::string reframework;
+    // What remod can do for the game (kFeatures): a block needing one it lacks isn't offered (block_available).
+    std::vector<std::string> features;
+    // What isn't supported yet, or not checked, a sentence each (shown in the app).
+    std::vector<std::string> notes;
+    bool has(std::string_view feature) const { return std::ranges::find(features, feature) != features.end(); }
 
     // Names of fields still set to "TBD" (awaiting the §9 spike).
     std::vector<std::string> unresolved() const;

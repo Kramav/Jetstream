@@ -1010,6 +1010,18 @@ RunResult run_expanded(const Graph& g, const RunOptions& opt) {
     }
     if (g.profile != opt.profile.id)
         throw GraphError("graph is for profile '" + g.profile + "' but '" + opt.profile.id + "' was loaded");
+    {  // blocks the game can't do yet (its profile's features)
+        std::string msg;
+        for (const Node& n : g.nodes)
+            if (!block_available(n.type, opt.profile)) {
+                std::string needs;
+                for (std::string_view f : block_needs(n.type))
+                    if (!opt.profile.has(f)) needs += std::string(needs.empty() ? "" : ", ") + std::string(f);
+                msg += "\n  " + node_label(n) + " needs " + needs + ", which remod doesn't support for " +
+                       opt.profile.name + " yet";
+            }
+        if (!msg.empty()) throw GraphError("graph can't run:" + msg);
+    }
 
     TempDir work;
     RunState run{.graph = g, .options = opt, .work_dir = work.path};

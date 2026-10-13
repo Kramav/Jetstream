@@ -1,19 +1,53 @@
-"""Writes the example graphs in examples/ (shipped in the release zip) and their sample pictures.
+"""Writes the example graphs, a folder per game in examples/ (shipped in the release zip), and their sample files.
+
+The same examples for every game whose files remod has been pointed at, each with that game's own files and only what
+remod can do for it (CLAUDE.md §10 "Games"): examples 1-11 work on textures; RE4R's (meshes, movies, sounds,
+cutscenes) also have 12-22. A game with no extracted files to pick real ones from (RE7, RE8, RE9 so far) has none.
 
 Each graph is written without block positions. Afterwards, always tidy up and save every example with the app's
-real block sizes: build/app/remod-app.exe --bake examples/<each>.json (one path per graph). Paths to
-game files start with {game}, the Game files folder set in the app, so the examples run on any PC. Fields left out
-get their defaults when the graph loads. Run: python scripts/make_examples.py
+real block sizes: build/app/remod-app.exe --bake examples/<game>/<each>.json (one path per graph). Paths to
+game files start with {game}, the Game files folder set in the app for that game, so the examples run on any PC.
+Fields left out get their defaults when the graph loads. Run: python scripts/make_examples.py
 """
 import json
 import os
+import shutil
 import struct
 import zlib
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'examples')
+EXAMPLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'examples')
+OUT = os.path.join(EXAMPLES, 're4r')  # the folder Graph.save writes to: the game being written
 UI = '{game}/_chainsaw/ui/ui3200/tex/'
 LEON = '{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797'
-os.makedirs(OUT, exist_ok=True)
+
+# Each game's files for the texture examples, found by looking at them (contact sheets of the decoded textures,
+# 2026-10-13; RE4R's earlier). doc: a document with a see-through background; logo: where on it a logo goes (px);
+# photo: a framed photo (Replace photo; photo_stains 0 for a colour photo, whose colour Stains would carry over);
+# docs: a folder and pattern of a few documents; character: a colour texture
+# with a streaming copy, and the pattern of its folder's colour textures. streaming: the documents and photo have a
+# streaming copy too (RE3R's: same size), so the examples replace both (CLAUDE.md §9). RE4R reaches its character through Leon's mesh
+# (meshes are supported there); the others by the texture itself.
+RE3 = '{game}/escape/ui/ui3200/tex/'
+RE2 = '{game}/sectionroot/ui/ui3200/tex/'
+GAMES = {
+    're4r': dict(doc=UI + 'cs_ui3210_file_008_00_iam.tex.143221013', doc_name='document', logo=(330, 740),
+                 doc_edit='edits/file_008.png',
+                 photo=UI + 'cs_ui3210_file_039_00_iam.tex.143221013', photo_y=-30,
+                 docs=(UI[:-1], 'cs_ui3210_file_00*_iam.tex.*', 'The first documents of the files'),
+                 who='Leon', part='shirt', colour='*_albd*'),
+    're3r': dict(doc=RE3 + 'ui3210_file_03_iam.tex.34', doc_name='R.P.D. paper', logo=(400, 560),
+                 photo=RE3 + 'ui3210_file_58_iam.tex.34', photo_y=0, photo_stains=0,
+                 docs=(RE3[:-1], 'ui3210_file_32_iam.tex.*;ui3210_file_33_iam.tex.*;ui3210_file_34_iam.tex.*',
+                       'Three of the files'),
+                 who='Jill', part='outfit', colour='*_alb*', streaming=True,
+                 character='{game}/escape/character/player/pl2000/mesh/pl2000_body_albm.tex.34'),
+    're2r': dict(doc=RE2 + 'ui3210_file_17_iam.tex.10', doc_name='R.P.D. paper', logo=(400, 560),
+                 photo=RE2 + 'ui3210_file_57_iam.tex.10', photo_y=0, photo_stains=0,
+                 docs=(RE2[:-1], 'ui3210_file_6?_iam.tex.*', 'The files numbered 60 to 69'),
+                 who='Leon', part='uniform', colour='*_alb*',
+                 character='{game}/sectionroot/character/player/pl0000/pl0000/pl0000_body_albm.tex.10'),
+}
+game = 're4r'
 
 
 class Graph:
@@ -31,18 +65,18 @@ class Graph:
 
     def save(self, name):
         with open(os.path.join(OUT, name), 'w', encoding='utf-8', newline='\n') as f:
-            json.dump({'schema_version': 0, 'profile': 're4r', 'nodes': self.nodes, 'links': self.links}, f, indent=2)
-        print('wrote', name)
+            json.dump({'schema_version': 0, 'profile': game, 'nodes': self.nodes, 'links': self.links}, f, indent=2)
+        print('wrote', game + '/' + name)
 
 
 def package(g, name, description):
     return g.add('PackageMod', name=name, out='mods', version='1.0', description=description, replace='true')
 
 
-def convert_and_package(g, image, texture, name, description):
+def convert_and_package(g, image, texture, name, description, port='image'):
     """image -> Split -> Convert (original: texture) and Package's preview."""
     split = g.add('Split')
-    g.link(image, 'image', split, 'in')
+    g.link(image, port, split, 'in')
     convert = g.add('SaveTex')
     g.link(split, 'out', convert, 'image')
     g.link(texture, 'out', convert, 'original')
@@ -52,220 +86,268 @@ def convert_and_package(g, image, texture, name, description):
     return pkg
 
 
-# 1. The classic: export, edit by hand, convert, package.
-g = Graph()
-tex = g.add('LoadTex', 'The texture to change', tex=UI + 'cs_ui3210_file_008_00_iam.tex.143221013')
-split = g.add('Split')
-export = g.add('ExportImage', png='edits/file_008.png')
-edit = g.add('EditImage', 'Your edit')
-g.link(tex, 'tex', split, 'in')
-g.link(split, 'out', export, 'tex')
-g.link(export, 'png', edit, 'png')
-convert_and_package(g, edit, split, 'My first texture mod', 'A document, edited by hand')
-g.save('01_edit_a_texture_by_hand.json')
+def document(g, G, path, title):
+    """A texture to edit, from its file: (node, port) to export it from, and finish(image, name, description) that
+    converts the edit back and packages it, both copies where the game keeps a streaming copy."""
+    tex = g.add('LoadTex', title, tex=path)
+    split = g.add('Split')
+    g.link(tex, 'tex', split, 'in')
+    if not G.get('streaming'):
+        return (split, 'out'), lambda image, name, desc, port='image': convert_and_package(g, image, split, name, desc, port)
+    stream = g.add('StreamingCopy')
+    g.link(split, 'out', stream, 'tex')
 
-# 2. No hand step: a colour change.
-g = Graph()
-tex = g.add('LoadTex', 'The texture to change', tex=UI + 'cs_ui3210_file_008_00_iam.tex.143221013')
-split = g.add('Split')
-export = g.add('ExportImage')  # no file: a working copy
-adjust = g.add('AdjustColour', hue=150, saturation=20)
-g.link(tex, 'tex', split, 'in')
-g.link(split, 'out', export, 'tex')
-g.link(export, 'png', adjust, 'image')
-convert_and_package(g, adjust, split, 'Recoloured document', 'A document in another colour')
-g.save('02_recolour_a_texture.json')
+    def finish(image, name, description, port='image'):
+        isplit = g.add('Split')
+        g.link(image, port, isplit, 'in')
+        convert = g.add('custom:convert_with_streaming')
+        g.link(isplit, 'out', convert, 'in1')
+        g.link(split, 'out', convert, 'in2')
+        g.link(stream, 'streaming', convert, 'in3')
+        pkg = package(g, name, description)
+        g.link(convert, 'out9', pkg, 'tex')
+        g.link(convert, 'out10', pkg, 'tex')
+        g.link(isplit, 'out', pkg, 'preview')
+        return pkg
+    return (stream, 'full'), finish
 
-# 3. Your picture in an old photo frame.
-g = Graph()
-tex = g.add('LoadTex', 'The framed photo', tex=UI + 'cs_ui3210_file_039_00_iam.tex.143221013')
-split = g.add('Split')
-export = g.add('ExportImage')
-picture = g.add('ImportImage', 'Your picture (change me)', png='picture.png')
-photo = g.add('ReplacePhoto', picture_y=-30)
-g.link(tex, 'tex', split, 'in')
-g.link(split, 'out', export, 'tex')
-g.link(export, 'png', photo, 'frame')
-g.link(picture, 'image', photo, 'picture')
-convert_and_package(g, photo, split, 'My photo', 'My picture in place of an old photo')
-g.save('03_your_picture_in_a_photo_frame.json')
 
-# 4. A logo on a texture.
-g = Graph()
-tex = g.add('LoadTex', 'The texture to change', tex=UI + 'cs_ui3210_file_008_00_iam.tex.143221013')
-split = g.add('Split')
-export = g.add('ExportImage')
-logo = g.add('ImportImage', 'Your logo (change me)', png='logo.png')
-overlay = g.add('OverlayImage', x=330, y=740, opacity=85)  # on the paper: outside it the texture is see-through
-g.link(tex, 'tex', split, 'in')
-g.link(split, 'out', export, 'tex')
-g.link(export, 'png', overlay, 'base')
-g.link(logo, 'image', overlay, 'top')
-convert_and_package(g, overlay, split, 'Stamped document', 'A logo stamped on a document')
-g.save('04_a_logo_on_a_texture.json')
+def character_texture(g, G):
+    """The character's colour texture: through its mesh's part where meshes are supported (RE4R), else the file."""
+    if 'character' in G:
+        return g.add('LoadTex', "%s's %s" % (G['who'], G['part']), tex=G['character'])
+    return g.add('PartTexture', "Leon's shirt", mesh=LEON, materials='Shirts_Mat')
 
-# 5. Many textures at once: every matching file in a folder, through the same steps.
-g = Graph()
-files = g.add('FilesInFolder', 'The documents', folder=UI[:-1], pattern='cs_ui3210_file_00*_iam.tex.*')
-tex = g.add('LoadTex')
-split = g.add('Split')
-export = g.add('ExportImage')
-adjust = g.add('AdjustColour', hue=-40, saturation=-30)
-convert = g.add('SaveTex')
-pkg = package(g, 'Faded documents', 'The first documents of the files, faded')
-g.link(files, 'files', tex, 'tex')
-g.link(tex, 'tex', split, 'in')
-g.link(split, 'out', export, 'tex')
-g.link(split, 'out', convert, 'original')
-g.link(export, 'png', adjust, 'image')
-g.link(adjust, 'image', convert, 'image')
-g.link(convert, 'tex', pkg, 'tex')
-g.save('05_many_textures_at_once.json')
 
-# 6. Recolour one part of a character: a block made of blocks.
-g = Graph()
-recolour = g.add('custom:recolour_part', "Leon's trousers", in1=LEON, in2='Pants_Mat', in3=120, in4=10, in5=5)
-pkg = package(g, 'Green trousers', "Leon's trousers in another colour")
-g.link(recolour, 'out19', pkg, 'tex')
-g.link(recolour, 'out20', pkg, 'tex')
-g.link(recolour, 'out21', pkg, 'preview')
-g.save('06_recolour_part_of_a_character.json')
+def texture_examples(G):
+    doc = G['doc_name']
+    # 1. The classic: export, edit by hand, convert, package.
+    g = Graph()
+    (src, port), finish = document(g, G, G['doc'], 'The texture to change')
+    export = g.add('ExportImage', png=G.get('doc_edit', 'edits/document.png'))
+    edit = g.add('EditImage', 'Your edit')
+    g.link(src, port, export, 'tex')
+    g.link(export, 'png', edit, 'png')
+    finish(edit, 'My first texture mod', 'A %s, edited by hand' % doc)
+    g.save('01_edit_a_texture_by_hand.json')
 
-# 7. Edit a character texture by hand, at full size, replacing its streaming copy too.
-g = Graph()
-part = g.add('PartTexture', "Leon's shirt", mesh=LEON, materials='Shirts_Mat')
-split = g.add('Split')
-stream = g.add('StreamingCopy')
-export = g.add('ExportImage', png='edits/leon_shirt.png')
-edit = g.add('EditImage', 'Your edit')
-esplit = g.add('Split')
-convert = g.add('custom:convert_with_streaming')
-pkg = package(g, 'My shirt', "Leon's shirt, edited by hand")
-g.link(part, 'tex', split, 'in')
-g.link(split, 'out', stream, 'tex')
-g.link(split, 'out', convert, 'in2')
-g.link(stream, 'full', export, 'tex')
-g.link(export, 'png', edit, 'png')
-g.link(edit, 'image', esplit, 'in')
-g.link(esplit, 'out', convert, 'in1')
-g.link(esplit, 'out', pkg, 'preview')
-g.link(stream, 'streaming', convert, 'in3')
-g.link(convert, 'out9', pkg, 'tex')
-g.link(convert, 'out10', pkg, 'tex')
-g.save('07_edit_a_character_texture.json')
+    # 2. No hand step: a colour change.
+    g = Graph()
+    (src, port), finish = document(g, G, G['doc'], 'The texture to change')
+    export = g.add('ExportImage')  # no file: a working copy
+    adjust = g.add('AdjustColour', hue=150, saturation=20)
+    g.link(src, port, export, 'tex')
+    g.link(export, 'png', adjust, 'image')
+    finish(adjust, 'Recoloured %s' % doc, 'A %s in another colour' % doc)
+    g.save('02_recolour_a_texture.json')
 
-# 8. Conditions as a filter: only the colour textures of a folder go on.
-g = Graph()
-files = g.add('FilesInFolder', "Leon's textures", folder=LEON.rsplit('/', 1)[0], pattern='cha000_00_*.tex*')
-tex = g.add('LoadTex')
-split = g.add('Split')
-match = g.add('TextMatches', 'Is it a colour texture?', pattern='*_albd*')
-gate = g.add('If', 'Only colour textures')
-gsplit = g.add('Split')
-stream = g.add('StreamingCopy')
-export = g.add('ExportImage')
-adjust = g.add('AdjustColour', 'Grey', saturation=-100)
-convert = g.add('custom:convert_with_streaming')
-pkg = package(g, 'Grey Leon', "Leon's colour textures without colour")
-g.link(files, 'files', tex, 'tex')
-g.link(tex, 'tex', split, 'in')
-g.link(split, 'out', gate, 'value')
-g.link(split, 'out', match, 'text')
-g.link(match, 'yes', gate, 'condition')
-g.link(gate, 'value', gsplit, 'in')
-g.link(gsplit, 'out', stream, 'tex')
-g.link(gsplit, 'out', convert, 'in2')
-g.link(stream, 'full', export, 'tex')
-g.link(export, 'png', adjust, 'image')
-g.link(adjust, 'image', convert, 'in1')
-g.link(stream, 'streaming', convert, 'in3')
-g.link(convert, 'out9', pkg, 'tex')
-g.link(convert, 'out10', pkg, 'tex')
-g.save('08_only_the_colour_textures.json')
+    # 3. Your picture in an old photo frame.
+    g = Graph()
+    (src, port), finish = document(g, G, G['photo'], 'The framed photo')
+    export = g.add('ExportImage')
+    picture = g.add('ImportImage', 'Your picture (change me)', png='picture.png')
+    photo = g.add('ReplacePhoto', picture_y=G['photo_y'],
+                  **({'stains': G['photo_stains']} if 'photo_stains' in G else {}))
+    g.link(src, port, export, 'tex')
+    g.link(export, 'png', photo, 'frame')
+    g.link(picture, 'image', photo, 'picture')
+    finish(photo, 'My photo', 'My picture in place of an old photo')
+    g.save('03_your_picture_in_a_photo_frame.json')
 
-# 9. Channels: a texture's alpha holds data; a new picture goes in as its colour only.
-g = Graph()
-part = g.add('PartTexture', "Leon's shirt", mesh=LEON, materials='Shirts_Mat')
-split = g.add('Split')
-stream = g.add('StreamingCopy')
-export = g.add('ExportImage')
-esplit = g.add('Split')
-alpha = g.add('PickChannel', 'Its alpha: data, not transparency', channel='alpha')
-look = g.add('Preview')
-picture = g.add('ImportImage', 'Your picture (change me)', png='picture.png')
-fit = g.add('ResizeImage', fit='fill')
-merge = g.add('MergeChannels', 'Picture as colour, alpha kept')
-convert = g.add('custom:convert_with_streaming')
-pkg = package(g, 'Picture shirt', "A picture as Leon's shirt texture, keeping its alpha data")
-g.link(part, 'tex', split, 'in')
-g.link(split, 'out', stream, 'tex')
-g.link(split, 'out', convert, 'in2')
-g.link(stream, 'full', export, 'tex')
-g.link(export, 'png', esplit, 'in')
-g.link(esplit, 'out', merge, 'base')
-g.link(esplit, 'out', alpha, 'image')
-g.link(esplit, 'out', fit, 'match')
-g.link(alpha, 'image', look, 'in')
-g.link(picture, 'image', fit, 'image')
-g.link(fit, 'image', merge, 'colour')
-g.link(merge, 'image', convert, 'in1')
-g.link(stream, 'streaming', convert, 'in3')
-g.link(convert, 'out9', pkg, 'tex')
-g.link(convert, 'out10', pkg, 'tex')
-g.save('09_keep_the_alpha_data.json')
+    # 4. A logo on a texture.
+    g = Graph()
+    (src, port), finish = document(g, G, G['doc'], 'The texture to change')
+    export = g.add('ExportImage')
+    logo = g.add('ImportImage', 'Your logo (change me)', png='logo.png')
+    overlay = g.add('OverlayImage', x=G['logo'][0], y=G['logo'][1], opacity=85)  # on the paper: around it see-through
+    g.link(src, port, export, 'tex')
+    g.link(export, 'png', overlay, 'base')
+    g.link(logo, 'image', overlay, 'top')
+    finish(overlay, 'Stamped %s' % doc, 'A logo stamped on a %s' % doc)
+    g.save('04_a_logo_on_a_texture.json')
 
-# 10. If / else: your picture if it's there, else a recolour.
-g = Graph()
-tex = g.add('LoadTex', 'The texture to change', tex=UI + 'cs_ui3210_file_008_00_iam.tex.143221013')
-split = g.add('Split')
-exists = g.add('FileExists', 'Is my picture there?', path='my_picture.png')
-csplit = g.add('Split')
-yes = g.add('If', 'Then: my picture')
-no = g.add('Not')
-other = g.add('If', 'Else: recolour')
-path = g.add('Value', 'My picture', value='my_picture.png')
-picture = g.add('ImportImage')
-fit = g.add('ResizeImage', fit='fill')
-export = g.add('ExportImage')
-adjust = g.add('AdjustColour', hue=90)
-first = g.add('FirstOf')
-g.link(tex, 'tex', split, 'in')
-g.link(exists, 'yes', csplit, 'in')
-g.link(csplit, 'out', yes, 'condition')
-g.link(csplit, 'out', no, 'in')
-g.link(no, 'yes', other, 'condition')
-g.link(path, 'value', yes, 'value')
-g.link(yes, 'value', picture, 'png')
-g.link(picture, 'image', fit, 'image')
-g.link(split, 'out', fit, 'match')
-g.link(split, 'out', other, 'value')
-g.link(other, 'value', export, 'tex')
-g.link(export, 'png', adjust, 'image')
-g.link(fit, 'image', first, 'first')
-g.link(adjust, 'image', first, 'second')
-fsplit = g.add('Split')
-g.link(first, 'value', fsplit, 'in')
-convert = g.add('SaveTex')
-g.link(fsplit, 'out', convert, 'image')
-g.link(split, 'out', convert, 'original')
-pkg = package(g, 'Picture or colour', 'my_picture.png if it is there, else a recoloured document')
-g.link(convert, 'tex', pkg, 'tex')
-g.link(fsplit, 'out', pkg, 'preview')
-g.save('10_if_else_picture_or_recolour.json')
+    # 5. Many textures at once: every matching file in a folder, through the same steps.
+    g = Graph()
+    folder, pattern, which = G['docs']
+    files = g.add('FilesInFolder', 'The documents', folder=folder, pattern=pattern)
+    tex = g.add('LoadTex')
+    split = g.add('Split')
+    export = g.add('ExportImage')
+    adjust = g.add('AdjustColour', hue=-40, saturation=-30)
+    pkg = package(g, 'Faded documents', which + ', faded')
+    g.link(files, 'files', tex, 'tex')
+    g.link(tex, 'tex', split, 'in')
+    g.link(export, 'png', adjust, 'image')
+    if G.get('streaming'):  # each one's streaming copy too
+        stream = g.add('StreamingCopy')
+        convert = g.add('custom:convert_with_streaming')
+        g.link(split, 'out', stream, 'tex')
+        g.link(split, 'out', convert, 'in2')
+        g.link(stream, 'full', export, 'tex')
+        g.link(adjust, 'image', convert, 'in1')
+        g.link(stream, 'streaming', convert, 'in3')
+        g.link(convert, 'out9', pkg, 'tex')
+        g.link(convert, 'out10', pkg, 'tex')
+    else:
+        convert = g.add('SaveTex')
+        g.link(split, 'out', export, 'tex')
+        g.link(split, 'out', convert, 'original')
+        g.link(adjust, 'image', convert, 'image')
+        g.link(convert, 'tex', pkg, 'tex')
+    g.save('05_many_textures_at_once.json')
 
-# 11. File steps: keep a copy of each build.
-g = Graph()
-tex = g.add('LoadTex', 'The texture to change', tex=UI + 'cs_ui3210_file_008_00_iam.tex.143221013')
-split = g.add('Split')
-export = g.add('ExportImage')
-adjust = g.add('AdjustColour', brightness=-25)
-pkg = convert_and_package(g, adjust, split, 'Darker document', 'A darker document, with a backup of each build')
-g.link(tex, 'tex', split, 'in')
-g.link(split, 'out', export, 'tex')
-g.link(export, 'png', adjust, 'image')
-copy = g.add('CopyFile', 'Back up the build', dest='backups/', if_exists='overwrite', create_dirs='true')
-g.link(pkg, 'mod', copy, 'source')
-g.save('11_back_up_each_build.json')
+    # 6. Recolour one part of a character: a block made of blocks (reads the mesh: RE4R only).
+    if game == 're4r':
+        g = Graph()
+        recolour = g.add('custom:recolour_part', "Leon's trousers", in1=LEON, in2='Pants_Mat', in3=120, in4=10, in5=5)
+        pkg = package(g, 'Green trousers', "Leon's trousers in another colour")
+        g.link(recolour, 'out19', pkg, 'tex')
+        g.link(recolour, 'out20', pkg, 'tex')
+        g.link(recolour, 'out21', pkg, 'preview')
+        g.save('06_recolour_part_of_a_character.json')
+
+    who, part = G['who'], G['part']
+    # 7. Edit a character texture by hand, at full size, replacing its streaming copy too.
+    g = Graph()
+    texture = character_texture(g, G)
+    split = g.add('Split')
+    stream = g.add('StreamingCopy')
+    export = g.add('ExportImage', png='edits/%s_%s.png' % (who.lower(), part))
+    edit = g.add('EditImage', 'Your edit')
+    esplit = g.add('Split')
+    convert = g.add('custom:convert_with_streaming')
+    pkg = package(g, 'My %s' % part, "%s's %s, edited by hand" % (who, part))
+    g.link(texture, 'tex', split, 'in')
+    g.link(split, 'out', stream, 'tex')
+    g.link(split, 'out', convert, 'in2')
+    g.link(stream, 'full', export, 'tex')
+    g.link(export, 'png', edit, 'png')
+    g.link(edit, 'image', esplit, 'in')
+    g.link(esplit, 'out', convert, 'in1')
+    g.link(esplit, 'out', pkg, 'preview')
+    g.link(stream, 'streaming', convert, 'in3')
+    g.link(convert, 'out9', pkg, 'tex')
+    g.link(convert, 'out10', pkg, 'tex')
+    g.save('07_edit_a_character_texture.json')
+
+    # 8. Conditions as a filter: only the colour textures of a folder go on.
+    g = Graph()
+    if 'character' in G:
+        folder, pattern = G['character'].rsplit('/', 1)[0], G['character'].rsplit('/', 1)[1].split('_body')[0] + '_*.tex*'
+    else:
+        folder, pattern = LEON.rsplit('/', 1)[0], 'cha000_00_*.tex*'
+    files = g.add('FilesInFolder', "%s's textures" % who, folder=folder, pattern=pattern)
+    tex = g.add('LoadTex')
+    split = g.add('Split')
+    match = g.add('TextMatches', 'Is it a colour texture?', pattern=G['colour'])
+    gate = g.add('If', 'Only colour textures')
+    gsplit = g.add('Split')
+    stream = g.add('StreamingCopy')
+    export = g.add('ExportImage')
+    adjust = g.add('AdjustColour', 'Grey', saturation=-100)
+    convert = g.add('custom:convert_with_streaming')
+    pkg = package(g, 'Grey %s' % who, "%s's colour textures without colour" % who)
+    g.link(files, 'files', tex, 'tex')
+    g.link(tex, 'tex', split, 'in')
+    g.link(split, 'out', gate, 'value')
+    g.link(split, 'out', match, 'text')
+    g.link(match, 'yes', gate, 'condition')
+    g.link(gate, 'value', gsplit, 'in')
+    g.link(gsplit, 'out', stream, 'tex')
+    g.link(gsplit, 'out', convert, 'in2')
+    g.link(stream, 'full', export, 'tex')
+    g.link(export, 'png', adjust, 'image')
+    g.link(adjust, 'image', convert, 'in1')
+    g.link(stream, 'streaming', convert, 'in3')
+    g.link(convert, 'out9', pkg, 'tex')
+    g.link(convert, 'out10', pkg, 'tex')
+    g.save('08_only_the_colour_textures.json')
+
+    # 9. Channels: a texture's alpha holds data; a new picture goes in as its colour only.
+    g = Graph()
+    texture = character_texture(g, G)
+    split = g.add('Split')
+    stream = g.add('StreamingCopy')
+    export = g.add('ExportImage')
+    esplit = g.add('Split')
+    alpha = g.add('PickChannel', 'Its alpha: data, not transparency', channel='alpha')
+    look = g.add('Preview')
+    picture = g.add('ImportImage', 'Your picture (change me)', png='picture.png')
+    fit = g.add('ResizeImage', fit='fill')
+    merge = g.add('MergeChannels', 'Picture as colour, alpha kept')
+    convert = g.add('custom:convert_with_streaming')
+    pkg = package(g, 'Picture %s' % part, "A picture as %s's %s texture, keeping its alpha data" % (who, part))
+    g.link(texture, 'tex', split, 'in')
+    g.link(split, 'out', stream, 'tex')
+    g.link(split, 'out', convert, 'in2')
+    g.link(stream, 'full', export, 'tex')
+    g.link(export, 'png', esplit, 'in')
+    g.link(esplit, 'out', merge, 'base')
+    g.link(esplit, 'out', alpha, 'image')
+    g.link(esplit, 'out', fit, 'match')
+    g.link(alpha, 'image', look, 'in')
+    g.link(picture, 'image', fit, 'image')
+    g.link(fit, 'image', merge, 'colour')
+    g.link(merge, 'image', convert, 'in1')
+    g.link(stream, 'streaming', convert, 'in3')
+    g.link(convert, 'out9', pkg, 'tex')
+    g.link(convert, 'out10', pkg, 'tex')
+    g.save('09_keep_the_alpha_data.json')
+
+    # 10. If / else: your picture if it's there, else a recolour.
+    g = Graph()
+    (src, port), finish = document(g, G, G['doc'], 'The texture to change')
+    split = src  # used twice: the Split itself, else one after the full-size copy
+    if port != 'out':
+        split = g.add('Split')
+        g.link(src, port, split, 'in')
+    exists = g.add('FileExists', 'Is my picture there?', path='my_picture.png')
+    csplit = g.add('Split')
+    yes = g.add('If', 'Then: my picture')
+    no = g.add('Not')
+    other = g.add('If', 'Else: recolour')
+    path = g.add('Value', 'My picture', value='my_picture.png')
+    picture = g.add('ImportImage')
+    fit = g.add('ResizeImage', fit='fill')
+    export = g.add('ExportImage')
+    adjust = g.add('AdjustColour', hue=90)
+    first = g.add('FirstOf')
+    g.link(exists, 'yes', csplit, 'in')
+    g.link(csplit, 'out', yes, 'condition')
+    g.link(csplit, 'out', no, 'in')
+    g.link(no, 'yes', other, 'condition')
+    g.link(path, 'value', yes, 'value')
+    g.link(yes, 'value', picture, 'png')
+    g.link(picture, 'image', fit, 'image')
+    g.link(split, 'out', fit, 'match')
+    g.link(split, 'out', other, 'value')
+    g.link(other, 'value', export, 'tex')
+    g.link(export, 'png', adjust, 'image')
+    g.link(fit, 'image', first, 'first')
+    g.link(adjust, 'image', first, 'second')
+    finish(first, 'Picture or colour', 'my_picture.png if it is there, else a recoloured %s' % doc, 'value')
+    g.save('10_if_else_picture_or_recolour.json')
+
+    # 11. File steps: keep a copy of each build.
+    g = Graph()
+    (src, port), finish = document(g, G, G['doc'], 'The texture to change')
+    export = g.add('ExportImage')
+    adjust = g.add('AdjustColour', brightness=-25)
+    pkg = finish(adjust, 'Darker %s' % doc, 'A darker %s, with a backup of each build' % doc)
+    g.link(src, port, export, 'tex')
+    g.link(export, 'png', adjust, 'image')
+    copy = g.add('CopyFile', 'Back up the build', dest='backups/', if_exists='overwrite', create_dirs='true')
+    g.link(pkg, 'mod', copy, 'source')
+    g.save('11_back_up_each_build.json')
+
+
+for game in ['re2r', 're3r', 're4r']:  # RE4R last: everything after this is its own
+    OUT = os.path.join(EXAMPLES, game)
+    os.makedirs(OUT, exist_ok=True)
+    texture_examples(GAMES[game])
+
+
+# ---- RE4R only from here (meshes, movies, sounds, cutscenes) ----
 
 # 12. Movies: a test card in place of a game movie (both its copies) and its sound (a beep each second in the music,
 # dialogue and effects silent), to see where and how the game plays it.
@@ -573,3 +655,8 @@ def wav(name, seconds):
 
 
 wav('beep.wav', 1)
+
+# The sample picture and logo, for the other games' examples too.
+for other in ['re2r', 're3r']:
+    for name in ['picture.png', 'logo.png']:
+        shutil.copyfile(os.path.join(OUT, name), os.path.join(EXAMPLES, other, name))

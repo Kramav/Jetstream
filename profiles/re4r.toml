@@ -10,3 +10,5 @@ file_list       = "TBD"                       # [TBD-spike] PAK file list source
 noesis_game     = "RE4"                       # optional: the RE plugin's name for RE4R (its RE4NativesPath.txt)
 sound_dir       = "_chainsaw/sound/wwise"     # [game data] optional: Wwise banks (.sbnk) and packages (.spck), CLAUDE.md §10
 movie_sound     = "ch_{id}_"                  # [game data] optional: a movie's sound packages there
+reframework     = "re4"                       # REFramework's name for it: the cutscene script's game file
+features        = ["textures", "meshes", "sounds", "movies", "cutscenes"]

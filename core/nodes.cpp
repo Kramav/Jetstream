@@ -1232,14 +1232,15 @@ NodeSpec lua_script_node() {
     };
 }
 
-// A Cutscene block's files (cutscene_files: the runtime, then the cutscene) as its list output; a talk topic in the
+// A Cutscene block's files (cutscene_files: the runtime and each game's part, then the cutscene) as its list output; a talk topic in the
 // merchant's menu adds his menu's layout with remod's spare entries (made from the game files in the run cache; a
 // preview only names it).
 std::vector<PackageFile> cutscene_list(NodeRun& r, bool make = false) {
     std::vector<PackageFile> files;
     try {
-        files = cutscene_files(r.resolve(r.text("cutscene")));
-        if (has_merchant_topic(files[1].source)) {
+        const fs::path cutscene = r.resolve(r.text("cutscene"));
+        files = cutscene_files(cutscene);
+        if (has_merchant_topic(cutscene)) {
             std::string natives;
             try {
                 natives = fill_game("{game}");
@@ -1282,15 +1283,16 @@ NodeSpec cutscene_node() {
         .outputs = {{.name = "files", .type = Path, .label = "cutscene files", .list = true}},
         .family = Family::Source,
         .run = [](NodeRun& r) {
-            const auto files = cutscene_list(r, true);
-            std::ifstream in(long_path(files[1].source), std::ios::binary);
+            cutscene_list(r, true);
+            const fs::path cutscene = r.resolve(r.text("cutscene"));
+            std::ifstream in(long_path(cutscene), std::ios::binary);
             const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
             if (const auto problems = check_cutscene(text); !problems.empty()) {
                 std::string all;
                 for (const auto& p : problems) all += (all.empty() ? "" : "; ") + p;
-                throw GraphError(files[1].source.filename().string() + ": " + all);
+                throw GraphError(cutscene.filename().string() + ": " + all);
             }
-            r.done(files[1].source.filename().string() + " checked", files[1].source);
+            r.done(cutscene.filename().string() + " checked", cutscene);
         },
         .preview = [](NodeRun& r) { cutscene_list(r); },
     };
@@ -2110,8 +2112,7 @@ NodeSpec new_movie_node() {
                 made.push_back(source);
             };
             try {
-                const PackageFile runtime = cutscene_runtime();
-                add(runtime.source, runtime.game_path.generic_string());
+                for (const PackageFile& runtime : cutscene_runtime()) add(runtime.source, runtime.game_path.generic_string());
             } catch (const PackageError& e) {
                 throw GraphError(e.what());
             }
@@ -2194,8 +2195,7 @@ NodeSpec new_sound_node() {
                 made.push_back(source);
             };
             try {
-                const PackageFile runtime = cutscene_runtime();
-                add(runtime.source, runtime.game_path.generic_string());
+                for (const PackageFile& runtime : cutscene_runtime()) add(runtime.source, runtime.game_path.generic_string());
             } catch (const PackageError& e) {
                 throw GraphError(e.what());
             }
@@ -3188,6 +3188,37 @@ const std::vector<NodeSpec>& node_specs() {
         join_path(), path_parts(), change_extension(), cut_text_node(), require_file(), node_input(), node_output(),
     };
     return specs;
+}
+
+std::vector<std::string_view> block_needs(std::string_view type) {
+    // Blocks reading or writing one of the game's own formats: textures (.tex), meshes (.mesh, .mdf2), sounds (Wwise),
+    // movies (the game's movie files), cutscenes (remod's cutscene script, with that game's names). Everything else
+    // (images, files, values, Package, Lua script, Run program) works for any game.
+    static const std::map<std::string_view, std::vector<std::string_view>> needs{
+        {"LoadTex", {"textures"}},          {"ExportImage", {"textures"}},
+        {"SaveTex", {"textures"}},          {"StreamingCopy", {"textures"}},
+        {"MeshMask", {"meshes"}},           {"PartTexture", {"meshes", "textures"}},
+        {"FramePictures", {"meshes", "textures"}},
+        {"ExportMovie", {"movies"}},        {"EditVideo", {"movies"}},
+        {"ReplaceMovie", {"movies"}},       {"NewMovie", {"movies", "cutscenes"}},
+        {"GameSound", {"sounds"}},          {"ReplaceSounds", {"sounds"}},
+        {"NewSound", {"sounds", "cutscenes"}},
+        {"Cutscene", {"cutscenes"}},        {"NewCharacter", {"meshes", "textures", "cutscenes"}},
+    };
+    if (const CustomNode* c = find_custom(type)) {
+        std::vector<std::string_view> out;
+        for (const Node& n : c->graph.nodes)
+            if (n.type != type)  // a definition can't hold itself; never loop
+                for (std::string_view f : block_needs(n.type))
+                    if (std::ranges::find(out, f) == out.end()) out.push_back(f);
+        return out;
+    }
+    const auto it = needs.find(type);
+    return it == needs.end() ? std::vector<std::string_view>{} : it->second;
+}
+
+bool block_available(std::string_view type, const Profile& game) {
+    return std::ranges::all_of(block_needs(type), [&](std::string_view f) { return game.has(f); });
 }
 
 const char* ai_note(std::string_view type) {

@@ -24,8 +24,9 @@ Keep the `profiles` folder next to `remod-app.exe`.
 2. In the **Pipeline** panel on the right, set **Game files** to your REtool folder, e.g.
    `...\REtool\RE4\re_chunk_000\natives\stm`. The **Browser** on the left then lists the game's textures and
    meshes. Reading the folder takes a few seconds each time the app starts.
-3. Open one of the **examples** (the `...` button next to *Graph file*, in the `examples` folder): eleven ready-made
-   mods, from a hand-edited document to recolouring part of a character. `examples\README.md` says what each shows.
+3. Open one of the **examples** (the `...` button next to *Graph file*, in the `examples` folder: a folder per
+   game). RE4R's (`examples\re4r`) are over twenty ready-made mods, from a hand-edited document to recolouring part of
+   a character; `examples\re4r\README.md` says what each shows.
    Their game paths start with `{game}`, your Game files folder. They're read-only: **Save** asks where to put your copy.
 
 The app remembers its settings in `%APPDATA%\remod`. It keeps converted textures in `%LOCALAPPDATA%\remod\run_cache`
@@ -362,7 +363,7 @@ Each actor has:
 The actors appear when the cutscene starts and are put away when it ends (seen in game, 2026-10-08).
 
 **Where cutscene files are.** A cutscene file lives wherever you put it: the Cutscene block's **Cutscene file** names
-it (the examples' are in `examples\cutscenes`). **Test in game** copies it into the game, to
+it (the examples' are in `examples\re4r\cutscenes`). **Test in game** copies it into the game, to
 `<game>\reframework\data\remod_cutscenes`. The runtime also writes what you note in game there: `recording.json`
 (F10's camera keys), `trigger.json`, `spot.json` and `animation.json`. The Browser's **Cutscenes**, at the top of its
 tree, lists both:

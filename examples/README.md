@@ -1,35 +1,14 @@
-# Example graphs
+# Examples
 
-Ready-made graphs for Resident Evil 4 (2023). Open one in remod (`...` next to *Graph file*), click **Run**, and look at
-what each block did.
+Ready-made graphs, a folder per game. Pick the game in remod's top bar, set its **Game files** folder, then open one
+of its graphs (the `...` button next to *Graph file*). Each game's examples do the same things with that game's own
+files, as far as remod supports the game; the numbers match across games.
 
-**Before you start:** set **Game files** in the Pipeline panel to your REtool folder (`...\re_chunk_000\natives\stm`).
-The examples find the game's files through it: their paths start with `{game}`. The examples are read-only: **Save** asks where to put your
-copy, somewhere of your own. Each writes its mod to a `mods` folder next to the graph.
+| Folder | Game | Examples |
+|---|---|---|
+| `re2r` | Resident Evil 2 (2019), DX11 version | 10 texture examples (1-5, 7-11) |
+| `re3r` | Resident Evil 3 (2020) | 10 texture examples (1-5, 7-11) |
+| `re4r` | Resident Evil 4 (2023) | 22: textures, a character part by its mesh, movies, sounds, cutscenes, talk topics |
 
-| Example | Shows |
-|---|---|
-| `01_edit_a_texture_by_hand` | The basic mod: export a document, edit it in your image editor (**Edit image** waits for you), convert it back, package it. |
-| `02_recolour_a_texture` | No hand step: **Adjust colour** changes it. Export image without a file keeps a working copy for you. |
-| `03_your_picture_in_a_photo_frame` | **Replace photo** puts `picture.png` into an old framed photo, keeping the frame and the photo's ageing. Use your own picture. |
-| `04_a_logo_on_a_texture` | **Overlay image** stamps `logo.png` on a document. The paper is where the texture isn't see-through. |
-| `05_many_textures_at_once` | **Files in folder**: the same steps for every matching texture in a folder, packaged as one mod. |
-| `06_recolour_part_of_a_character` | **Recolour part**, a block made of blocks: Leon's trousers in another colour, on the texture and its streaming copy. Right-click it, **Edit custom node**, to see inside. |
-| `07_edit_a_character_texture` | **Part texture** finds the texture of Leon's shirt from his mesh; **Streaming copy** and **Convert with streaming copy** replace both copies the game has. You edit at full size. |
-| `08_only_the_colour_textures` | Conditions: **Text matches** and **If** let only Leon's colour (`albd`) textures through. The others show *Not needed*. |
-| `09_keep_the_alpha_data` | Channels: **Pick channel** shows the alpha (data, not transparency); **Merge channels** puts a picture in as the colour and keeps it. |
-| `10_if_else_picture_or_recolour` | If / else: `my_picture.png` if it's next to the graph, else a recolour. **File exists**, **Not**, two **If**s and **First of**. |
-| `11_back_up_each_build` | File steps: **Copy file** keeps a copy of each built mod in `backups`. |
-| `12_replace_a_movie` | **Replace movie**: a test card (the movie's name and the seconds) in place of `mva000` and its 1080p copy, with new sound packages: a beep each second in the music, the dialogue (every language) and effects silent. Pick another movie, or put your video in **Your video**. |
-| `13_edit_a_movie_by_hand` | **Export movie** copies `mva402` to `edits`, **Edit video** waits while you edit it and render your edit to `edits\mva402_edited.mp4`, then **Replace movie** puts it in the game at the original's length. |
-| `14_replace_a_sound` | **Game sound** and **Replace sounds**: `beep.wav` in place of the intro's English narration. To pick another sound, click a bank (`.sbnk`) or package (`.spck`) in the Browser and drag a sound's line onto the graph: a Game sound block, linked into Replace sounds, where you pick your audio. |
-| `15_play_a_game_movie` | A **Cutscene** that plays one of the game's movies when you press F9: a fade to black, the intro movie (`mva000`) full screen with the game paused, Leon held and the HUD hidden, then a fade back to where you were. The cutscene file is `cutscenes\play_a_movie.json`; change its `id` to play another movie. Install the built mod with Fluffy; it needs REFramework. |
-| `16_insert_a_new_movie` | **New movie** adds a movie of your own to the game, under its own name (`rmd001`), replacing none of the game's movies; a **Cutscene** plays it when you press F8 (`cutscenes\play_new_movie.json`). As it is, the movie is a 12-second test card that beeps each second; put your video in **Your video** (its sound plays with it, in mono). Install the built mod with Fluffy; it needs REFramework. |
-| `17_add_a_new_sound` | **New sound** adds a sound of your own (`beep.wav`, named `beeps`) to the game, replacing none of its sounds; a **Cutscene** plays it when you press F7 (`cutscenes\play_new_sound.json`). Put your own audio in **Your audio**. Install the built mod with Fluffy; it needs REFramework. |
-| `18_start_a_cutscene_by_itself` | A **Cutscene** with a **trigger**: it starts by itself when Leon comes within 3 m of a spot in chapter 1's village (`cutscenes\started_by_itself.json`). To use your own spot, stand there in game and click **Make a trigger here** (REFramework's menu > remod cutscenes), then **Use trigger** on the block. |
-| `19_a_new_character_in_a_cutscene` | Other characters in a cutscene. **New character** makes `rmc002`: Ashley's body as new files in purple, with nothing of the game's replaced. A **Cutscene** (`cutscenes\meet_new_character.json`) brings it and Luis out in front of Leon when you press F6, and hides the real Ashley while it plays. Change the colour on the New character block; place the characters and add animations with **Edit cutscene** on the Cutscene block. Install the built mod with Fluffy; it needs REFramework. |
-| `20_a_picture_in_every_photo_and_painting` | A picture of your own in every photo and painting: the 10 photos among the files, and the 78 picture frames hanging in houses and the castle. Drop your pictures in `pictures\`, named anything (png, jpg, tga, bmp). **Name pictures** gives them out in name order (1, 2 … 10), the photos first and then the frames; `edits\named pictures\matches.txt` says which picture went where. A picture already named after a place (`cs_ui3210_file_039_00_iam.png`, `sm34_543_00.png`) goes there. With fewer pictures than places, the rest stay as the game has them. The samples there are cards showing each frame's number, so a look in game tells you which frame got which. **Replace photo** (Stains off: on colour photos they'd bring the old picture back) and **Pictures in frames** (frames sharing one texture each get theirs in it). |
-| `21_talk_topics` | Talk topics: cutscenes picked from a menu. Two are entries in the merchant's menu (after Buy, Sell, Upgrade, Trade), two in remod's talk menu on Ashley: the game's Interact icon shows over her, and Interact opens the list. **Ask about Ashley** and **About the merchant** show only once you've picked the merchant's **Talk** in this save (`"flags": ["remod:talk_merchant"]`). `order` puts them in order. The files are `cutscenes	alk_*.json`; `"npc": "ch2_a1z0"` is Ashley. Install the built mod with Fluffy (the merchant's menu layout is a game file); it needs REFramework. |
-| `22_replace_movies_from_a_folder` | Any of the game's movies replaced by your videos, in one go. Make a `videos` folder beside the graph and put in a video named after each movie you want replaced, e.g. `videos\mva000.mp4`; run, and install the built mod with Fluffy. **Files in folder** lists all 31 movies; **Replace movie** runs for each, takes `videos\<its name>.mp4` and leaves a movie without one as the game has it (*If your video isn't there: Leave the movie as it is*). A replaced movie gets its 1080p copy and its sound packages too. Videos are cut, or hold their last frame, to the movie's length. The movies: `mv7000`, `mv7001` (the logos at start, with sound); `mva000` (4K, 61 s, likely the opening), `mva201`, `mva202` (4K story movies, sound from the game's sound packages); `mva300`, `mva301` (1440x1080 / 1080p; mva300 plays on a screen in the world); `mva402` to `mva417` (small, 328x408, silent); `richtutorial_movie_006` to `_023` (the tutorials' clips). Which plays where isn't known for most: empty *Your video* to give every movie a test card showing its name and the seconds, then look in game. Other formats: change `.mp4` in *Your video* (`.mov`, `.wmv` ...). |
-
-The blocks are laid out when a graph opens. Move them as you like and save.
+RE7, RE8 and RE9 have none yet: their files haven't been extracted to pick real ones from. Each folder's `README.md`
+says what each example shows. The examples are read-only: Save makes a copy elsewhere.

@@ -145,11 +145,11 @@
     {
       "id": 1,
       "params": {
-        "folder": "{game}/_chainsaw/character/ch/cha0/cha000/00",
+        "folder": "{game}/escape/character/player/pl2000/mesh",
         "on_fail": "stop",
-        "pattern": "cha000_00_*.tex*",
+        "pattern": "pl2000_*.tex*",
         "subfolders": "",
-        "title": "Leon's textures"
+        "title": "Jill's textures"
       },
       "pos": [
         0.0,
@@ -181,13 +181,13 @@
     {
       "id": 4,
       "params": {
-        "pattern": "*_albd*",
+        "pattern": "*_alb*",
         "text": "",
         "title": "Is it a colour texture?"
       },
       "pos": [
         0.0,
-        198.0
+        168.0
       ],
       "type": "TextMatches"
     },
@@ -217,7 +217,7 @@
       "params": {},
       "pos": [
         448.0,
-        198.0
+        168.0
       ],
       "type": "StreamingCopy"
     },
@@ -228,7 +228,7 @@
       },
       "pos": [
         0.0,
-        482.0
+        452.0
       ],
       "type": "ExportImage"
     },
@@ -245,7 +245,7 @@
       },
       "pos": [
         486.0,
-        482.0
+        452.0
       ],
       "type": "AdjustColour"
     },
@@ -258,7 +258,7 @@
       },
       "pos": [
         0.0,
-        753.0
+        723.0
       ],
       "type": "custom:convert_with_streaming"
     },
@@ -266,19 +266,19 @@
       "id": 11,
       "params": {
         "author": "",
-        "description": "Leon's colour textures without colour",
-        "name": "Grey Leon",
+        "description": "Jill's colour textures without colour",
+        "name": "Grey Jill",
         "out": "mods",
         "replace": "true",
         "version": "1.0"
       },
       "pos": [
-        465.0,
-        753.0
+        471.0,
+        723.0
       ],
       "type": "PackageMod"
     }
   ],
-  "profile": "re4r",
+  "profile": "re3r",
   "schema_version": 0
 }

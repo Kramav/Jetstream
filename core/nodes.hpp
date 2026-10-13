@@ -13,6 +13,7 @@
 namespace remod {
 
 struct Graph;
+struct Profile;
 class NodeRun;  // node_run.hpp: one node's view of a run (core only)
 
 // What flows along a link, by kind (front ends colour links and pins by it): a texture file, an image file, plain
@@ -115,6 +116,12 @@ const NodeSpec* find_spec(std::string_view type);  // built in, else a registere
 std::vector<const NodeSpec*> all_specs();           // node_specs, then the custom nodes: for menus and palettes
 // For an AI building graphs (the API's `types`): when to use the block, when not, an example ("" if none).
 const char* ai_note(std::string_view type);
+// What a block needs from its game (Profile::features, kFeatures), e.g. Replace movie: movies; empty: it works for
+// every game. A custom node needs what its blocks need.
+std::vector<std::string_view> block_needs(std::string_view type);
+// Whether a block can be used for a game: it has every feature the block needs (CLAUDE.md §10 "Games"). Front ends
+// list only these; a run refuses the others.
+bool block_available(std::string_view type, const Profile& game);
 const InputSpec* find_input(const NodeSpec& spec, std::string_view name);
 
 // The picker a typed value of `type` gets (a Value's field takes the kind it feeds); None for text.

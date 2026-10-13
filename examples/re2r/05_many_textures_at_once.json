@@ -3,81 +3,71 @@
     {
       "from": [
         1,
-        "tex"
+        "files"
       ],
       "to": [
         2,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "tex"
+      ],
+      "to": [
+        3,
         "in"
       ]
     },
     {
       "from": [
-        2,
-        "out"
-      ],
-      "to": [
-        3,
-        "tex"
-      ]
-    },
-    {
-      "from": [
-        3,
+        4,
         "png"
       ],
       "to": [
-        4,
+        5,
         "image"
       ]
     },
     {
       "from": [
-        4,
-        "image"
-      ],
-      "to": [
-        5,
-        "in"
-      ]
-    },
-    {
-      "from": [
-        5,
+        3,
         "out"
       ],
       "to": [
-        6,
-        "image"
+        4,
+        "tex"
       ]
     },
     {
       "from": [
-        2,
+        3,
         "out"
       ],
       "to": [
-        6,
+        7,
         "original"
       ]
     },
     {
       "from": [
-        6,
-        "tex"
+        5,
+        "image"
       ],
       "to": [
         7,
-        "tex"
+        "image"
       ]
     },
     {
       "from": [
-        5,
-        "out"
+        7,
+        "tex"
       ],
       "to": [
-        7,
-        "preview"
+        6,
+        "tex"
       ]
     }
   ],
@@ -85,87 +75,92 @@
     {
       "id": 1,
       "params": {
-        "game_path": "",
-        "tex": "{game}/_chainsaw/ui/ui3200/tex/cs_ui3210_file_008_00_iam.tex.143221013",
-        "title": "The texture to change"
+        "folder": "{game}/sectionroot/ui/ui3200/tex",
+        "on_fail": "stop",
+        "pattern": "ui3210_file_6?_iam.tex.*",
+        "subfolders": "",
+        "title": "The documents"
       },
       "pos": [
         0.0,
         0.0
       ],
-      "type": "LoadTex"
+      "type": "FilesInFolder"
     },
     {
       "id": 2,
-      "params": {},
-      "pos": [
-        400.0,
-        37.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 3,
       "params": {
-        "png": ""
+        "game_path": "",
+        "tex": ""
       },
       "pos": [
         473.0,
         0.0
       ],
-      "type": "ExportImage"
+      "type": "LoadTex"
     },
     {
-      "id": 4,
-      "params": {
-        "brightness": "0",
-        "contrast": "0",
-        "hue": "150",
-        "image": "",
-        "saturation": "20",
-        "save_to": ""
-      },
-      "pos": [
-        0.0,
-        178.0
-      ],
-      "type": "AdjustColour"
-    },
-    {
-      "id": 5,
+      "id": 3,
       "params": {},
       "pos": [
-        383.0,
-        242.0
+        -224.0,
+        170.0
       ],
       "type": "Split"
     },
     {
-      "id": 6,
-      "params": {},
+      "id": 4,
+      "params": {
+        "png": ""
+      },
       "pos": [
-        456.0,
-        178.0
+        0.0,
+        168.0
       ],
-      "type": "SaveTex"
+      "type": "ExportImage"
     },
     {
-      "id": 7,
+      "id": 5,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "-40",
+        "image": "",
+        "saturation": "-30",
+        "save_to": ""
+      },
+      "pos": [
+        461.0,
+        168.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 6,
       "params": {
         "author": "",
-        "description": "A document in another colour",
-        "name": "Recoloured document",
+        "description": "The files numbered 60 to 69, faded",
+        "name": "Faded documents",
         "out": "mods",
         "replace": "true",
         "version": "1.0"
       },
       "pos": [
-        0.0,
-        399.0
+        448.0,
+        389.0
       ],
       "type": "PackageMod"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        0.0,
+        389.0
+      ],
+      "type": "SaveTex"
     }
   ],
-  "profile": "re4r",
+  "profile": "re2r",
   "schema_version": 0
 }

@@ -1,0 +1,210 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "full"
+      ],
+      "to": [
+        4,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "png"
+      ],
+      "to": [
+        5,
+        "png"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "image"
+      ],
+      "to": [
+        6,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        7,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        7,
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "streaming"
+      ],
+      "to": [
+        7,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "out9"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "out10"
+      ],
+      "to": [
+        8,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "out"
+      ],
+      "to": [
+        8,
+        "preview"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/escape/ui/ui3200/tex/ui3210_file_03_iam.tex.34",
+        "title": "The texture to change"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        400.0,
+        37.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": "edits/document.png"
+      },
+      "pos": [
+        0.0,
+        178.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "editor": "",
+        "title": "Your edit"
+      },
+      "pos": [
+        456.0,
+        178.0
+      ],
+      "type": "EditImage"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        -224.0,
+        397.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        377.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 8,
+      "params": {
+        "author": "",
+        "description": "A R.P.D. paper, edited by hand",
+        "name": "My first texture mod",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        486.0,
+        377.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re3r",
+  "schema_version": 0
+}
