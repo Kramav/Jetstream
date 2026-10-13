@@ -662,3 +662,70 @@ TEST_CASE("Cutscene blocks into Package: the runtime once, the run fails on a ba
                             .zip = false};
     CHECK_THROWS_WITH(remod::build_package(profile, spec), Catch::Matchers::ContainsSubstring("listed twice"));
 }
+
+// ---- Pictures in frames: paintings sharing an atlas each get their own picture ----
+
+#include "frames.hpp"
+
+TEST_CASE("Pictures in frames: two paintings on one atlas each get theirs; a frame without one is named (set REMOD_GAME)") {
+    char* v = nullptr;
+    size_t n = 0;
+    _dupenv_s(&v, &n, "REMOD_GAME");
+    const std::string game = v ? v : "";
+    std::free(v);
+    if (game.empty()) SKIP("set REMOD_GAME to the extracted natives/STM");
+    const std::string dir = "_chainsaw/environment/sm/sm3x/sm34/";
+    if (!fs::exists(fs::path(game) / dir / "sm34_543")) SKIP("needs the paintings (sm34_543)");
+    test::TempDir tmp;
+    const remod::Profile profile = remod::load_profile(REMOD_PROFILES_DIR "/re4r.toml");
+    remod::NativeConverter converter;
+    auto solid = [&](const char* name, std::uint8_t b, std::uint8_t g, std::uint8_t r) {
+        remod::Bgra img{8, 8, {}};
+        for (int i = 0; i < 64; ++i) img.pixels.insert(img.pixels.end(), {b, g, r, 255});
+        remod::save_png(tmp.path / name, img);
+        return tmp.path / name;
+    };
+    const std::vector<remod::FramePicture> frames{
+        {dir + "sm34_543/sm34_543_00.mesh.221108797", solid("red.png", 0, 0, 255)},
+        {dir + "sm34_544/sm34_544_00.mesh.221108797", solid("blue.png", 255, 0, 0)},
+        {dir + "sm34_545/sm34_545_00.mesh.221108797", {}},  // no picture: left as it is
+        {dir + "sm34_539/sm34_539_00.mesh.221108797", tmp.path / "red.png"}};  // no canvas texture: left out
+    std::string report;
+    const auto files = remod::pictures_in_frames(
+        frames, [](const std::string& f) { return f.starts_with("sm34_543_a_albd") || f.starts_with("sm34_543_A_ALBD"); },
+        game, profile, converter, tmp.path / "out", &report);
+    INFO(report);
+    CHECK_THAT(report, Catch::Matchers::ContainsSubstring("2 frame(s) on 1 texture(s) (1 with streaming copies)"));
+    CHECK_THAT(report, Catch::Matchers::ContainsSubstring("no picture (left as they are): sm34_545_00"));
+    REQUIRE(files.size() == 2);  // the atlas and its streaming copy
+    CHECK(files[0].game_path == "_chainsaw/environment/texture/sm34_543_a_albd.tex.143221013");
+    const remod::Bgra out = remod::decode_tex(files[0].source, 1u << 30);
+    const remod::Bgra old = remod::decode_tex(fs::path(game) / files[0].game_path, 1u << 30);
+    size_t red = 0, blue = 0, same = 0;
+    for (size_t i = 0; i < out.pixels.size(); i += 4) {
+        const std::uint8_t* p = &out.pixels[i];
+        red += p[2] > 200 && p[1] < 60 && p[0] < 60;
+        blue += p[0] > 200 && p[1] < 60 && p[2] < 60;
+        same += std::abs(int(p[1]) - int(old.pixels[i + 1])) < 12;
+    }
+    const size_t all = out.pixels.size() / 4;
+    CHECK(red > all / 20);    // each picture covers its painting's rectangle (five share this atlas)
+    CHECK(blue > all / 20);
+    CHECK(same > all / 3);    // the other paintings and the gaps stay
+    CHECK(out.pixels[3] == old.pixels[3]);  // alpha kept
+}
+
+TEST_CASE("match_pictures: named ones go to theirs, the rest in number order, left-overs reported") {
+    const std::vector<fs::path> pictures{"p/10.jpg", "p/2.png", "p/B.PNG", "p/cat.png", "p/1.png"};
+    std::vector<fs::path> unused;
+    const auto got = remod::match_pictures({"a", "b", "c", "d"}, pictures, &unused);
+    REQUIRE(got.size() == 4);
+    CHECK(got[0] == fs::path("p/1.png"));   // the rest in order: 1, 2, 10 (not 1, 10, 2), then cat
+    CHECK(got[1] == fs::path("p/B.PNG"));   // named after b (any case)
+    CHECK(got[2] == fs::path("p/2.png"));
+    CHECK(got[3] == fs::path("p/10.jpg"));
+    CHECK(unused == std::vector<fs::path>{"p/cat.png"});
+    const auto few = remod::match_pictures({"a", "b", "c"}, {"p/x.png"});
+    CHECK(few[0] == fs::path("p/x.png"));
+    CHECK(few[1].empty());  // ran out: left as the game has it
+}

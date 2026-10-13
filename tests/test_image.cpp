@@ -233,6 +233,21 @@ TEST_CASE("photo_area finds the photo's edge, not the frame's other rings or the
     CHECK(soft.mask[100 * 200 + 50] < 255);
 }
 
+TEST_CASE("photo_area finds a thin border's edge past a notch torn in the outline") {
+    // As file_078 (Leon's photo): a thin border, and a notch whose ring jumps inwards further than the path may move
+    // from one ray to the next. It used to find no closed path and give a dot at the middle.
+    remod::Bgra frame = framed(200, 10, 13, 17);
+    for (unsigned y = 60; y < 66; ++y)
+        for (unsigned x = 170; x < 190; ++x) frame.pixels[(size_t(y) * 200 + x) * 4 + 3] = 0;
+    const remod::PhotoArea area = remod::photo_area(frame, 0, 0, 0);
+    auto in = [&](unsigned x, unsigned y) { return area.mask[size_t(y) * 200 + x]; };
+    CHECK(in(100, 100) == 255);
+    CHECK(in(30, 100) == 255);  // the photo, all round
+    CHECK(in(165, 140) == 255);
+    CHECK(in(100, 25) == 255);
+    CHECK(in(180, 63) == 0);    // the notch
+}
+
 TEST_CASE("photo_area follows an oval frame") {
     constexpr unsigned W = 240, H = 180;
     remod::Bgra img{W, H, std::vector<std::uint8_t>(size_t(W) * H * 4, 0)};

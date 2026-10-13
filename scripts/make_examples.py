@@ -391,6 +391,62 @@ with open(os.path.join(OUT, 'cutscenes', 'meet_new_character.json'), 'w', encodi
 print('wrote cutscenes/meet_new_character.json')
 
 
+# 20. A picture of your own in every photo and painting: the photos among the files (UI textures), and the picture
+# frames in the world (meshes). Drop your pictures in pictures\, named anything: Name pictures gives them out, the
+# photos first, then the frames, in name order (1, 2 ... 10; a picture already named after a photo's texture or a
+# frame's mesh goes to that one), as copies in edits\named pictures, where matches.txt says which went where. A photo
+# or frame left without a picture (fewer pictures than places) stays as the game has it.
+# - Photos: Files in folder lists the files holding one, and Replace photo takes <its name>.png from the copies (Join
+#   path, {name}). Stains are off: on the colour photos (Leon's, the lab team, the two quest photos) they'd carry the
+#   old picture over. Photos printed inside a book, a badge or a phone aren't in the list.
+# - Paintings: Files in folder lists the 78 frame meshes of sm34 (the house and castle paintings), and Pictures in
+#   frames puts each frame's picture on its canvas. Several frames share one texture (an atlas of paintings); each
+#   atlas is written once with all of its frames' pictures. The canvas textures are the paintings' atlases (found by
+#   eye, 2026-10-12); a frame using another texture for its picture needs its name added there.
+PHOTOS = ['file_033_00', 'file_039_00', 'file_041_00', 'file_048_00', 'file_049_00', 'file_051_00', 'file_078_00',
+          'file_089_00', 'questfile_main_002_01', 'questfile_main_002_02']
+# The frame meshes holding a painting (every sm34 frame whose canvas uses one of PAINTINGS below), in path order.
+FRAMES = ['512_00', '512_01', '512_02', '513_00', '513_01', '513_02', '517_00', '517_01', '517_02', '543_00', '544_00', '545_00', '547_00', '548_00', '549_00', '550_00', '551_00', '552_00', '575_00', '576_00', '579_00', '580_00', '581_00', '582_00', '583_00', '584_00', '596_00', '597_00', '598_00', '599_00', '600_00', '601_00', '602_00', '603_00', '604_00', '605_00', '606_00', '607_00', '608_00', '609_00', '610_00', '611_00', '612_00', '613_00', '614_00', '615_00', '616_00', '617_00', '618_00', '619_00', '620_00', '621_00', '622_00', '623_00', '624_00', '625_00', '626_00', '628_00', '630_00', '631_00', '634_00', '636_00', '669_00', '672_00', '672_01', '672_02', '672_03', '672_04', '672_05', '672_06', '674_00', '675_00', '676_00', '677_00', '678_00', '679_00', '680_00', '681_00']
+g = Graph()
+yours = g.add('NamePictures', 'Your pictures, named for each place')
+named = g.add('Split')
+g.link(yours, 'folder', named, 'in')
+files = g.add('FilesInFolder', 'Every photo in the files', folder=UI[:-1], on_fail='skip',
+              pattern=';'.join('cs_ui3210_%s_iam.tex.*' % p for p in PHOTOS))
+photos = g.add('Split')
+tex = g.add('LoadTex')
+split = g.add('Split')
+export = g.add('ExportImage')
+picture = g.add('JoinPath', 'Its picture', add='{name}.png')
+photo = g.add('ReplacePhoto', stains=0)  # stains: a colour photo's colour is its picture
+convert = g.add('SaveTex')
+pkg = package(g, 'My pictures', 'A picture of your own in every photo of the files and painting on the walls')
+g.link(files, 'files', photos, 'in')
+g.link(photos, 'out', tex, 'tex')  # first: a list takes its kind from its first link (textures only)
+g.link(photos, 'out', yours, 'for')  # the photos get pictures first
+g.link(tex, 'tex', split, 'in')
+g.link(split, 'out', export, 'tex')
+g.link(split, 'out', convert, 'original')
+g.link(export, 'png', photo, 'frame')
+g.link(named, 'out', picture, 'folder')
+g.link(picture, 'path', photo, 'picture')
+g.link(photo, 'image', convert, 'image')
+g.link(convert, 'tex', pkg, 'tex')
+PAINTINGS = ['512_a', '512_b', '512_c', '513_a', '513_b', '513_c', '517_a', '517_b', '517_c', '543_a', '543_b', '575_a',
+             '579_c', '580_a', '596_a', '601_a', '605_a', '610_a', '614_a', '618_a', '623_a', '626_a', '628', '632',
+             '635', '669', '672_a', '672_b', '673', '676', '680']
+meshes = g.add('FilesInFolder', 'Every picture frame', folder='{game}/_chainsaw/environment/sm/sm3x/sm34',
+               pattern=';'.join('sm34_%s.mesh.*' % f for f in FRAMES), subfolders='true')
+frames = g.add('Split')
+paint = g.add('FramePictures', canvas=';'.join('sm34_%s_albd*' % p for p in PAINTINGS))
+g.link(meshes, 'files', frames, 'in')
+g.link(frames, 'out', yours, 'for')  # then the frames
+g.link(frames, 'out', paint, 'frames')
+g.link(named, 'out', paint, 'pictures')
+g.link(paint, 'textures', pkg, 'tex')
+g.save('20_a_picture_in_every_photo_and_painting.json')
+
+
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):
     rows = b''.join(b'\0' + b''.join(bytes(pixel(x, y)) for x in range(w)) for y in range(h))
@@ -426,6 +482,37 @@ def logo(x, y):  # a red ring with a bar, transparent around it
 os.makedirs(OUT, exist_ok=True)
 png('picture.png', 480, 360, sky)
 png('logo.png', 128, 128, logo)
+os.makedirs(os.path.join(OUT, 'pictures'), exist_ok=True)
+for i, p in enumerate(PHOTOS):  # example 20's: the sunset in a different colour for each photo
+    tint = lambda x, y, i=i: (lambda r, g_, b, a: (g_, b, r, a) if i % 3 == 1 else (b, r, g_, a) if i % 3 == 2
+                              else (r, g_, b, a))(*sky((x + 37 * i) % 480, y))
+    png('pictures/sample %02d.png' % (i + 1), 480, 360, tint)
+
+# The paintings': a colour card each with its frame's number on it, so a look in game says which frame took which
+# sample (and matches.txt which file it was).
+GLYPHS = {'0': '111101101101111', '1': '010110010010111', '2': '111001111100111', '3': '111001111001111',
+          '4': '101101111001001', '5': '111100111001111', '6': '111100111101111', '7': '111001001001001',
+          '8': '111101111101111', '9': '111101111001111', '_': '000000000000111'}
+
+
+def card(label, i, n):
+    import colorsys
+    bg = tuple(int(255 * c) for c in colorsys.hsv_to_rgb(i / n, 0.55, 0.9)) + (255,)
+    w, h, k = 240, 320, 6  # k: a glyph pixel's size
+    x0, y0 = (w - (4 * len(label) - 1) * k) // 2, (h - 5 * k) // 2
+
+    def pixel(x, y):
+        if min(x, y, w - 1 - x, h - 1 - y) < 8:
+            return (20, 20, 20, 255)
+        gx, gy = (x - x0) // k, (y - y0) // k
+        if x >= x0 and y >= y0 and gy < 5 and gx < 4 * len(label) and gx % 4 < 3 and                 GLYPHS[label[gx // 4]][gy * 3 + gx % 4] == '1':
+            return (20, 20, 20, 255)
+        return bg
+    return pixel
+
+
+for i, f in enumerate(FRAMES):
+    png('pictures/sample %02d.png' % (len(PHOTOS) + i + 1), 240, 320, card(f, i, len(FRAMES)))
 
 
 # Sample sound: three short beeps (48 kHz mono).

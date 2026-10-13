@@ -563,12 +563,15 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
     std::vector<std::int32_t> from(size_t(2 * A) * R);
     for (int t = 1; t < 2 * A; ++t) {
         const float* row = &score[size_t(t % A) * R];
+        // Where the ring itself jumps (a notch torn in the outline: file_078's), the path may jump as far, else no
+        // closed path exists.
+        const int k = K + int(std::ceil(std::abs(ring[size_t(t % A)] - ring[size_t((t - 1) % A)])));
         for (int r = 0; r < R; ++r) {
             next[size_t(r)] = none;
             from[size_t(t) * R + r] = r;
             if (row[r] <= none / 2) continue;
             float best = none;
-            for (int q = std::max(0, r - K); q <= std::min(R - 1, r + K); ++q)
+            for (int q = std::max(0, r - k); q <= std::min(R - 1, r + k); ++q)
                 if (const float v = dp[size_t(q)] - 0.01f * float(std::abs(q - r)); v > best) {
                     best = v;
                     from[size_t(t) * R + r] = q;
@@ -578,6 +581,7 @@ PhotoArea photo_area(const Bgra& frame, float frame_width, float grow, float fea
         std::swap(dp, next);
     }
     int r = int(std::max_element(dp.begin(), dp.end()) - dp.begin());
+    if (dp[size_t(r)] <= none / 2) throw std::runtime_error("no closed frame edge found: set Frame width");
     std::vector<int> radius(size_t(2 * A));
     for (int t = 2 * A - 1; t >= 0; --t) {
         radius[size_t(t)] = r;

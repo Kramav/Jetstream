@@ -3,6 +3,7 @@
 
 #include "browse.hpp"
 #include "cutscene.hpp"
+#include "frames.hpp"
 #include "game_code.hpp"
 #include "image.hpp"
 #include "movie.hpp"
@@ -1540,6 +1541,211 @@ std::vector<ListItem> sound_items(const std::vector<Value>& files) {
     return items;
 }
 
+// ---- Name pictures (user, 2026-10-12: "why do I need to name each of them") ----
+// Your pictures, whatever their names, as PNG copies named after the things that take them (textures, frame meshes),
+// for blocks that look a picture up by name (Replace photo's pictures/{name}.png, Pictures in frames).
+std::string lower_ascii(std::string s) {
+    std::ranges::transform(s, s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return s;
+}
+
+struct PictureNaming {
+    fs::path folder;                                 // where the copies go
+    std::vector<std::pair<std::string, fs::path>> named;  // name -> picture
+    std::vector<std::string> without;                // names left without a picture
+    std::vector<fs::path> unused;
+};
+
+PictureNaming name_pictures(const NodeRun& r) {
+    PictureNaming out;
+    const fs::path mine = clean_path(r.text("pictures"), r.run.options.base_dir);
+    out.folder = clean_path(r.text("folder"), r.run.options.base_dir);
+    std::error_code ec;
+    if (!fs::is_directory(long_path(mine), ec)) throw GraphError("no folder " + mine.string());
+    if (fs::equivalent(long_path(mine), long_path(out.folder), ec))
+        throw GraphError("the copies need a folder of their own, not your pictures' folder");
+    std::vector<std::string> names;
+    for (const Value& v : r.values("for")) {
+        const std::string file = v.path.filename().string(), name = file.substr(0, file.find('.'));
+        if (!name.empty() && std::ranges::find(names, name) == names.end()) names.push_back(name);
+    }
+    std::vector<fs::path> pictures;
+    for (const auto& e : fs::directory_iterator(long_path(mine), ec))
+        if (e.is_regular_file(ec) && any_pattern(e.path().filename().string(), "*.png;*.jpg;*.jpeg;*.tga;*.bmp"))
+            pictures.push_back(e.path());
+    const auto matched = match_pictures(names, pictures, &out.unused);
+    for (size_t i = 0; i < names.size(); ++i)
+        if (matched[i].empty())
+            out.without.push_back(names[i]);
+        else
+            out.named.push_back({names[i], matched[i]});
+    return out;
+}
+
+NodeSpec name_pictures_node() {
+    return {
+        .type = "NamePictures",
+        .title = "Name pictures",
+        .summary = "Gives your pictures the names other blocks look for: one picture to each thing linked in (photos' "
+                   "textures, frames' meshes), as PNG copies named after it. A picture already named after one goes "
+                   "to it; the rest go out in name order (1, 2 ... 10). matches.txt in the copies' folder says which "
+                   "went where. Your own files aren't touched.",
+        .inputs = {{.name = "pictures", .label = "Your pictures", .type = Folder, .widget = Widget::Path,
+                    .required = true, .hint = "Your pictures (png, jpg, tga, bmp), named anything.",
+                    .path = PathKind::Folder, .initial = "pictures"},
+                   {.name = "for", .label = "one for each", .type = Path, .required = true, .multiple = true,
+                    .hint = "What gets a picture, in order: e.g. a Files in folder of textures or meshes. Each copy is "
+                            "named after it (its name up to the first dot)."},
+                   {.name = "folder", .label = "Copies in", .type = Folder, .widget = Widget::Path, .required = true,
+                    .hint = "A folder of their own (named copies from an earlier run that aren't wanted any more are "
+                            "removed). Link it on to the blocks that read the pictures.",
+                    .path = PathKind::Folder, .initial = "edits\\named pictures", .result = "folder"}},
+        .outputs = {{"folder", Folder, "folder"}},
+        .family = Family::File,
+        .run = [](NodeRun& r) {
+            const PictureNaming n = name_pictures(r);
+            std::error_code ec;
+            if (!fs::is_directory(long_path(n.folder), ec)) {
+                r.change(ChangeKind::MakeFolder, n.folder);
+                fs::create_directories(long_path(n.folder), ec);
+            }
+            const fs::path list = n.folder / "matches.txt";
+            std::string old, lines;
+            if (std::ifstream in(long_path(list)); in) old.assign(std::istreambuf_iterator<char>(in), {});
+            size_t written = 0;
+            std::set<std::string> keep{"matches.txt"};
+            for (const auto& [name, picture] : n.named) {
+                const fs::path dest = n.folder / (name + ".png");
+                const std::string line = name + ".png  <-  " + picture.filename().string() + "\n";
+                lines += line;
+                keep.insert(lower_ascii(dest.filename().string()));
+                // Unchanged: the same picture last time, and the copy newer than it.
+                if (old.find(line) != std::string::npos && fs::exists(long_path(dest), ec) &&
+                    fs::last_write_time(long_path(dest), ec) >= fs::last_write_time(long_path(picture), ec))
+                    continue;
+                r.change(ChangeKind::Write, dest);
+                if (lower_ascii(picture.extension().string()) == ".png")
+                    fs::copy_file(long_path(picture), long_path(dest), fs::copy_options::overwrite_existing, ec);
+                else
+                    save_png(dest, load_image(picture));
+                if (ec) throw GraphError("can't write " + dest.string() + ": " + ec.message());
+                ++written;
+            }
+            for (const auto& e : fs::directory_iterator(long_path(n.folder), ec))  // copies no longer wanted
+                if (e.is_regular_file(ec) && !keep.contains(lower_ascii(e.path().filename().string())) &&
+                    lower_ascii(e.path().extension().string()) == ".png") {
+                    r.change(ChangeKind::Remove, e.path());
+                    fs::remove(e.path(), ec);
+                }
+            for (const std::string& w : n.without) lines += w + ".png  <-  (none: left as the game has it)\n";
+            for (const fs::path& u : n.unused) lines += "(not used)  <-  " + u.filename().string() + "\n";
+            if (lines != old) {
+                r.change(ChangeKind::Write, list);
+                std::ofstream(long_path(list), std::ios::binary) << lines;
+            }
+            r.output("folder", file_value(n.folder));
+            std::string message = std::to_string(n.named.size()) + " named (" + std::to_string(written) +
+                                  " written, the rest unchanged): see matches.txt";
+            if (!n.without.empty()) message += "; " + std::to_string(n.without.size()) + " without a picture";
+            if (!n.unused.empty()) message += "; " + std::to_string(n.unused.size()) + " pictures not used";
+            r.done(message, list);
+        },
+        .preview = [](NodeRun& r) {
+            r.output("folder", file_value(clean_path(r.text("folder"), r.run.options.base_dir)));
+        },
+    };
+}
+
+// ---- Pictures in frames (user, 2026-10-12): a picture of its own on each picture-frame mesh in the world ----
+// One block, not a chain repeated per frame: frames share atlases, and the engine can't gather a list's items back
+// into one file.
+NodeSpec frame_pictures_node() {
+    return {
+        .type = "FramePictures",
+        .title = "Pictures in frames",
+        .summary = "A picture of your own on each picture-frame mesh: each frame's canvas is filled with the picture "
+                   "named after the frame (sm34_543_00.png for sm34_543_00.mesh). Frames sharing one texture (an "
+                   "atlas of paintings) each get theirs in it; it and its streaming copy are written once. Connect "
+                   "to Package's texture.",
+        .inputs = {{.name = "frames", .label = "frame", .type = Path, .required = true, .multiple = true,
+                    .hint = "The frames' .mesh files, in your REtool folder (a Files in folder gives many at once)."},
+                   {.name = "pictures", .label = "Pictures", .type = Folder, .widget = Widget::Path,
+                    .hint = "The folder of pictures, each named after its frame's mesh (png, jpg or tga). A frame "
+                            "without one is left as it is.",
+                    .path = PathKind::Folder, .initial = "pictures"},
+                   {.name = "canvas", .label = "Canvas textures", .type = Text, .widget = Widget::Text,
+                    .required = true,
+                    .hint = "Which texture a frame's picture is on, by file name: * stands for anything, ; between "
+                            "several (e.g. sm34_543_a_albd*). Parts using other textures (the frame's wood) are left "
+                            "alone."}},
+        .outputs = {{.name = "textures", .type = Tex, .label = "textures", .list = true}},
+        .family = Family::Transform,
+        .run = [](NodeRun& r) {
+            const fs::path folder = r.resolve(r.text("pictures"));
+            const std::string canvas = r.text("canvas");
+            std::vector<FramePicture> frames;
+            std::string key = canvas + '\0' + r.run.options.converter.id(r.profile()) + "|frames1";
+            fs::path natives;
+            std::error_code ec;
+            for (const Value& v : r.values("frames")) {
+                const auto split = split_natives(v.path, r.profile().natives_root);
+                if (!split)
+                    throw GraphError(v.path.filename().string() + " isn't inside a " + r.profile().natives_root +
+                                     " folder: use the one in your REtool folder, where its material and textures are");
+                if (!natives.empty() && split->first != natives)
+                    throw GraphError("the frames are in two game folders: " + natives.string() + ", " +
+                                     split->first.string());
+                natives = split->first;
+                const std::string name = v.path.filename().string();
+                std::string low = name;
+                std::ranges::transform(low, low.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                const std::string stem = name.substr(0, low.find(".mesh"));
+                fs::path picture;
+                for (const char* ext : {".png", ".jpg", ".jpeg", ".tga"})
+                    if (fs::is_regular_file(long_path(folder / (stem + ext)), ec)) {
+                        picture = folder / (stem + ext);
+                        break;
+                    }
+                frames.push_back({split->second, picture});
+                key += '\0' + stamp(v.path) + '\0' + (picture.empty() ? std::string("none") : stamp(picture));
+            }
+            const fs::path& cache = r.run.options.cache_dir;
+            const fs::path out = cache.empty() ? r.temp_file("") : cache / ("frames_" + hash_hex(natives.string() + key));
+            const fs::path list = out / "files.txt";
+            std::vector<Value> files;
+            std::string message;
+            if (std::ifstream in(list); in) {  // made before from the same frames, pictures and patterns
+                for (std::string line; std::getline(in, line);)
+                    if (const size_t tab = line.find('\t'); tab != std::string::npos)
+                        files.push_back(file_value(out / line.substr(0, tab), line.substr(tab + 1)));
+                if (files.empty() || !std::ranges::all_of(files, [&](const Value& v) { return fs::is_regular_file(v.path, ec); }))
+                    files.clear();
+                else if (std::ifstream said(out / "report.txt"); std::getline(said, message))
+                    message = "unchanged: " + message;
+            }
+            if (files.empty()) {
+                fs::remove_all(out, ec);
+                std::vector<PackageFile> made;
+                try {
+                    made = pictures_in_frames(frames, [&](const std::string& f) { return any_pattern(f, canvas); },
+                                              natives, r.profile(), r.run.options.converter, out, &message);
+                } catch (const std::exception& e) {
+                    fs::remove_all(out, ec);
+                    throw GraphError(std::string(e.what()) + " (pictures from " + folder.string() + ")");
+                }
+                std::ofstream o(list);
+                for (const auto& f : made) {
+                    o << fs::relative(f.source, out).generic_string() << '\t' << f.game_path.generic_string() << '\n';
+                    files.push_back(file_value(f.source, f.game_path.generic_string()));
+                }
+                std::ofstream(out / "report.txt") << message;
+            }
+            r.output_list("textures", files, sound_items(files));
+            r.done(message);
+        },
+    };
+}
+
 NodeSpec export_movie_node() {
     return {
         .type = "ExportMovie",
@@ -2958,7 +3164,8 @@ const std::vector<NodeSpec>& node_specs() {
         mesh_mask_node(),
         mask_blend_node(), replace_photo_node(),
         preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), new_movie_node(), new_sound_node(), game_sound_node(), replace_sounds_node(),
-        lua_script_node(), cutscene_node(), new_character_node(), package_mod(),
+        lua_script_node(), cutscene_node(), new_character_node(), name_pictures_node(), frame_pictures_node(),
+        package_mod(),
         copy_file(), move_file(), rename_file(), delete_file(), make_folder(), run_program(),
         // Utilities.
         value(), text_node(), split(), if_node(), first_of_node(), file_exists_node(), text_matches_node(), not_node(),
@@ -3033,6 +3240,16 @@ const char* ai_note(std::string_view type) {
                          "with one part's colour textures recoloured, named by 'name' (as long as the folder it "
                          "replaces: 6 letters / digits). Link 'character files' into Package's 'other file'; a "
                          "Cutscene's actors use it as \"puppet\": \"<name>\". Needs the Game files folder."},
+        {"NamePictures", "Gives a folder of pictures (any names) the names other blocks look for: link the things that "
+                         "need one into 'one for each' (a Files in folder of textures or meshes, several lists in "
+                         "order), and its 'folder' on to Pictures in frames' Pictures or a Join path ({name}.png) for "
+                         "Replace photo's picture. A picture already named after one goes to it, the rest in name "
+                         "order; matches.txt says which went where."},
+        {"FramePictures", "A picture per picture-frame mesh in the world (paintings, photos on walls): 'frame' takes "
+                          "the frames' .mesh files (Files in folder over _chainsaw/environment/sm/..., inside the "
+                          "Game files); each gets pictures/<mesh name>.png on its canvas: its parts whose colour "
+                          "texture matches 'canvas' (e.g. sm34_543_a_albd*). Frames sharing an atlas are written "
+                          "together. Link 'textures' into Package's texture. Frames without a picture stay as they are."},
         {"Cutscene", "A real-time cutscene from a cutscene file (JSON: camera keys with t, position [x,y,z], rotation "
                      "[x,y,z,w], fov, ease smooth/linear/cut; subtitles; letterbox; fades; motions on the player or an "
                      "actor; actors: [{name, puppet (ashley, luis, or a New character's name), offset [right, up, "

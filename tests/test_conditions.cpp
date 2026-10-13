@@ -354,6 +354,7 @@ TEST_CASE("every example graph runs on the game files (set REMOD_GAME to the ext
     TempDir tmp;  // a copy: they write next to themselves (edits\, mods\, backups\)
     fs::copy(REMOD_EXAMPLES_DIR, tmp.path);  // files only: not mods etc. left by the user's own runs
     fs::copy(fs::path(REMOD_EXAMPLES_DIR) / "cutscenes", tmp.path / "cutscenes");  // the cutscene files examples use
+    fs::copy(fs::path(REMOD_EXAMPLES_DIR) / "pictures", tmp.path / "pictures");  // example 20's
     const auto converter = remod::make_converter({});
     int ran = 0;
     for (const auto& e : fs::directory_iterator(tmp.path)) {

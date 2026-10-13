@@ -119,7 +119,7 @@ authors).** `make_converter` picks one:
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
-  OverlayImage, ReplacePhoto, Preview, LuaScript (§10 M2), PackageMod; file steps CopyFile,
+  OverlayImage, ReplacePhoto, FramePictures, NamePictures, Preview, LuaScript (§10 M2), PackageMod; file steps CopyFile,
   MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
   CutText, RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
   utility.**
@@ -384,7 +384,12 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   - Feather blurred the mask both ways, putting a third of the picture on the frame's last pixel; now it softens
     inwards only.
   Where unsure (file_039's dark, stained bottom; mitred corners) the edge now leans into the photo, so a sliver of
-  the old photo can show there instead. Core `replace_photo`: the
+  the old photo can show there instead.
+  **A notch torn in the outline (2026-10-12, file_078):** the ring jumped inwards further than the path may move per
+  ray, no closed path existed and the area came out a dot at the middle (the photo left as it was). The path may now
+  jump as far as the ring does; no closed path at all fails the run ("set Frame width"). **Stains on colour photos:**
+  all of a colour photo's colour is "unexplained" by its toning line, so Stains carries the old picture (Leon's face);
+  example 20 sets it to 0. Not fixed in core. Core `replace_photo`: the
   picture covers the area (Fill), then the old photo's ageing at slider strengths. **None of them may carry the old
   picture over (user, 2026-10-02: Scratches overlaid the old image; the see-through look was everywhere):**
   - tone: brightness mean / spread, colourfulness, and the old toning as a line over brightness (sepia is browner in
@@ -412,6 +417,44 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   drag starts there (a click alone stays on auto). Larger moves the edge inwards; past the frame's middle the
   thumbnail says so with the limit (`preview_image`'s `why`, shown red under any block whose preview fails). Checked on the real texture (images saved and
   looked at, not screenshots). Thumbnails shrink one-mip textures (most RE4R UI textures) to 256 px.
+- **Pictures in frames (`FramePictures`, 2026-10-12; user: "the textures for the meshes ... as well", "a graph for
+  batch replacing unique frames with unique photos").** The world's paintings (`_chainsaw/environment/sm/sm3x/sm34`,
+  [game data]) mostly share **atlases**: one texture holds several paintings (`sm34_543_a`: five, one per frame mesh
+  `sm34_543` / 544 / 545 / 547 / 548); a few hold one (`512`, `513`, `517`, `579_c` Saddler's photo, `669`). Material
+  names don't say which part is the canvas (`sm34_543_00` calls it `sm34_539_B_Mat`); texture names do.
+  - Block: frames (multiple: the meshes, e.g. a Files in folder), Pictures (folder, default `pictures`: each named
+    after its frame's mesh, png / jpg / tga), Canvas textures (patterns). Output: a list of textures into Package.
+  - Core `pictures_in_frames` (`core/frames.*`): per frame, the parts whose colour texture matches are its canvas
+    (`mesh_textures`, its list sorted: it matches by sorted search); `uv_mask` of them (1 px grown), the picture fills
+    the mask's box (Fill, cropped) where the mask is, colour only (alpha is data). Each atlas written once with every
+    frame's picture, and its streaming copy (same UVs). Reports frames with a canvas but no picture (left as they are)
+    and canvases sharing pixels (the later wins: `672_01` / `672_02`). Nothing to write: fails naming the frames that
+    have a canvas, so pictures can be named after them.
+  - **Why one block, not a chain per frame:** the engine can't gather a list's items back into one file, and frames
+    share atlases. Cached like New character (`frames_<hash>`).
+  - ponytail: pictures go in upright (RE4R's atlases hold theirs upright); a canvas mapped turned or mirrored would show
+    it so.
+  - Example 20's canvas list: 31 atlases found by eye from a contact sheet of the 160 `sm34` colour textures: 78 frames
+    on them, listed exactly in its Files in folder (all 232 `sm34` meshes would have Name pictures hand pictures to
+    tables and chairs). Not covered: paintings in other `sm` groups, one painting on `sm34_628` no `sm34` frame uses.
+  - Checked: a test on the real files (two frames on one atlas, a frame without a picture, one without a canvas),
+    example 20 (71 textures: 10 photos, 31 atlases and 30 streaming copies, 3.5 min); filled atlases looked at as
+    images (each card in its own rectangle, upright). **Not checked in game.**
+- **Name pictures (`NamePictures`, 2026-10-12; user: "why do I need to name each of them. Can our graph programming
+  not iterate through a folder and rename them for us?").** A step (File family): Your pictures (a folder, any names:
+  png, jpg, tga, bmp), "one for each" (multiple: the things that take a picture, e.g. Files in folder lists; several
+  lists in link order), Copies in (result field, default `edits
+amed pictures`). Core `match_pictures`: a picture
+  named after one (up to the first '.', any case) goes to it; the rest to the others in order, pictures in natural
+  order (2 before 10). Writes `<name>.png` copies (PNGs copied, others converted) and `matches.txt` (each place and
+  its picture, places without one, pictures not used); copies already there from the same picture are kept, ones no
+  longer wanted removed. Your files aren't touched. Its folder goes on to Pictures in frames' Pictures, and to Replace
+  photo through a Join path holding `{name}.png` (a block feeding a repeated one may hold `{name}`).
+  - **A list takes its kind from its first link:** a Files in folder feeding Name pictures (a path) and Original
+    texture lists every matching file unless the texture link is first (example 20: the user's `.tex.tga` leftovers
+    were listed and skipped with warnings).
+  - Checked: a test of the order rule; example 20 with samples named `sample 01..88.png` (all placed in order; a
+    second run unchanged). **Not checked by eye** (the block in the app).
 - **Cut text (CutText, user 2026-10-01: "truncate text based on the character content"):** keeps the part of a text
   or path after / before / from / up to a marker, at its first or last occurrence (core `cut_text`), ignoring case and
   treating `\` and `/` alike; a missing marker fails the run. E.g. a texture path cut after `natives/STM/` gives the
@@ -660,10 +703,10 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
-  (`edits/`, `mods/`) beside them. Nineteen: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  (`edits/`, `mods/`) beside them. Twenty: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
   edit with streaming, conditions filter, channels, if / else, backup, movie test card, movie edited by hand
   (2026-10-06), a game sound replaced, a game movie played from a cutscene, a new movie added, a new sound added
-  (2026-10-07), a cutscene that starts by itself, a new character in a cutscene (2026-10-08). **All nineteen run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
+  (2026-10-07), a cutscene that starts by itself, a new character in a cutscene (2026-10-08), a picture in every photo and painting (2026-10-12: the 10 `cs_ui3210_*` textures holding a photo, found by a contact sheet of all 102, and the 78 frame meshes of `sm34` through Pictures in frames; one package; pictures in `examples/pictures/` named `sample 01..88.png`, given out by Name pictures; the paintings' cards show each frame's number). **All twenty run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
   example 13's edit stood in by the movie itself); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
@@ -2463,8 +2506,8 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
           longer than Wwise's (decoders ignore it). In C++ the writer could take the bit count from libvorbis.
           Not tried: more than 2 channels through the writer, and in game.
   - Frames: done as **Replace photo** (§4; RE4R's UI frames are opaque, no transparent opening). Open: a picture
-    printed at an angle or in perspective (four-corner warp) if one turns up; in-world paintings usually have their
-    own picture texture (Resize "Match size of" covers them).
+    printed at an angle or in perspective (four-corner warp) if one turns up. In-world paintings mostly share atlases:
+    **Pictures in frames** (§4, 2026-10-12).
   - Declined: **Install to Fluffy** (the user installs by hand). A template library: only one real workflow exists
     yet (the RE4R texture mod).
 - **Done (2026-10-02): more verticality in the left-to-right flow, narrower graphs** (was "Later: Tidy up should
