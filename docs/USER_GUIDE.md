@@ -471,7 +471,12 @@ The trigger's parts, all optional but at least one needed:
   with that text, shown while the trigger's other conditions hold (`flags`, say). Picking it closes his shop and plays
   the cutscene, every time by default. Not with `near` or `talk`. Up to four topics show at once. The mod then includes
   his menu's layout with four spare entries, made from your game files (the Game files folder must be set), so install
-  it through Fluffy: Test in game copies only the scripts and cutscenes. Not yet tried in game;
+  it through Fluffy: Test in game copies only the scripts and cutscenes. Works in game (2026-10-13).
+  With a character's kind instead (`"npc": "ch2_a1z0"` is Ashley; the menu's Characters near Leon shows others), the
+  topic is an entry in remod's own talk menu: the game's Interact icon shows over them while one is ready, Interact
+  opens the menu (Leon stands still meanwhile), up / down and confirm pick one, back closes it. `radius` (metres,
+  2.5 if left out) is how near Leon must be. Talk triggers on the same character are listed there too. Not yet tried
+  in game. Several topics show in their `order` (a number, lower first, 0 if left out), then by file name;
 - `flags`: story flag names that must be on; one starting with `!` must be off. Besides the game's, remod's own:
   `remod:<cutscene>` is on once that cutscene's trigger has started it in this save, e.g. `"remod:meet_luis"` (its
   file was `meet_luis.json`) to play only after it, `"!remod:meet_luis"` only before it;

@@ -130,6 +130,7 @@
     {
       "id": 5,
       "params": {
+        "missing": "stop",
         "movie": "",
         "same_length": "true",
         "sound": "true",
@@ -153,7 +154,7 @@
       },
       "pos": [
         0.0,
-        591.0
+        617.0
       ],
       "type": "PackageMod"
     }

@@ -1264,6 +1264,20 @@ local function watch_game()
     game_now = kind and { kind = kind, name = name } or nil
 end
 
+-- A trigger started by talking to a character: a talk trigger's `talk`, or a topic of a character other than the
+-- merchant (picked from remod's talk menu, below; its npc and radius are read the same way).
+local function talk_of(t)
+    if type(t.talk) == "table" then return t.talk end
+    if type(t.topic) == "table" and t.topic.npc ~= "merchant" then return t.topic end
+end
+local function is_merchant_topic(t) return type(t) == "table" and type(t.topic) == "table" and t.topic.npc == "merchant" end
+-- Topics in a menu: by their `order` (lower first, 0 if none), then by file name.
+local function topic_order(a, b)
+    local function o(c) return type(c.data.trigger.topic) == "table" and tonumber(c.data.trigger.topic.order) or 0 end
+    if o(a) ~= o(b) then return o(a) < o(b) end
+    return a.file < b.file
+end
+
 local function holds(t, where, pos, chars)
     if t.near then
         if not pos then return false end
@@ -1285,13 +1299,14 @@ local function holds(t, where, pos, chars)
         if on == nil or on == off then return false end
     end
     local who = nil  -- a talk trigger's character: the nearest of its kind in reach (its icon goes on it)
-    if type(t.talk) == "table" then
+    local talk = talk_of(t)
+    if talk then
         if not pos then return false end
-        local r, best = t.talk.radius or 2.5, nil
+        local r, best = talk.radius or 2.5, nil
         for _, ch in ipairs(chars or {}) do
             local dx, dy, dz = pos.x - ch.position.x, pos.y - ch.position.y, pos.z - ch.position.z
             local d = dx * dx + dy * dy + dz * dz
-            if ch.kind == t.talk.npc and d <= r * r and (not best or d < best) then best, who = d, ch end
+            if ch.kind == talk.npc and d <= r * r and (not best or d < best) then best, who = d, ch end
         end
         if not who then return false end
     end
@@ -1353,10 +1368,10 @@ local function check_triggers()
     local chars = nil
     for _, c in ipairs(cutscenes) do
         local t = c.data.trigger
-        if type(t) == "table" and type(t.topic) ~= "table" then  -- topics are picked from a menu (shop_update)
+        if type(t) == "table" and not is_merchant_topic(t) then  -- his topics are picked from his menu (shop_update)
             local s = trigger_state[c.file] or {}
             trigger_state[c.file] = s
-            if type(t.talk) == "table" and not chars then
+            if talk_of(t) and not chars then
                 local cok, list = pcall(game.characters)
                 chars = cok and list or {}
             end
@@ -1365,7 +1380,7 @@ local function check_triggers()
             s.held = now_holds
             if not now_holds then s.done = false end
             local ready = now_holds and not s.done and now() - s.since >= (t.delay or 0) and not fired_before(c, t)
-            if type(t.talk) == "table" then
+            if talk_of(t) then
                 if ready ~= (s.talk_ready or false) then
                     log.info("[remod_cutscene] " .. (c.data.name or c.file) .. ": talk prompt " .. (ready and "shown" or "gone"))
                 end
@@ -1448,6 +1463,94 @@ local function draw_prompt(talk, row)
     draw.text(text, x, y, 0xFFFFFFFF)
 end
 
+-- ---- remod's talk menu: a character's talk topics (trigger.topic with a character's kind, 2026-10-13) ----
+-- Interact on a character opens a list of what's ready on them: their topics, and talk triggers (labelled by their
+-- prompt); a lone talk trigger starts at once as before. The game has no list dialog a script can open (its
+-- GeneralDialogGuiBehavior is Yes / No, opened through callbacks [dump]), so remod draws it. Leon is held while it's
+-- open (the operation stop, as in a cutscene). Moved by the game's GUI commands (chainsaw.GuiInputManager MoveUp /
+-- MoveDown / Decide / Cancel) or keys (arrows, W / S, Enter, Space, Escape, Backspace); each pick or back logs which,
+-- since whether the game's commands come through outside its own menus isn't known. Closes when the game gets busy
+-- (its pause menu).
+local key_down = {}
+local function pressed(vk)  -- a key's press, once (call it every frame for that key)
+    local is = reframework:is_key_down(vk)
+    local was = key_down[vk]
+    key_down[vk] = is
+    return is and not was
+end
+local talk_menu = nil  -- { entries = {c...}, cursor, at, who, by = {source = true} }
+local MENU_KEYS = { Up = 0x26, W = 0x57, Down = 0x28, S = 0x53, Enter = 0x0D, Space = 0x20, Escape = 0x1B, Backspace = 0x08 }
+local function entry_label(c)
+    local t = c.data.trigger
+    return type(t.topic) == "table" and t.topic.label or (t.talk.prompt or "Talk")
+end
+local function talk_pressed(c)  -- Interact (or the stand-in key) on a character with this trigger ready
+    local who = trigger_state[c.file].talk_who
+    local id = who and who.body and who.body:get_address()
+    local entries = {}
+    for _, o in ipairs(cutscenes) do
+        local s = trigger_state[o.file]
+        local w = s and s.talk_ready and s.talk_who
+        if w and w.body and w.body:get_address() == id then table.insert(entries, o) end
+    end
+    if #entries == 0 then entries = { c } end
+    table.sort(entries, topic_order)
+    if #entries == 1 and type(entries[1].data.trigger.talk) == "table" then fire(entries[1]) return end
+    local labels = {}
+    for _, e in ipairs(entries) do table.insert(labels, entry_label(e)) end
+    log.info("[remod_cutscene] talk menu for " .. tostring(who and who.kind) .. ": " .. table.concat(labels, ", "))
+    talk_menu = { entries = entries, cursor = 1, at = now(), who = who, by = {} }
+end
+local function talk_menu_close(why)
+    local by = {}
+    for k in pairs(talk_menu.by) do table.insert(by, k) end
+    table.sort(by)
+    log.info("[remod_cutscene] talk menu closed: " .. why .. (#by > 0 and ("; moved by " .. table.concat(by, ", ")) or ""))
+    talk_menu = nil
+end
+local function talk_menu_frame()  -- each frame while it's open: input, then drawing
+    local m = talk_menu
+    local k = {}
+    for name, vk in pairs(MENU_KEYS) do k[name] = pressed(vk) end  -- every key every frame, so the edges are right
+    local bok, busy = pcall(game.busy)
+    if playing then talk_menu_close("a cutscene started") return end
+    if bok and busy then talk_menu_close("the game is busy (its menu, a movie)") return end
+    if now() - m.at < 0.25 then k = {} end  -- the Interact press that opened it
+    local gim = instance("chainsaw.GuiInputManager")
+    local function cmd(name)
+        if now() - m.at < 0.25 or not gim then return false end
+        local ok, on = pcall(gim.call, gim, "isTrigger(chainsaw.GuiCommandType, System.Boolean)",
+            enum("chainsaw.GuiCommandType", name), false)
+        return ok and on == true
+    end
+    local up = cmd("MoveUp") and "the game's up" or k.Up and "Up" or k.W and "W"
+    local down = cmd("MoveDown") and "the game's down" or k.Down and "Down" or k.S and "S"
+    local pick = cmd("Decide") and "the game's confirm" or k.Enter and "Enter" or k.Space and "Space"
+    local back = cmd("Cancel") and "the game's back" or k.Escape and "Escape" or k.Backspace and "Backspace"
+    local n = #m.entries
+    if up then m.cursor, m.by[up] = (m.cursor - 2) % n + 1, true end
+    if down then m.cursor, m.by[down] = m.cursor % n + 1, true end
+    if back then talk_menu_close("back (" .. back .. ")") return end
+    if pick then
+        local c = m.entries[m.cursor]
+        talk_menu_close("picked " .. entry_label(c) .. " (" .. pick .. ")")
+        fire(c)
+        return
+    end
+    -- Drawn right of centre, like the merchant's: a dark panel, the entry under the cursor lit.
+    local size = imgui.get_display_size()
+    local w, rh = 420, 38
+    local x, y = size.x * 0.6, size.y * 0.5 - (n * rh + 76) / 2
+    draw.filled_rect(x, y, w, n * rh + 76, 0xC8000000)
+    draw.text("Talk", x + 20, y + 12, 0xFF9AB4C8)
+    for i, c in ipairs(m.entries) do
+        local ry = y + 40 + (i - 1) * rh
+        if i == m.cursor then draw.filled_rect(x + 8, ry - 4, w - 16, rh - 4, 0x5060B0D8) end
+        draw.text(entry_label(c), x + 24, ry + 6, i == m.cursor and 0xFFFFFFFF or 0xFFB8B8B8)
+    end
+    draw.text("Up / Down    Confirm    Back", x + 20, y + 44 + n * rh, 0xFF8C8C8C)
+end
+
 -- ---- Talk triggers with the game's own interact icon (spikes/interact_icon_probe.md, runs 2-3, 2026-10-10) ----
 -- The game draws its icon for a key trigger (chainsaw.InteractTriggerKey) whose work asks each frame. We copy a key
 -- trigger of something loaded nearby (MemberwiseClone; a typewriter's "Use", the merchant's "Button", a file's
@@ -1505,7 +1608,7 @@ local function make_talk_icon(c, who)
     return { work = work, marker = marker, body = who.body:get_address() }
 end
 local function talk_icons()  -- each frame, in the game's update
-    if playing then return end
+    if playing or talk_menu then return end
     local taken = {}  -- characters that already have an icon this frame
     for _, c in ipairs(cutscenes) do
         local s = trigger_state[c.file]
@@ -1524,7 +1627,7 @@ local function talk_icons()  -- each frame, in the game's update
                 s.icon.work:call("requestDrawKeyIcon", enum("chainsaw.InteractTriggerKey.OverrideDisable", "None"))
                 if s.icon.work:call("checkInput") == true then
                     log.info("[remod_cutscene] " .. (c.data.name or c.file) .. ": Interact pressed")
-                    fire(c)
+                    talk_pressed(c)
                 end
             end)
             if not ok then  -- the drawn prompt and its key stand in for it from now on
@@ -1546,10 +1649,15 @@ local function shop_flow()
     local m = instance("chainsaw.InGameShopManager")
     return m and m:call("get_FlowController")
 end
-local function shop_menu()  -- the first menu's behaviour: searched for once a second until found, then kept
-    if shop.menu_at and now() - shop.menu_at < 1 and not shop.menu then return nil end
-    if not shop.menu then
-        shop.menu_at = now()
+local function shop_state(f)
+    return enum_name("chainsaw.gui.shop.InGameShopGuiState", f and f:call("get_CurrStateType"))
+end
+-- The first menu's behaviour: searched for while the shop is open until found, then kept until it closes. Each visit
+-- makes a new one (topic test, 2026-10-13: a menu kept from the first visit gave no entries on the second).
+local function shop_menu()
+    local state = shop_state(shop_flow())
+    if state == "Invalid" or state == "nil" then shop.menu, shop.logged = nil, nil return nil end  -- logged each visit
+    if not shop.menu then  -- ponytail: a scene search each frame until found (a frame or two); throttle if it lags
         local scene = sdk.find_type_definition("via.SceneManager"):get_method("get_CurrentScene"):call(nil)
         local arr = scene and scene:call("findComponents(System.Type)", sdk.typeof("chainsaw.InGameShopSelectGuiBehavior"))
         shop.menu = arr and arr:get_elements()[1]
@@ -1590,9 +1698,6 @@ local function match_parts(model, ours)  -- our entry's parts sized as the game 
     end
     return mine
 end
-local function shop_state(f)
-    return enum_name("chainsaw.gui.shop.InGameShopGuiState", f and f:call("get_CurrStateType"))
-end
 local function topics_ready()
     local where_ok, where = pcall(game.where)
     local out = {}
@@ -1603,6 +1708,7 @@ local function topics_ready()
             if holds(t, where_ok and where or nil) and not fired_before(c, t) then table.insert(out, c) end
         end
     end
+    table.sort(out, topic_order)
     return out
 end
 local function shop_update()  -- each frame, in the game's update
@@ -1687,18 +1793,11 @@ end
 re.on_pre_application_entry("UpdateBehavior", function()
     if not game then return end
     talk_icons()
+    if talk_menu then pcall(game.hold_player) end  -- Leon stays put while he's talking
     if game == GAMES.re4 then shop_update() end
 end)
 
 -- ---- Each frame: keys, motions, letterbox, fades, subtitles ----
-local key_down = {}
-local function pressed(vk)
-    local is = reframework:is_key_down(vk)
-    local was = key_down[vk]
-    key_down[vk] = is
-    return is and not was
-end
-
 local KEY_CODES = { F1 = 0x70, F2 = 0x71, F3 = 0x72, F4 = 0x73, F5 = 0x74, F6 = 0x75, F7 = 0x76, F8 = 0x77,
                     F9 = 0x78, F11 = 0x7A, F12 = 0x7B }
 for i = 0, 25 do KEY_CODES[string.char(65 + i)] = 0x41 + i end  -- A-Z, for talk triggers
@@ -1740,19 +1839,25 @@ re.on_frame(function()
     if game == GAMES.re4 then pcall(shop_frame, click) end
     pcall(watch_saves)
     if flag_watch.on then watch_flags() end
-    if not playing then  -- talk triggers ready: the game's icon and Interact (talk_icons); a key the file names also
-        -- starts it; where the icon couldn't be made, the drawn prompt and its key (T by default) stand in
-        local row = 0
+    if talk_menu then
+        local ok, err = pcall(talk_menu_frame)
+        if not ok and talk_menu then talk_menu_close("a problem: " .. tostring(err)) end
+    elseif not playing then  -- talk triggers ready: the game's icon and Interact (talk_icons); a key the file names
+        -- also starts it; where the icon couldn't be made, the drawn prompt and its key (T by default) stand in. One
+        -- prompt per character (its first ready trigger: Interact or the key opens its talk menu).
+        local row, taken = 0, {}
         for _, c in ipairs(cutscenes) do
             local s = trigger_state[c.file]
-            local talk = s and s.talk_ready and c.data.trigger.talk
-            if talk then
+            local talk = s and s.talk_ready and talk_of(c.data.trigger)
+            local id = talk and s.talk_who and s.talk_who.body and s.talk_who.body:get_address()
+            if talk and not taken[id or c.file] then
+                taken[id or c.file] = true
                 if s.icon_failed then
                     draw_prompt(talk, row)
                     row = row + 1
                 end
                 local key = (s.icon_failed or talk.key) and KEY_CODES[talk.key or "T"]
-                if key and pressed(key) then fire(c) end
+                if key and pressed(key) then talk_pressed(c) end
             end
         end
     end

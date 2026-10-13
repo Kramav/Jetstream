@@ -35,6 +35,7 @@
     {
       "id": 1,
       "params": {
+        "missing": "stop",
         "movie": "{game}/streaming/_chainsaw/movie/mv/mva000/mva000.mov.1.x64",
         "same_length": "true",
         "sound": "true",

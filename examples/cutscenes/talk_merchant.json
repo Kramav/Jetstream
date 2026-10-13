@@ -1,0 +1,34 @@
+{
+  "schema_version": 0,
+  "name": "Talk",
+  "length": 4.0,
+  "letterbox": 0.12,
+  "trigger": {
+    "topic": {
+      "npc": "merchant",
+      "label": "Talk",
+      "order": 1
+    }
+  },
+  "subtitles": [
+    {
+      "t": 0.5,
+      "until": 3.5,
+      "text": "Merchant: remod says hello, stranger."
+    }
+  ],
+  "fades": [
+    {
+      "t": 0.0,
+      "until": 0.5,
+      "from": 1.0,
+      "to": 0.0
+    },
+    {
+      "t": 3.5,
+      "until": 4.0,
+      "from": 0.0,
+      "to": 1.0
+    }
+  ]
+}

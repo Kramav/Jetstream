@@ -162,7 +162,7 @@
         "title": "Leon's shirt"
       },
       "pos": [
-        -146.0,
+        0.0,
         0.0
       ],
       "type": "PartTexture"
@@ -171,8 +171,8 @@
       "id": 2,
       "params": {},
       "pos": [
-        254.0,
-        52.0
+        261.0,
+        6.0
       ],
       "type": "Split"
     },
@@ -180,7 +180,7 @@
       "id": 3,
       "params": {},
       "pos": [
-        327.0,
+        498.0,
         0.0
       ],
       "type": "StreamingCopy"
@@ -191,8 +191,8 @@
         "png": ""
       },
       "pos": [
-        -146.0,
-        204.0
+        0.0,
+        202.0
       ],
       "type": "ExportImage"
     },
@@ -200,8 +200,8 @@
       "id": 5,
       "params": {},
       "pos": [
-        -374.0,
-        624.0
+        -73.0,
+        644.0
       ],
       "type": "Split"
     },
@@ -214,8 +214,8 @@
         "title": "Its alpha: data, not transparency"
       },
       "pos": [
-        -146.0,
-        904.0
+        0.0,
+        794.0
       ],
       "type": "PickChannel"
     },
@@ -225,8 +225,8 @@
         "size": "320"
       },
       "pos": [
-        332.0,
-        904.0
+        456.0,
+        794.0
       ],
       "type": "Preview"
     },
@@ -237,8 +237,8 @@
         "title": "Your picture (change me)"
       },
       "pos": [
-        -146.0,
-        345.0
+        0.0,
+        371.0
       ],
       "type": "ImportImage"
     },
@@ -253,8 +253,8 @@
         "width": "0"
       },
       "pos": [
-        -146.0,
-        616.0
+        0.0,
+        550.0
       ],
       "type": "ResizeImage"
     },
@@ -271,8 +271,8 @@
         "title": "Picture as colour, alpha kept"
       },
       "pos": [
-        332.0,
-        616.0
+        456.0,
+        550.0
       ],
       "type": "MergeChannels"
     },
@@ -284,8 +284,8 @@
         "in3": ""
       },
       "pos": [
-        -146.0,
-        1187.0
+        0.0,
+        999.0
       ],
       "type": "custom:convert_with_streaming"
     },
@@ -300,8 +300,8 @@
         "version": "1.0"
       },
       "pos": [
-        340.0,
-        1187.0
+        486.0,
+        999.0
       ],
       "type": "PackageMod"
     }

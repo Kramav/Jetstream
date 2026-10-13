@@ -166,11 +166,14 @@ bool any_pattern(const std::string& name, const std::string& patterns) {
     return false;
 }
 
-// An item's {name}: a texture's name before ".tex" (x.tex.143221013 -> x), else the name without its extension.
+// An item's {name}: a texture's name before ".tex" (x.tex.143221013 -> x), a game movie's before ".mov."
+// (mva000.mov.1.x64 -> mva000), else the name without its extension.
 std::string item_name(const fs::path& file) {
     std::string name = file.filename().string(), low = name;
     std::ranges::transform(low, low.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return is_tex_name(low) ? name.substr(0, low.rfind(".tex")) : file.stem().string();
+    if (is_tex_name(low)) return name.substr(0, low.rfind(".tex"));
+    if (const size_t mov = low.find(".mov."); mov != std::string::npos && mov > 0) return name.substr(0, mov);
+    return file.stem().string();
 }
 
 NodeSpec files_in_folder() {
@@ -1916,7 +1919,13 @@ NodeSpec replace_movie_node() {
                             "dialogue in every language too, silent. Each keeps the original's format so the sound "
                             "bank still fits. Off: the game's own sound plays over your movie. Other movies have no "
                             "packages: nothing to do.",
-                    .initial = "true", .advanced = true}},
+                    .initial = "true", .advanced = true},
+                   {.name = "missing", .label = "If your video isn't there", .type = Text, .widget = Widget::Choice,
+                    .required = true,
+                    .hint = "Stop the run, or leave this movie as the game has it (nothing comes out). For a folder of "
+                            "videos named after the movies: Files in folder over the game's movies, Your video "
+                            "videos\\{name}.mp4.",
+                    .initial = "stop", .options = {{"stop", "Stop the run"}, {"skip", "Leave the movie as it is"}}}},
         .outputs = {{"movie", Path, "new movie"},
                     {"fhd", Path, "1080p copy (if any)"},
                     {.name = "sound", .type = Path, .label = "sound packages (if any)", .list = true}},
@@ -1927,8 +1936,15 @@ NodeSpec replace_movie_node() {
             const fs::path video = video_text.empty() ? fs::path() : r.resolve(video_text);
             const bool same_length = r.text("same_length") != "false";
             std::error_code ec;
-            if (!video.empty() && !fs::is_regular_file(long_path(video), ec))
-                throw GraphError("video not found: " + video.string());
+            if (!video.empty() && !fs::is_regular_file(long_path(video), ec)) {
+                if (r.text("missing") != "skip") throw GraphError("video not found: " + video.string());
+                const std::string why = "left as the game has it (no " + video.filename().string() + ")";
+                r.nothing("movie", why);
+                r.nothing("fhd", why);
+                r.output_list("sound", {}, {});
+                r.done(why);
+                return;
+            }
             const fs::path& cache = r.run.options.cache_dir;
             std::vector<fs::path> made;
             std::string message;
@@ -3220,7 +3236,9 @@ const char* ai_note(std::string_view type) {
                          "test card naming the movie, to find out where it plays. Keep 'Same length' on: the game's "
                          "sound bank is timed to the original. mva000 / 201 / 202 get new sound packages (the video's "
                          "sound, the rest silent) unless 'Replace its sound' is off. Encoding a 4K movie takes a "
-                         "while; an unchanged run reuses it."},
+                         "while; an unchanged run reuses it. Many at once: Files in folder over "
+                         "{game}/streaming/_chainsaw/movie (*.mov.1.x64, subfolders) into 'movie', Your video "
+                         "videos\\{name}.mp4 and 'missing' skip (a movie without a video stays as it is)."},
         {"NewMovie", "Adds a video as a NEW game movie (nothing of the game's replaced), named by 'name' (6 lowercase "
                      "letters / digits / _, not starting mv; each new movie its own). Link 'new movie files' into "
                      "Package's 'other file'. It plays from a Cutscene whose file lists it under \"movies\": "
@@ -3255,9 +3273,10 @@ const char* ai_note(std::string_view type) {
                      "actor; actors: [{name, puppet (ashley, luis, or a New character's name), offset [right, up, "
                      "forward] from the player or position + rotation from the game, hides: \"partner\"}]; "
                      "movies: [{t, id}] with a game movie's name (mva000) or a New movie block's name; sounds: "
-                     "[{t, id}] with a New sound block's name; trigger.topic {npc: \"merchant\", label} makes it an "
-                     "entry in the merchant's menu, shown while trigger.flags hold, and adds his menu's layout to the "
-                     "files: needs the Game files folder). Link "
+                     "[{t, id}] with a New sound block's name; trigger.topic {npc, label, order} makes it an entry "
+                     "in a menu, shown while trigger.flags hold, lower order first: npc \"merchant\" in his menu "
+                     "(adds his menu's layout to the files: needs the Game files folder), or a character's kind "
+                     "(e.g. ch2_a1z0 Ashley) in remod's talk menu, opened by Interact on them). Link "
                      "'cutscene files' into Package's 'other file'. A run checks the file and names every problem. "
                      "Camera positions come from the game: the user records them in game (F10) and uses Use recording; "
                      "never invent coordinates."},

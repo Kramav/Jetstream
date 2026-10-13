@@ -191,19 +191,26 @@ std::vector<std::string> check_cutscene(const std::string& json_text) {
                 if (k.is_object() && k.contains("radius") && !(k["radius"].is_number() && k["radius"].get<double>() > 0))
                     p.push_back("trigger.talk.radius must be a number of metres above 0");
             }
-            // A talk topic: an entry in the merchant's menu (shown while its flags hold); picking it starts the cutscene.
+            // A talk topic: an entry in the merchant's menu, or in remod's talk menu on another character (Interact on
+            // them), shown while its flags hold; picking it starts the cutscene. Entries go by order, then file name.
             if (t.contains("topic")) {
                 any = true;
                 const json& k = t["topic"];
-                if (!k.is_object() || k.value("npc", std::string()) != "merchant")
-                    p.push_back("trigger.topic.npc must be \"merchant\" (an entry in his menu)");
+                if (!k.is_object() || !plain_name(k.value("npc", std::string())))
+                    p.push_back("trigger.topic.npc must be \"merchant\" (an entry in his menu) or a character's kind, as "
+                                "the menu's Characters near Leon shows (e.g. \"ch2_a1z0\")");
                 const std::string label = k.is_object() && k.contains("label") && k["label"].is_string()
                                               ? k["label"].get<std::string>() : "";
                 if (label.empty() || label.size() > 40)
                     p.push_back("trigger.topic.label must be the entry's text, up to 40 characters (e.g. \"Ask about Ashley\")");
+                if (k.is_object() && k.contains("order") && !k["order"].is_number())
+                    p.push_back("trigger.topic.order must be a number (lower comes first; 0 if left out)");
+                if (k.is_object() && k.contains("radius") &&
+                    !(k["radius"].is_number() && k["radius"].get<double>() > 0 && k.value("npc", std::string()) != "merchant"))
+                    p.push_back("trigger.topic.radius must be a number of metres above 0, and only for a character "
+                                "(the merchant's menu opens the game's way)");
                 if (t.contains("near") || t.contains("talk"))
-                    p.push_back("trigger.topic is picked from the merchant's menu: take out near and talk (each is its own "
-                                "way to start)");
+                    p.push_back("trigger.topic is picked from a menu: take out near and talk (each is its own way to start)");
             }
             // Story flags: each must be on ("Name") or off ("!Name"), by the game's names (the menu's Story flags), or
             // remod's own, "remod:<cutscene file's name>": on once that cutscene's trigger started it in this save.

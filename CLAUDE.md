@@ -203,7 +203,11 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
     Far (below 55%, or the Far button): every block a 116x40-unit symbol drawn at two units, title inside, key value
     under it, ports without labels spread down the edges; a Split is a dot. Going Far, blocks first fold
     (`folding`, 0.25 s) then become symbols. Placement and Tidy up use the blocks' Near sizes even while Far, so the
-    full layout stays clear. Near button: zoom 100% on the selected block. Deviation: selecting a block does **not**
+    full layout stays clear. **Lines keep their side of every block at both zooms (user, 2026-10-13: a line went under a
+    block Near and over it Far):** Far routes around the blocks' Near boxes from their Near pins' anchors (`near_box`,
+    `near_anchor`; the same route, usually a cache hit), then core `onto_pins` slides each route's first and last runs
+    onto the symbol's pins. Until every block has been drawn Near (a graph opened Far, a block added Far), Far routes by
+    the symbols as before. Not checked by eye. Near button: zoom 100% on the selected block. Deviation: selecting a block does **not**
     re-centre the view (clicking into a field would move it); only the step list and the minimap do.
   - **Use layout progress path:** links in their kind's colour, styled by their source's state (done solid, into a
     waiting step dashes moving, failed red dots, not reached faint dashes); blocks tinted and outlined by state (Far the
@@ -719,10 +723,10 @@ amed pictures`). Core `match_pictures`: a picture
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
-  (`edits/`, `mods/`) beside them. Twenty: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  (`edits/`, `mods/`) beside them. Twenty-one: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
   edit with streaming, conditions filter, channels, if / else, backup, movie test card, movie edited by hand
   (2026-10-06), a game sound replaced, a game movie played from a cutscene, a new movie added, a new sound added
-  (2026-10-07), a cutscene that starts by itself, a new character in a cutscene (2026-10-08), a picture in every photo and painting (2026-10-12: the 10 `cs_ui3210_*` textures holding a photo, found by a contact sheet of all 102, and the 78 frame meshes of `sm34` through Pictures in frames; one package; pictures in `examples/pictures/` named `sample 01..88.png`, given out by Name pictures; the paintings' cards show each frame's number). **All twenty run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
+  (2026-10-07), a cutscene that starts by itself, a new character in a cutscene (2026-10-08), a picture in every photo and painting (2026-10-12: the 10 `cs_ui3210_*` textures holding a photo, found by a contact sheet of all 102, and the 78 frame meshes of `sm34` through Pictures in frames; one package; pictures in `examples/pictures/` named `sample 01..88.png`, given out by Name pictures; the paintings' cards show each frame's number), talk topics (2026-10-13: two in the merchant's menu, two in the talk menu on Ashley, the second of each after the merchant's Talk). **All twenty-one run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
   example 13's edit stood in by the movie itself); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
@@ -1556,11 +1560,33 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
           ours: `close()`, then the cutscene fires once the shop state is Invalid and `busy()` is false (10 s limit,
           logged). `check_triggers` skips topic triggers.
         - Open (the test): does the cursor skip hidden spares; flags per save slot showing / hiding topics.
-    - **Wanted (user, 2026-10-10): interact with Ashley on command, with a menu, or any NPC: "build a framework for
-      that".** Not started until asked. Starting point [inferred]: the talk icon already works on any character
-      (talk triggers, the game's interact icon); Interact on it would open a remod menu listing that NPC's topics, in
-      the same topic format as the merchant's (`topic.npc` = a character kind). The menu itself: a game GUI to reuse
-      (`chainsaw.DialogManager`, `GeneralDialogGuiBehavior`) or our own, to survey then.
+        - **Run 1 (user + log, 2026-10-13):** Talk showed alone, sized right, no icon; picking it closed the shop and
+          played its cutscene; `topic_talk` was on and saved to slot 18. **The next visit, and the first after loading the
+          earlier save, showed the four spares as "Buy"** (the layout's own label) and no topics: the runtime kept the menu behaviour it found first, and each visit
+          makes a new one. Now it's dropped whenever the shop is closed (state Invalid) and searched for again while open;
+          the topics line is logged each visit.
+        - **Run 2 (user + log, 2026-10-13): works.** Slot 5 (no remod flags): Talk only; slot 18 (`topic_talk` saved):
+          both topics. They fill the spares in file-name order (`topic_ashley` before `topic_talk`). Not seen this run:
+          picking Ask about Ashley, whether the cursor skips the hidden spares.
+        - **Order (2026-10-13; user):** `topic.order` (a number, lower first, 0 if left out), then file name; the
+          merchant's spares and the talk menu both (`topic_order`).
+    - **Talk menu on any character (user, 2026-10-10: "build a framework for that"; built 2026-10-13, not run in game:
+      `spikes/talk_menu_test.md`, example 21).**
+      - **The game's dialogs [dump]:** `chainsaw.DialogManager` plays messages by Guid (conversations, radio), no
+        choices; `chainsaw.GeneralDialogGuiBehavior` is Yes / No (`DialogDecidedResult` Invalid / Yes / No; OpenParam
+        `Messages`, `CallbackOnDecided` Action, opened through an `IGuiOpener` Lua can't implement). No list dialog a
+        script can open, so **remod draws the menu** (`draw.*`, like the stand-in prompt).
+      - **Format:** `trigger.topic.npc` = "merchant" or a character's kind (`ch2_a1z0` Ashley); `radius` (2.5 m, a
+        character only). `check_cutscene` takes them.
+      - **Runtime:** a character topic is ready like a talk trigger (`talk_of`: the same nearest-character rule), so it
+        gets the game's Interact icon (first ready trigger per character). Interact (or the stand-in key) calls
+        `talk_pressed`: the ready talk triggers and topics on that character, in topic order; a lone talk trigger fires
+        at once as before, else the menu opens (logged with its entries). While open: Leon held (`hold_player` in
+        UpdateBehavior), no icons; input after 0.25 s (the opening press): `GuiInputManager.isTrigger` MoveUp / MoveDown /
+        Decide / Cancel or keys (arrows, W / S, Enter, Space, Escape, Backspace); closing logs why and which sources
+        moved it (whether the game's commands come through outside its GUIs is unknown). Closes when the game is busy
+        (its pause menu) or a cutscene starts. Drawn right of centre: "Talk", the entries, the cursor's lit.
+      - Not done: a mouse (the game hides its cursor), the character's name as the title (only its kind is known).
     - **The game's movies and cutscenes [dump]:** `MovieMediator` / `TimelineEventMediator` `isPlaying()`,
       `getWork(ID)` (`MovieWork.get_IsPlaying`; `TimelineEventWork._EventPhase`, `EventPhase.Playing`); ids are
       `chainsaw.MovieDefine.ID` / `TimelineEventDefine.ID` names (`csa000`...). Play time: `share.GameClock`

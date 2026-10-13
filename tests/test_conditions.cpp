@@ -363,6 +363,9 @@ TEST_CASE("every example graph runs on the game files (set REMOD_GAME to the ext
         if (e.path().filename() == "13_edit_a_movie_by_hand.json")  // your edit, rendered: here the movie itself
             fs::copy_file(fs::path(game) / "streaming/_chainsaw/movie/mv/mva402/mva402.mov.1.x64",
                           (fs::create_directories(tmp.path / "edits"), tmp.path / "edits/mva402_edited.mp4"));
+        if (e.path().filename() == "22_replace_movies_from_a_folder.json")  // one video, named after its movie
+            fs::copy_file(fs::path(game) / "streaming/_chainsaw/movie/mv/mva402/mva402.mov.1.x64",
+                          (fs::create_directories(tmp.path / "videos"), tmp.path / "videos/mva402.mp4"));
         const Graph g = remod::load_graph(e.path());
         CHECK(g.validate().empty());
         const remod::RunOptions opt{.profile = re4r(), .converter = *converter, .base_dir = tmp.path,

@@ -100,7 +100,7 @@
         "title": "The texture to change"
       },
       "pos": [
-        -107.0,
+        0.0,
         0.0
       ],
       "type": "LoadTex"
@@ -109,7 +109,7 @@
       "id": 2,
       "params": {},
       "pos": [
-        293.0,
+        400.0,
         37.0
       ],
       "type": "Split"
@@ -120,7 +120,7 @@
         "png": ""
       },
       "pos": [
-        366.0,
+        473.0,
         0.0
       ],
       "type": "ExportImage"
@@ -132,7 +132,7 @@
         "title": "Your logo (change me)"
       },
       "pos": [
-        366.0,
+        473.0,
         140.0
       ],
       "type": "ImportImage"
@@ -148,8 +148,8 @@
         "y": "740"
       },
       "pos": [
-        -107.0,
-        361.0
+        0.0,
+        323.0
       ],
       "type": "OverlayImage"
     },
@@ -157,8 +157,8 @@
       "id": 6,
       "params": {},
       "pos": [
-        -186.0,
-        305.0
+        405.0,
+        388.0
       ],
       "type": "Split"
     },
@@ -166,8 +166,8 @@
       "id": 7,
       "params": {},
       "pos": [
-        38.0,
-        361.0
+        478.0,
+        323.0
       ],
       "type": "SaveTex"
     },
@@ -182,8 +182,8 @@
         "version": "1.0"
       },
       "pos": [
-        524.0,
-        361.0
+        0.0,
+        548.0
       ],
       "type": "PackageMod"
     }

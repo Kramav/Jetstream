@@ -572,13 +572,19 @@ TEST_CASE("Triggers: checked, and Make a trigger here's file put into a cutscene
     CHECK(with(R"({"talk": {"npc": "x", "key": "F123456789012"}})").size() == 1);   // refused, never thrown
     // remod's own flags: read as "remod:name", set by a cutscene's sets_flags ("!" turns one off).
     CHECK(with(R"({"flags": ["remod:meet_luis", "!remod:chose_to_help"]})").empty());
-    // Talk topics: an entry in the merchant's menu.
-    CHECK(with(R"({"topic": {"npc": "merchant", "label": "Ask about Ashley"}, "flags": ["remod:topic_talk"]})").empty());
-    CHECK(with(R"({"topic": {"npc": "ch2_a1z0", "label": ""}, "talk": {"npc": "x"}})") ==
+    // Talk topics: an entry in the merchant's menu, or in remod's talk menu on a character.
+    CHECK(with(R"({"topic": {"npc": "merchant", "label": "Ask about Ashley", "order": 2}, "flags": ["remod:topic_talk"]})").empty());
+    CHECK(with(R"({"topic": {"npc": "ch2_a1z0", "label": "How are you?", "order": -1, "radius": 3}})").empty());
+    CHECK(with(R"({"topic": {"npc": "a b", "label": "", "order": "1", "radius": 0}, "talk": {"npc": "x"}})") ==
           std::vector<std::string>{
-              "trigger.topic.npc must be \"merchant\" (an entry in his menu)",
+              "trigger.topic.npc must be \"merchant\" (an entry in his menu) or a character's kind, as the menu's "
+              "Characters near Leon shows (e.g. \"ch2_a1z0\")",
               "trigger.topic.label must be the entry's text, up to 40 characters (e.g. \"Ask about Ashley\")",
-              "trigger.topic is picked from the merchant's menu: take out near and talk (each is its own way to start)"});
+              "trigger.topic.order must be a number (lower comes first; 0 if left out)",
+              "trigger.topic.radius must be a number of metres above 0, and only for a character (the merchant's menu "
+              "opens the game's way)",
+              "trigger.topic is picked from a menu: take out near and talk (each is its own way to start)"});
+    CHECK(with(R"({"topic": {"npc": "merchant", "label": "Talk", "radius": 2}})").size() == 1);
     {
         test::TempDir t;
         test::write_file(t.path / "a.json", R"({"trigger": {"topic": {"npc": "merchant", "label": "Talk"}}})");

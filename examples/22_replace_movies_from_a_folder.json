@@ -1,0 +1,94 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "files"
+      ],
+      "to": [
+        2,
+        "movie"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "movie"
+      ],
+      "to": [
+        3,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "fhd"
+      ],
+      "to": [
+        3,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "sound"
+      ],
+      "to": [
+        3,
+        "file"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "folder": "{game}/streaming/_chainsaw/movie",
+        "on_fail": "stop",
+        "pattern": "*.mov.1.x64",
+        "subfolders": "true",
+        "title": "Every movie in the game"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "FilesInFolder"
+    },
+    {
+      "id": 2,
+      "params": {
+        "missing": "skip",
+        "movie": "",
+        "same_length": "true",
+        "sound": "true",
+        "video": "videos/{name}.mp4"
+      },
+      "pos": [
+        498.0,
+        0.0
+      ],
+      "type": "ReplaceMovie"
+    },
+    {
+      "id": 3,
+      "params": {
+        "author": "",
+        "description": "The game's movies replaced by your videos",
+        "name": "My movies",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        0.0,
+        390.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
+}

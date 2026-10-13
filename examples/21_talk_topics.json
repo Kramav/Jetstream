@@ -1,0 +1,116 @@
+{
+  "links": [
+    {
+      "from": [
+        2,
+        "files"
+      ],
+      "to": [
+        1,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "files"
+      ],
+      "to": [
+        1,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "files"
+      ],
+      "to": [
+        1,
+        "file"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "files"
+      ],
+      "to": [
+        1,
+        "file"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "author": "",
+        "description": "Talk to the merchant (his menu) and to Ashley (Interact on her): topics that play cutscenes",
+        "name": "Talk topics",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        498.0,
+        0.0
+      ],
+      "type": "PackageMod"
+    },
+    {
+      "id": 2,
+      "params": {
+        "cutscene": "cutscenes/talk_merchant.json",
+        "editor": "",
+        "title": "Talk"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "Cutscene"
+    },
+    {
+      "id": 3,
+      "params": {
+        "cutscene": "cutscenes/talk_merchant_ashley.json",
+        "editor": "",
+        "title": "Ask about Ashley"
+      },
+      "pos": [
+        0.0,
+        204.0
+      ],
+      "type": "Cutscene"
+    },
+    {
+      "id": 4,
+      "params": {
+        "cutscene": "cutscenes/talk_ashley.json",
+        "editor": "",
+        "title": "How are you holding up?"
+      },
+      "pos": [
+        0.0,
+        369.0
+      ],
+      "type": "Cutscene"
+    },
+    {
+      "id": 5,
+      "params": {
+        "cutscene": "cutscenes/talk_ashley_merchant.json",
+        "editor": "",
+        "title": "About the merchant"
+      },
+      "pos": [
+        0.0,
+        425.0
+      ],
+      "type": "Cutscene"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
+}

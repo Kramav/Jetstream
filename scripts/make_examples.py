@@ -448,6 +448,50 @@ g.link(paint, 'textures', pkg, 'tex')
 g.save('20_a_picture_in_every_photo_and_painting.json')
 
 
+# 21. Talk topics: entries in the merchant's menu (after Buy, Sell, Upgrade, Trade), and in remod's talk menu on Ashley
+# (Interact on her). Each topic is a cutscene picked from the menu; flags decide which show: the second of each only
+# once the merchant's Talk has played in this save (remod:talk_merchant, the flag named after that file). Topics show
+# in their order (lower first). The merchant's needs his menu's layout, made from the game files and installed by
+# Fluffy. Ashley's kind is ch2_a1z0 (REFramework's menu > remod cutscenes > Characters near Leon shows others).
+TOPICS = [('talk_merchant', 'merchant', 'Talk', 1, None, 'Merchant: remod says hello, stranger.'),
+          ('talk_merchant_ashley', 'merchant', 'Ask about Ashley', 2, 'remod:talk_merchant',
+           'Merchant: shown once you have talked to me in this save.'),
+          ('talk_ashley', 'ch2_a1z0', 'How are you holding up?', 1, None, 'Ashley: remod says hello, Leon.'),
+          ('talk_ashley_merchant', 'ch2_a1z0', 'About the merchant', 2, 'remod:talk_merchant',
+           'Ashley: shown once you have talked to the merchant in this save.')]
+g = Graph()
+pkg = package(g, 'Talk topics', 'Talk to the merchant (his menu) and to Ashley (Interact on her): topics that play cutscenes')
+for name, npc, label, order, flag, line in TOPICS:
+    cutscene = g.add('Cutscene', label, cutscene='cutscenes/%s.json' % name)
+    g.link(cutscene, 'files', pkg, 'file')
+    trigger = {'topic': {'npc': npc, 'label': label, 'order': order}}
+    if flag:
+        trigger['flags'] = [flag]
+    with open(os.path.join(OUT, 'cutscenes', name + '.json'), 'w', encoding='utf-8', newline='\n') as f:
+        json.dump({'schema_version': 0, 'name': label, 'length': 4.0, 'letterbox': 0.12, 'trigger': trigger,
+                   'subtitles': [{'t': 0.5, 'until': 3.5, 'text': line}],
+                   'fades': [{'t': 0.0, 'until': 0.5, 'from': 1.0, 'to': 0.0},
+                             {'t': 3.5, 'until': 4.0, 'from': 0.0, 'to': 1.0}]}, f, indent=2)
+    print('wrote cutscenes/%s.json' % name)
+g.save('21_talk_topics.json')
+
+# 22. Any of the game's movies replaced by your videos, in one go: put a video in videos\ named after the movie it
+# replaces (mva000.mp4; the ids are in README.md) and run. Files in folder lists every movie the game has; Replace
+# movie runs for each, takes videos\<its id>.mp4, and leaves a movie without one as the game has it. A replaced movie
+# gets its 1080p copy and its sound packages too, if it has them. Videos are cut, or hold their last frame, to the
+# movie's length (Same length).
+g = Graph()
+movies = g.add('FilesInFolder', 'Every movie in the game', folder='{game}/streaming/_chainsaw/movie',
+               pattern='*.mov.1.x64', subfolders='true')
+movie = g.add('ReplaceMovie', video='videos/{name}.mp4', missing='skip')
+pkg = package(g, 'My movies', "The game's movies replaced by your videos")
+g.link(movies, 'files', movie, 'movie')
+g.link(movie, 'movie', pkg, 'file')
+g.link(movie, 'fhd', pkg, 'file')
+g.link(movie, 'sound', pkg, 'file')
+g.save('22_replace_movies_from_a_folder.json')
+
+
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):
     rows = b''.join(b'\0' + b''.join(bytes(pixel(x, y)) for x in range(w)) for y in range(h))
