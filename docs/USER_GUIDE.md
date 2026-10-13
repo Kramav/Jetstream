@@ -10,11 +10,13 @@ package the mod). Then you run the graph and edit the images when it asks.
 - The game's files extracted with **REtool** (the `re_chunk_000.pak` extraction). remod reads textures and meshes
   from there and never changes them.
 - **Fluffy Mod Manager**, to install the mods it builds.
+- For scripts and cutscenes only: **REFramework** installed in the game (players of such mods need it too).
 - An image editor (GIMP, Photoshop, Krita, Paint.NET…).
 - Optional: **Noesis** with the **fmt_RE_MESH** plugin. remod converts textures and reads RE4 meshes itself, so you
   only need Noesis if you prefer its texture conversion or want 3D views of other games' meshes.
 
-Nothing is installed. Unzip the folder somewhere with a **short path**, e.g. `C:\remod`. Windows' 260-character path
+Nothing is installed. Unzip the folder somewhere you can write to (not `Program Files`: the examples write their
+results beside them) with a **short path**, e.g. `C:\remod`. Windows' 260-character path
 limit is a known problem for RE Engine mods, so keep your mod and output folders short too (e.g. `E:\mods`).
 Keep the `profiles` folder next to `remod-app.exe`.
 
@@ -24,10 +26,14 @@ Keep the `profiles` folder next to `remod-app.exe`.
 2. In the **Pipeline** panel on the right, set **Game files** to your REtool folder, e.g.
    `...\REtool\RE4\re_chunk_000\natives\stm`. The **Browser** on the left then lists the game's textures and
    meshes. Reading the folder takes a few seconds each time the app starts.
+   For scripts and cutscenes, also set **Game folder** to where the game is installed (the folder with `re4.exe`).
 3. Open one of the **examples** (the `...` button next to *Graph file*, in the `examples` folder: a folder per
    game). RE4R's (`examples\re4r`) are over twenty ready-made mods, from a hand-edited document to recolouring part of
    a character; `examples\re4r\README.md` says what each shows.
    Their game paths start with `{game}`, your Game files folder. They're read-only: **Save** asks where to put your copy.
+
+This release supports **Resident Evil 4 (2023)**. A few things haven't been tried in the game yet: see
+[Known limits](#known-limits).
 
 The app remembers its settings in `%APPDATA%\remod`. It keeps converted textures in `%LOCALAPPDATA%\remod\run_cache`
 (at most 512 MB) so a run that changed nothing writes nothing.
@@ -225,10 +231,6 @@ Feed the same movie to Export movie and Replace movie from one Value through a S
 runs; picking another movie exports again and the edit step waits again. Example `13_edit_a_movie_by_hand` is the
 whole chain, for `mva402`.
 
-Not known yet (needs a test in game): whether a movie of another length plays fully (turn off **Same length** to
-try); whether the game plays a replaced file's sound (the logos) and a replaced sound package's (example 12's
-beep); which movie plays where.
-
 ### Adding a movie of your own
 
 **New movie** adds your video to the game as a movie of its own, beside the game's: none of the game's movies is
@@ -289,8 +291,6 @@ Example `14_replace_a_sound` replaces the intro's English narration with `beep.w
 `remod sounds --file <bank or package>` lists the ids and `remod sound-wav --file <...> --id <id> --out x.wav` saves
 one.
 
-Not known yet (needs a test in game): whether a sound of another length plays fully.
-
 ## Scripts (REFramework)
 
 A mod can include a Lua script for [REFramework](https://github.com/praydog/REFramework), which players then need
@@ -329,13 +329,11 @@ DeveloperTools > ObjectExplorer > **Dump SDK**. It writes `il2cpp_dump.json` to 
 end; the file is still written). The first check reads it, which takes a while; later ones use a copy of what's needed.
 From the command line: `remod check-lua --file my_mod.lua`.
 
-Not known yet (needs a test): whether Fluffy installs a mod's `reframework` files into the game's folder.
-
 ## Cutscenes (REFramework)
 
 A **Cutscene** block makes a real-time cutscene: the game itself renders it, while remod's cutscene script moves the
 camera, plays Leon's animations, and draws subtitles, letterbox bars and fades. A cutscene is a small JSON file you can
-edit by hand (the format: `schemas\cutscene.v0.example.json`). Players need REFramework.
+edit by hand (see the ones in `examples\re4r\cutscenes`). Players need REFramework.
 
 1. Add a **Cutscene** block and type a file name for it, e.g. `cutscenes\door.json` (it needn't exist yet).
 2. **Record the camera shots in game:** click the block's **Test in game** (with no cutscene file yet, it installs
@@ -360,7 +358,7 @@ Each actor has:
   (`remod_cutscenes\spot.json`);
 - optionally `"hides": "partner"`, which hides the real partner while it plays.
 
-The actors appear when the cutscene starts and are put away when it ends (seen in game, 2026-10-08).
+The actors appear when the cutscene starts and are put away when it ends.
 
 **Where cutscene files are.** A cutscene file lives wherever you put it: the Cutscene block's **Cutscene file** names
 it (the examples' are in `examples\re4r\cutscenes`). **Test in game** copies it into the game, to
@@ -430,8 +428,7 @@ Nothing of the game's is replaced. Its **Name** must be as long as the game's fo
 or digits, e.g. `rmc002`). Link its files into Package; a cutscene's actor then uses it as its puppet. Example 19 does
 both.
 
-The cutscene probe (`spikes\cutscene_probe.md`, run 2026-10-07) showed the camera holds still and Leon's animations
-play from the script in RE4R. While a cutscene plays, Leon stands still and the HUD is hidden; both come back when it
+While a cutscene plays, Leon stands still and the HUD is hidden; both come back when it
 ends or you stop it. While it plays the game ignores your controls for Leon (as it does while its own menus are
 open), so he stops by himself even if you're running when it starts.
 
@@ -481,12 +478,11 @@ The trigger's parts, all optional but at least one needed:
   with that text, shown while the trigger's other conditions hold (`flags`, say). Picking it closes his shop and plays
   the cutscene, every time by default. Not with `near` or `talk`. Up to four topics show at once. The mod then includes
   his menu's layout with four spare entries, made from your game files (the Game files folder must be set), so install
-  it through Fluffy: Test in game copies only the scripts and cutscenes. Works in game (2026-10-13).
+  it through Fluffy: Test in game copies only the scripts and cutscenes.
   With a character's kind instead (`"npc": "ch2_a1z0"` is Ashley; the menu's Characters near Leon shows others), the
   topic is an entry in remod's own talk menu: the game's Interact icon shows over them while one is ready, Interact
   opens the menu (Leon stands still meanwhile), up / down and confirm pick one, back closes it. `radius` (metres,
-  2.5 if left out) is how near Leon must be. Talk triggers on the same character are listed there too. Not yet tried
-  in game. Several topics show in their `order` (a number, lower first, 0 if left out), then by file name;
+  2.5 if left out) is how near Leon must be. Talk triggers on the same character are listed there too. Several topics show in their `order` (a number, lower first, 0 if left out), then by file name;
 - `flags`: story flag names that must be on; one starting with `!` must be off. Besides the game's, remod's own:
   `remod:<cutscene>` is on once that cutscene's trigger has started it in this save, e.g. `"remod:meet_luis"` (its
   file was `meet_luis.json`) to play only after it, `"!remod:meet_luis"` only before it;
@@ -507,7 +503,7 @@ by its key or the menu (testing) sets nothing.
 - **remod's flags**: per cutscene of this mod **After it** / **Until it**, and each `sets_flags` name **Must be on** /
   **Must be off**.
 
-The game's cutscene flags are `EventTimelineStart00_038` / `EventTimelineEnd00_038` for csa038 (seen); for other ids
+The game's cutscene flags are `EventTimelineStart00_038` / `EventTimelineEnd00_038` for csa038; for other ids
 the menu offers only a flag the game really has, and says when it finds none.
 
 **remod's flags follow your saves** like the game's own: saving to a slot keeps them with that slot, and loading a
@@ -617,6 +613,17 @@ claude mcp add remod -- "C:\remod\remod.exe" mcp
   `Noesis\plugins\python`. The Pipeline panel finds Noesis and says whether the plugin is installed.
 - **Textures:** tick **Convert textures with Noesis**. Noesis writes mip levels down to 8×8 whatever the original
   has, so the tool warns you. The built-in converter keeps the original's mip levels exactly.
+
+## Known limits
+
+Not tried in the game yet, so treat these as experimental:
+
+- **Movies:** whether a movie of another length plays fully (**Same length** off); whether the game plays a replaced
+  file's sound (the logos) and a replaced sound package's (example 12's beep); which movie plays where.
+- **Sounds:** whether a sound of another length plays fully (**Same length** off).
+- **Scripts:** whether uninstalling a mod in Fluffy removes its `reframework` files.
+- **Cutscenes:** the talk menu on a character (example 21's Ashley topics); a character of your own in a cutscene
+  (example 19); event animation files; a cutscene from your own recording; `after` a game movie.
 
 ## Troubleshooting
 

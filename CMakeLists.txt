@@ -27,8 +27,13 @@ set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP ON)
 include(InstallRequiredSystemLibraries)
 list(FILTER CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS INCLUDE REGEX "vcomp")
 install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION .)
-install(DIRECTORY profiles blocks runtime DESTINATION .)
-install(DIRECTORY examples DESTINATION .)
+# RE4R release: its profile and examples only. Runs leave game-derived files in examples\<game>\mods and edits
+# (git-ignored): never shipped.
+install(FILES profiles/re4r.toml DESTINATION profiles)
+install(DIRECTORY blocks runtime DESTINATION .)
+install(FILES examples/README.md DESTINATION examples)
+install(DIRECTORY examples/re4r DESTINATION examples PATTERN mods EXCLUDE PATTERN edits EXCLUDE)
+install(FILES LICENSE DESTINATION .)
 install(FILES docs/USER_GUIDE.md DESTINATION . RENAME README.md)
 # Wwise's Vorbis codebooks (CLAUDE.md §10, story movies' sound), and every shipped component's licence.
 install(FILES third_party/ww2ogg/packed_codebooks_aoTuV_603.bin DESTINATION data)

@@ -16,6 +16,7 @@ namespace remod {
 struct McpOptions {
     std::filesystem::path noesis;      // convert textures with Noesis (the user's choice), else the built-in converter
     std::filesystem::path game_files;  // the extracted game files: never changed (Guard)
+    std::filesystem::path game_dir;    // the game's folder (Test in game, the log): the user's setting
     // Asks the user whether to allow `changes` (one per line, with why each needs approval). True = allowed.
     std::function<bool(const std::string& changes)> approve;
 };

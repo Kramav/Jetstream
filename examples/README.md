@@ -12,3 +12,5 @@ files, as far as remod supports the game; the numbers match across games.
 
 RE7, RE8 and RE9 have none yet: their files haven't been extracted to pick real ones from. Each folder's `README.md`
 says what each example shows. The examples are read-only: Save makes a copy elsewhere.
+
+The release zip supports RE4 (2023) only, so it carries `re4r` alone; the other folders are in the source repository.

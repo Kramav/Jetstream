@@ -256,12 +256,16 @@ TEST_CASE("Test in game copies a script into REFramework's autorun, Remove takes
     CHECK_THROWS_WITH(remod::install_in_game(files, game), ContainsSubstring("dinput8.dll"));
     write_file(game / "dinput8.dll", "");
     write_file(game / "reframework/autorun/someone_elses.lua", "c");
+    write_file(game / "reframework/autorun/my_mod.lua", "theirs");  // someone else's script of the same name
     remod::install_in_game(files, game);
     CHECK(read_file(game / "reframework/autorun/my_mod.lua") == "a");
+    CHECK(read_file(game / "reframework/autorun/my_mod.lua.bak") == "theirs");
     CHECK(read_file(game / "reframework/autorun/my_mod/util.lua") == "b");
+    CHECK_FALSE(fs::exists(game / "reframework/autorun/my_mod/util.lua.bak"));
     write_file(tmp.path / "s/my_mod.lua", "a2");
     remod::install_in_game(files, game);  // again, over the last copy
     CHECK(read_file(game / "reframework/autorun/my_mod.lua") == "a2");
+    CHECK(read_file(game / "reframework/autorun/my_mod.lua.bak") == "theirs");  // the first one kept
     CHECK_THROWS_AS(remod::install_in_game({{tmp.path / "s/my_mod.lua", "_chainsaw/x.lua"}}, game), PackageError);
 
     remod::remove_from_game(files, game);

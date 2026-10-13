@@ -98,3 +98,50 @@ TEST_CASE("mcp: view_image hands the AI the picture") {
     CHECK_THAT(seen["content"][1]["text"].get<std::string>(), ContainsSubstring("4x2"));
     CHECK(call(server, "view_image", {{"id", 99}})["isError"] == true);
 }
+
+TEST_CASE("mcp: scripts read, written, checked, installed in game and their errors read back") {
+    test::TempDir tmp;
+    const fs::path g = tmp.path / "g", game = tmp.path / "game";
+    fs::create_directories(g);
+    test::write_file(game / "dinput8.dll", "");  // REFramework is there
+    test::write_file(game / "re2_fw_config.txt", "ScriptRunner_LogToDisk=true\n");
+    std::vector<std::string> asked;
+    bool answer = false;
+    remod::McpServer server({.game_dir = game, .approve = [&](const std::string& what) {
+                                 asked.push_back(what);
+                                 return answer;
+                             }});
+    call(server, "new_graph");
+    call(server, "save_graph", {{"file", (g / "g.json").generic_string()}});
+
+    // Inside the graph's folder: written without asking; a second write keeps the first as .bak.
+    CHECK(call(server, "write_script", {{"file", "my_mod.lua"}, {"text", "print(1)"}})["isError"] == false);
+    CHECK(call(server, "write_script", {{"file", "my_mod.lua"}, {"text", "print(2)"}})["isError"] == false);
+    CHECK(test::read_file(g / "my_mod.lua.bak") == "print(1)");
+    CHECK_THAT(text_of(call(server, "read_script", {{"file", "my_mod.lua"}})), ContainsSubstring("print(2)"));
+    CHECK(asked.empty());
+    CHECK(call(server, "write_script", {{"file", "notes.txt"}, {"text", "x"}})["isError"] == true);
+
+    // Outside it: the user decides, whatever the AI sends.
+    const fs::path outside = tmp.path / "elsewhere.lua";
+    CHECK(call(server, "write_script", {{"file", outside.generic_string()}, {"text", "x"}, {"approve", true}})["isError"] == true);
+    CHECK(asked.size() == 1);
+    CHECK_FALSE(fs::exists(outside));
+
+    CHECK_THAT(text_of(call(server, "check_cutscene", {{"text", "{}"}})), ContainsSubstring("problems\":[\""));
+
+    // Test in game: asked first; declined changes nothing.
+    CHECK(call(server, "install_in_game", {{"file", "my_mod.lua"}})["isError"] == true);
+    CHECK_FALSE(fs::exists(game / "reframework/autorun/my_mod.lua"));
+    answer = true;
+    CHECK(call(server, "install_in_game", {{"file", "my_mod.lua"}})["isError"] == false);
+    CHECK(fs::exists(game / "reframework/autorun/my_mod.lua"));
+
+    test::write_file(game / "re2_framework_log.txt",
+                     "[2026-10-13 10:00:00.000] [REFramework] [error] my_mod.lua:1: attempt to call a nil value\n");
+    const std::string errors = text_of(call(server, "game_errors", {{"file", "my_mod.lua"}}));
+    CHECK_THAT(errors, ContainsSubstring("\"line\":1") && ContainsSubstring("nil value"));
+
+    CHECK(call(server, "remove_from_game", {{"file", "my_mod.lua"}})["isError"] == false);
+    CHECK_FALSE(fs::exists(game / "reframework/autorun/my_mod.lua"));
+}

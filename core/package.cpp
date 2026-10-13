@@ -276,6 +276,16 @@ void install_in_game(const std::vector<PackageFile>& files, const fs::path& game
     for (const auto& f : files) {
         const fs::path dest = in_game(f, game_dir);
         fs::create_directories(dest.parent_path());
+        // A different file already there may be someone else's script of the same name: the first one replaced is
+        // kept as <name>.bak (later installs over our own copy don't touch it). REFramework runs only *.lua.
+        fs::path bak = dest;
+        bak += ".bak";
+        const auto bytes = [](const fs::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        };
+        if (fs::is_regular_file(dest) && !fs::exists(bak) && bytes(dest) != bytes(f.source))
+            fs::copy_file(dest, bak);
         fs::copy_file(f.source, dest, fs::copy_options::overwrite_existing);
     }
 }

@@ -1,5 +1,8 @@
 # Third-party notices
 
+remod itself is licensed under the GNU General Public License v3.0 (`LICENSE`). The components below keep their own
+licences (MIT, BSD, zlib), all compatible with it.
+
 remod includes the following third-party software and data. Their full licence texts are in the `licenses`
 folder of the release zip (sources: each vcpkg port's `copyright` file, and `third_party/` in the repository).
 

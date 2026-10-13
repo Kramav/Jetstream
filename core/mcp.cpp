@@ -11,18 +11,18 @@ namespace {
 using nlohmann::json;
 
 constexpr const char* kInstructions =
-    "remod builds RE Engine game mods (Resident Evil 4 remake textures) as node graphs. Work like this: "
-    "list_blocks first (each type's 'ai' note says when to use it); new_graph or open_graph; add_block, set_field, "
+    "remod builds RE Engine game mods (textures, meshes, movies, sounds, REFramework scripts and cutscenes) as node graphs, one game per graph (profile: re2r, re3r, re4r, re7, re8, re9). Work like this: "
+    "list_blocks first (only blocks the open graph's game supports are listed; each type's 'ai' note says when to use it; some games support only textures); new_graph (pick the game with profile) or open_graph; add_block, set_field, "
     "link; validate until it reports no problems; preview and view_image to check results before running; "
     "save_graph (a run needs the graph saved: its folder is where it may write freely); run. "
     "A run asks the user, in a dialog of its own, to allow removing files, writing outside the graph's folder and "
     "starting programs; you cannot approve anything. A run that pauses at an Edit image or Edit video step waits for "
     "the user: tell them which file to edit and call edit_done only after they say they have finished. Game files are never "
-    "changed. Texture paths: files named .tex.143221013 under an extracted natives/STM folder. "
+    "changed. Texture paths: files named .tex.<version> (the game's profile says which) under the extracted natives folder; use {game} for the Game files folder. "
     "REFramework Lua scripts (a Lua script block, linked into Package's 'other file'): REFramework runs each .lua directly "
     "in reframework/autorun (modules it requires go in a folder named like it, beside it); read the REFramework book "
     "(https://cursey.github.io/reframework-book/) for its API instead of guessing; find every game name with "
-    "search_game_code, never from memory; check_script until it reports no problems. Behaviour in game can only be "
+    "search_game_code, never from memory; check_script until it reports no problems; check_cutscene for cutscene files. read_script before changing a file, write_script to save it (the user can always edit it by hand too). To test, install_in_game (the user approves), then after they play read game_errors. Behaviour in game can only be "
     "tested by the user.";
 
 struct Tool {
@@ -43,7 +43,7 @@ json text(const char* about) { return {{"type", "string"}, {"description", about
 const std::vector<Tool>& tools() {
     static const std::vector<Tool> all{
         {"list_blocks", "types", "Every block type: inputs, outputs, fields, and an 'ai' note on when to use it.", object()},
-        {"new_graph", "new", "Start an empty graph.", object({{"profile", text("Game profile, default re4r.")}})},
+        {"new_graph", "new", "Start an empty graph.", object({{"profile", text("Game profile id: re2r, re3r, re4r (default), re7, re8 or re9.")}})},
         {"open_graph", "open", "Open a graph file.", object({{"file", text("The .json graph file.")}}, {"file"})},
         {"save_graph", "save", "Save the graph (to the file opened or saved last, or to `file`).",
          object({{"file", text("Where to save it, a .json file.")}})},
@@ -93,6 +93,27 @@ const std::vector<Tool>& tools() {
          "Fix every problem before telling the user it's ready.",
          object({{"file", text("The .lua file (relative: to the graph's folder).")},
                  {"text", text("Or the script's text.")}})},
+        {"read_script", "read_script", "Read a Lua script or cutscene file (always read it before changing it: keep the user's edits).",
+         object({{"file", text("The file (relative: to the graph's folder).")}}, {"file"})},
+        {"write_script", "write_script",
+         "Write a .lua script or .json cutscene file whole; the old one is kept as <file>.bak. Inside the graph's "
+         "folder it's fine; elsewhere the user is asked in a dialog. Then check_script / check_cutscene.",
+         object({{"file", text("The file (relative: to the graph's folder).")}, {"text", text("Its whole text.")}},
+                {"file", "text"})},
+        {"check_cutscene", "check_cutscene",
+         "Check a cutscene file (format v0, schemas/cutscene.v0.example.json): every problem named. Fix them all.",
+         object({{"file", text("The .json file (relative: to the graph's folder).")}, {"text", text("Or its text.")}})},
+        {"install_in_game", "install",
+         "Test in game: copy a Lua script (.lua, with its modules folder) or a cutscene (.json, with the runtime) into the "
+         "game folder. The user is asked in a dialog; you can't approve. Then the user presses Reset Scripts in "
+         "REFramework's menu.",
+         object({{"file", text("The .lua or cutscene .json (relative: to the graph's folder).")}}, {"file"})},
+        {"remove_from_game", "uninstall", "Undo install_in_game for that file. The user is asked in a dialog.",
+         object({{"file", text("The same file.")}}, {"file"})},
+        {"game_errors", "game_errors",
+         "What REFramework's log says went wrong in a script since the game started (needs 'Log Lua Errors to Disk'). "
+         "Fix them, install again, and have the user retest. Never claim a script works in game: only the user can see.",
+         object({{"file", text("The script's .lua file.")}}, {"file"})},
         {"edit_done", "edit_done",
          "Mark an Edit image or Edit video step done ONLY after the user says they finished that edit.",
          object({{"id", number("The Edit image block.")},
@@ -135,6 +156,7 @@ std::string McpServer::handle(const std::string& message) {
     auto with_options = [&](json request) {  // the user's settings, never the AI's
         if (!options_.noesis.empty()) request["noesis"] = options_.noesis.string();
         if (!options_.game_files.empty()) request["game_files"] = options_.game_files.string();
+        if (!options_.game_dir.empty()) request["game_dir"] = options_.game_dir.string();
         return request;
     };
     try {
@@ -183,9 +205,32 @@ std::string McpServer::handle(const std::string& message) {
                     reply["result"] = result(
                         api_.call(with_options({{"op", "run"}, {"plan", plan["plan"]}, {"approve", allowed}}).dump()));
                 }
+            } else if (name == "write_script") {
+                args["op"] = tool->op;
+                std::string answer = api_.call(args.dump());
+                if (json::parse(answer).value("needs_approval", false)) {
+                    if (options_.approve && options_.approve("write " + args.value("file", "") + " (outside the graph's folder)")) {
+                        args["approve"] = true;
+                        answer = api_.call(args.dump());
+                    } else {
+                        answer = json{{"ok", false}, {"error", "the user declined; nothing was written"}}.dump();
+                    }
+                }
+                reply["result"] = result(answer);
+            } else if (name == "install_in_game" || name == "remove_from_game") {
+                const std::string what = (name == "install_in_game" ? "copy into" : "remove from") +
+                                         std::string(" the game folder ") + options_.game_dir.string() + ": " +
+                                         args.value("file", "");
+                if (!(options_.approve && options_.approve(what))) {
+                    reply["result"] = result(json{{"ok", false}, {"error", "the user declined; nothing was changed"}}.dump());
+                } else {
+                    args["op"] = tool->op;
+                    args["approve"] = true;
+                    reply["result"] = result(api_.call(with_options(args).dump()));
+                }
             } else {
                 args["op"] = tool->op;
-                if (std::string_view(tool->op) == "plan") args = with_options(args);
+                if (std::string_view(tool->op) == "plan" || std::string_view(tool->op) == "game_errors") args = with_options(args);
                 reply["result"] = result(api_.call(args.dump()), std::string_view(tool->op) == "image");
             }
         } else {

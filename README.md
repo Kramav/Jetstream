@@ -81,8 +81,10 @@ ctest --test-dir build-release --output-on-failure
 cd build-release; cpack
 ```
 
-This makes `build-release\remod-<version>-win64.zip`: `remod-app.exe`, `remod.exe`, `profiles\`,
-`examples\texture_mod.json` and the user guide as `README.md`. The first configure takes a while: vcpkg builds the
+This makes `build-release\remod-<version>-win64.zip` for RE4 (2023): `remod-app.exe`, `remod.exe`, `vcomp140.dll`,
+`profiles\re4r.toml`, `blocks\`, `runtime\`, `examples\re4r\` (without run outputs), `data\` (Wwise codebooks),
+`LICENSE` (GPL-3.0), `THIRD_PARTY_NOTICES.md`, `licenses\` and the user guide as `README.md`. Build it from a clean
+clone: anything else in the tree's install folders would ship. The first configure takes a while: vcpkg builds the
 libraries again for the static triplet. The version is `project(... VERSION)` in `CMakeLists.txt`; it shows in the
 app's title and the CLI's usage.
 

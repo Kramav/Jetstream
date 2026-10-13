@@ -132,6 +132,7 @@ int run(int argc, char** argv) {
         const remod::Settings settings = remod::load_settings(remod::default_settings_path());
         remod::McpServer server({.noesis = settings.noesis_textures ? settings.noesis_path : std::string(),
                                  .game_files = settings.game_files_dir,
+                                 .game_dir = settings.game_dir,
                                  .approve = [](const std::string& changes) {
                                      const std::string text =
                                          "An AI working through remod wants to run a graph that makes these changes:"

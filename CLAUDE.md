@@ -55,8 +55,10 @@ Source labels used below: **[official]** = official/authoritative docs, **[guide
   `cmake --preset default` → `cmake --build build` → `ctest --test-dir build --output-on-failure`
 - **Release zip (2026-10-03):** preset `release` (`build-release`, triplet `x64-windows-static`, static CRT), then
   `cpack` in it → `remod-<version>-win64.zip`: both exes, `vcomp140.dll` (DirectXTex's OpenMP has no static form;
-  shipped app-local), `profiles\`, `examples\texture_mod.json` (= `schemas/graph.v0.example.json`; the other example
-  graphs hold personal paths, not shipped), `docs/USER_GUIDE.md` as `README.md`, **licences (2026-10-06):**
+  shipped app-local), **RE4R only (user, 2026-10-13):** `profiles\re4r.toml`, `blocks\`, `runtime\`,
+  `examples\README.md` and `examples\re4r\` **without `mods\` / `edits\`** (run outputs: game-derived files, never
+  shipped; build the zip from a clean clone), `LICENSE` (**GPL-3.0**, user, 2026-10-13), `docs/USER_GUIDE.md` as
+  `README.md`, **licences (2026-10-06):**
   `THIRD_PARTY_NOTICES.md` (every shipped component, its licence and source) and `licenses\<port>.txt` (each vcpkg
   port's `copyright` file, plus `third_party/ww2ogg/COPYING`); a new shipped dependency gets a row there and a port
   in the CMake `foreach`. `data\packed_codebooks_aoTuV_603.bin` (§6). Version: `project(VERSION)`, shown
@@ -1258,7 +1260,8 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
        **Built 2026-10-07:** `LuaScript` (pure; list output "script files": the `.lua`, then `<stem>\`'s files by
        path), core `script_files`, `is_game_root_path` (`reframework/...` -> `<Mod>/reframework/...` in
        `package_path`), `build_package` appends "Needs REFramework." to the description, `install_in_game` (refuses a
-       folder without `dinput8.dll`; overwrites) / `remove_from_game` (the files, then emptied folders, never
+       folder without `dinput8.dll`; overwrites, keeping the first different file it replaces as `<name>.bak`, 2026-10-13:
+       it may be someone else's script) / `remove_from_game` (the files, then emptied folders, never
        autorun), Settings `game_dir` (the Pipeline panel's "Game folder"), the block's two buttons (Use layout; status
        line says to press Reset Scripts). No manifest.json is written (§9's open question; `ManifestV0` still
        unused). Not done: Test in game through the API / MCP (step 3 needs it, with the guard). Checked: tests
@@ -2737,6 +2740,11 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
          - `run` plans, and if anything needs approval, asks `McpOptions::approve` with the list of changes.
          - The CLI's answer is a Windows dialog (Yes / No, No by default, topmost), which the AI can't click.
          - Then it runs against that plan, with approve = the answer.
+       - **Scripting tools (2026-10-13):** read_script, write_script (.lua / .json only; the old file kept as
+         `.bak`; outside the graph's folder the dialog asks), check_cutscene, install_in_game / remove_from_game (a
+         `.lua` with its modules, or a cutscene with the runtime; the dialog asks every time), game_errors
+         (REFramework's log since the game started). API ops read_script, write_script, check_cutscene, install,
+         uninstall, game_errors; `McpOptions::game_dir` = the settings' Game folder. Instructions game-neutral.
        - The user's settings decide Noesis-or-built-in and the game files folder; the library's custom nodes are
          block types for `remod mcp` and `remod api` too.
        - Checked: tests (handshake, no approve anywhere, a run declined then allowed by the answer only, an AI's own

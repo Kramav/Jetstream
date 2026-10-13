@@ -1,6 +1,8 @@
 #include "api.hpp"
 
+#include "cutscene.hpp"
 #include "game_code.hpp"
+#include "package.hpp"
 
 #include "image.hpp"
 #include "settings.hpp"
@@ -182,6 +184,15 @@ std::string ApiSession::call(const std::string& request) {
     try {
         const json r = json::parse(request);
         const std::string op = r.at("op").get<std::string>();
+        const auto script_path = [&](const json& v) {  // relative: to the graph's folder
+            fs::path p = path_of(v);
+            if (p.is_relative() && !file_.empty()) p = fs::absolute(file_).parent_path() / p;
+            return p;
+        };
+        const auto game_dir_of = [&](const json& q) {
+            if (!q.contains("game_dir")) throw GraphError("no game folder set: the user sets it in remod's Pipeline panel");
+            return path_of(q.at("game_dir"));
+        };
         if (op == "types") {
             reply["types"] = types(game_of(graph_));
         } else if (op == "new") {
@@ -368,6 +379,65 @@ std::string ApiSession::call(const std::string& request) {
             for (const ScriptProblem& p : check_lua(source, name, code))
                 problems.push_back({{"line", p.line}, {"message", p.message}});
             reply["problems"] = problems;
+        } else if (op == "read_script") {
+            const fs::path file = script_path(r.at("file"));
+            std::ifstream in(file, std::ios::binary);
+            if (!in) throw GraphError("can't read " + file.string());
+            reply["text"] = std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        } else if (op == "write_script") {
+            // A script or cutscene file, the old one kept as <file>.bak (the user's hand edits are never lost).
+            // Inside the graph's folder it's fine; anywhere else the user approves.
+            const fs::path file = fs::absolute(script_path(r.at("file")));
+            if (file.extension() != ".lua" && file.extension() != ".json")
+                throw GraphError("write_script writes .lua scripts and .json cutscene files only");
+            const fs::path base = file_.empty() ? fs::path() : fs::absolute(file_).parent_path();
+            const fs::path rel = base.empty() ? fs::path("..") : file.lexically_normal().lexically_relative(base.lexically_normal());
+            if ((rel.empty() || *rel.begin() == "..") && !r.value("approve", false)) {
+                reply = {{"ok", false}, {"needs_approval", true},
+                         {"error", "writing outside the graph's folder needs the user's approval"}};
+                return reply.dump();
+            }
+            fs::create_directories(file.parent_path());
+            if (fs::exists(file)) fs::copy_file(file, fs::path(file) += ".bak", fs::copy_options::overwrite_existing);
+            std::ofstream out(file, std::ios::binary);
+            out << r.at("text").get<std::string>();
+            if (!out) throw GraphError("can't write " + file.string());
+            reply["file"] = file.string();
+        } else if (op == "check_cutscene") {
+            // A cutscene file's problems (format v0), for an AI writing one by hand.
+            std::string source;
+            if (r.contains("file")) {
+                std::ifstream in(script_path(r.at("file")), std::ios::binary);
+                if (!in) throw GraphError("can't read " + script_path(r.at("file")).string());
+                source.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            } else if (r.contains("text")) {
+                source = r.at("text").get<std::string>();
+            } else {
+                throw GraphError("check_cutscene needs a file or a text");
+            }
+            reply["problems"] = check_cutscene(source);
+        } else if (op == "game_errors") {
+            // What REFramework's log says went wrong in a script (read-only).
+            const fs::path game = game_dir_of(r);
+            const fs::path log = framework_log(game);
+            reply["log_lua_errors"] = lua_errors_logged(game);
+            if (!reply["log_lua_errors"].get<bool>())
+                reply["note"] = "REFramework isn't logging Lua errors: the user turns on ScriptRunner's \"Log Lua Errors to Disk\", then runs the game again";
+            json errors = json::array();
+            if (fs::exists(log))
+                for (const GameError& e : script_errors_in_log(log, 0, script_path(r.at("file"))))
+                    errors.push_back({{"line", e.line}, {"message", e.message}, {"count", e.count}});
+            reply["errors"] = errors;
+        } else if (op == "install" || op == "uninstall") {
+            // Test in game: a script's (or a cutscene's) files into the game folder. Approval is the user's.
+            const fs::path game = game_dir_of(r);
+            const fs::path file = script_path(r.at("file"));
+            const auto files = file.extension() == ".lua" ? script_files(file) : cutscene_files(file);
+            if (!r.value("approve", false)) throw GraphError("the user must approve changes to the game folder");
+            if (op == "install") install_in_game(files, game);
+            else remove_from_game(files, game);
+            reply["files"] = files.size();
+            if (op == "install") reply["note"] = "installed; the user presses Reset Scripts in REFramework's menu";
         } else if (op == "validate") {
             reply["problems"] = graph_.validate();
         } else if (op == "preview") {
