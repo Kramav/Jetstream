@@ -39,6 +39,44 @@ void set_block_title(Graph& g, int node, const std::string& title) {
         n->params["title"] = title.substr(first, last - first + 1);
 }
 
+std::vector<HiddenRow> hideable_rows(const Graph& g, const Node& n) {
+    std::vector<HiddenRow> rows;
+    const NodeSpec* spec = find_spec(n.type);
+    if (!spec) return rows;
+    for (const bool advanced : {false, true})
+        for (size_t i = 0; i < spec->inputs.size(); ++i) {
+            const InputSpec& in = spec->inputs[i];
+            if (in.advanced != advanced || in.required || in.multiple || in.result || !g.links_into(n.id, in.name).empty())
+                continue;
+            const auto v = n.params.find(in.name);
+            if (at_initial(in, v == n.params.end() ? std::string(in.initial) : v->second)) rows.push_back({false, i});
+        }
+    for (size_t i = 1; i < spec->outputs.size(); ++i) {
+        const PortSpec& out = spec->outputs[i];
+        const bool destination = std::ranges::any_of(  // a destination's row (Save to, an output folder): a field
+            spec->inputs, [&](const InputSpec& in) { return in.result && out.name == std::string_view(in.result); });
+        if (!out.field && !out.multiple && !destination && g.links_from(n.id, out.name).empty()) rows.push_back({true, i});
+    }
+    return rows;
+}
+
+int rows_shown(const Node& n) {
+    const auto it = n.params.find("rows_shown");
+    if (it == n.params.end()) return 0;
+    try {
+        return std::max(0, std::stoi(it->second));
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
+void set_rows_shown(Graph& g, int node, int count) {
+    Node* n = g.find(node);
+    if (!n) return;
+    if (count <= 0) n->params.erase("rows_shown");
+    else n->params["rows_shown"] = std::to_string(count);
+}
+
 bool has_extension(const std::string& path, const char* filter) {
     std::string ext = fs::path(path).extension().string();
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -571,7 +609,7 @@ std::vector<std::string> Graph::validate() const {
             const InputSpec* in = find_input(*spec, key);
             const InputSpec* flips = key.starts_with("flip:") ? find_input(*spec, key.substr(5)) : nullptr;
             const std::string state_key = key.substr(0, key.find('@'));  // per-item state: "<name>@<item key>"
-            const bool known = (in && in->editable()) || (flips && flips->result) || key == "title" ||
+            const bool known = (in && in->editable()) || (flips && flips->result) || key == "title" || key == "rows_shown" ||
                                std::ranges::any_of(spec->outputs, [&](const PortSpec& o) { return o.field && key == o.field; }) ||
                                std::ranges::any_of(spec->state, [&](const char* s) { return state_key == s; }) ||
                                // any list block's "show": the item previews show (front ends set it)

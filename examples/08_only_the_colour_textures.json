@@ -152,7 +152,7 @@
         "title": "Leon's textures"
       },
       "pos": [
-        -252.0,
+        -325.0,
         0.0
       ],
       "type": "FilesInFolder"
@@ -164,7 +164,7 @@
         "tex": ""
       },
       "pos": [
-        252.0,
+        148.0,
         0.0
       ],
       "type": "LoadTex"
@@ -173,8 +173,8 @@
       "id": 3,
       "params": {},
       "pos": [
-        -325.0,
-        0.0
+        -549.0,
+        8.0
       ],
       "type": "Split"
     },
@@ -186,8 +186,8 @@
         "title": "Is it a colour texture?"
       },
       "pos": [
-        -252.0,
-        346.0
+        -325.0,
+        198.0
       ],
       "type": "TextMatches"
     },
@@ -198,7 +198,7 @@
         "title": "Only colour textures"
       },
       "pos": [
-        35.0,
+        -105.0,
         0.0
       ],
       "type": "If"
@@ -207,8 +207,8 @@
       "id": 6,
       "params": {},
       "pos": [
-        35.0,
-        55.0
+        50.0,
+        63.0
       ],
       "type": "Split"
     },
@@ -216,8 +216,8 @@
       "id": 7,
       "params": {},
       "pos": [
-        108.0,
-        346.0
+        123.0,
+        198.0
       ],
       "type": "StreamingCopy"
     },
@@ -227,8 +227,8 @@
         "png": ""
       },
       "pos": [
-        -252.0,
-        647.0
+        -325.0,
+        481.0
       ],
       "type": "ExportImage"
     },
@@ -244,8 +244,8 @@
         "title": "Grey"
       },
       "pos": [
-        252.0,
-        647.0
+        161.0,
+        481.0
       ],
       "type": "AdjustColour"
     },
@@ -257,8 +257,8 @@
         "in3": ""
       },
       "pos": [
-        -252.0,
-        1014.0
+        -325.0,
+        808.0
       ],
       "type": "custom:convert_with_streaming"
     },
@@ -273,8 +273,8 @@
         "version": "1.0"
       },
       "pos": [
-        252.0,
-        1014.0
+        123.0,
+        808.0
       ],
       "type": "PackageMod"
     }

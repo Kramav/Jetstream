@@ -1,6 +1,7 @@
 """Writes the example graphs in examples/ (shipped in the release zip) and their sample pictures.
 
-Each graph is written without block positions: the app lays such a graph out when it opens it (Tidy up). Paths to
+Each graph is written without block positions. Afterwards, always tidy up and save every example with the app's
+real block sizes: build/app/remod-app.exe --bake examples/<each>.json (one path per graph). Paths to
 game files start with {game}, the Game files folder set in the app, so the examples run on any PC. Fields left out
 get their defaults when the graph loads. Run: python scripts/make_examples.py
 """

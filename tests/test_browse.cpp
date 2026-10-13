@@ -426,6 +426,36 @@ TEST_CASE("from_above: links from small helpers come in from the top; at_initial
     CHECK_FALSE(remod::at_initial(edge, "true"));
 }
 
+TEST_CASE("hideable_rows: optional rows at their defaults, advanced last, extra outputs feeding nothing") {
+    remod::Graph g;
+    const int photo = g.add_node("ReplacePhoto").id, copy = g.add_node("StreamingCopy").id;
+    const remod::NodeSpec& spec = *remod::find_spec("ReplacePhoto");
+    auto slot = [&](const char* name) {
+        return size_t(std::ranges::find_if(spec.inputs, [&](const auto& in) { return std::string(in.name) == name; }) -
+                      spec.inputs.begin());
+    };
+    auto rows = remod::hideable_rows(g, *g.find(photo));
+    CHECK(std::ranges::find(rows, remod::HiddenRow{false, slot("zoom")}) != rows.end());
+    CHECK(std::ranges::find(rows, remod::HiddenRow{false, slot("frame")}) == rows.end());  // required
+    CHECK(std::ranges::find(rows, remod::HiddenRow{false, slot("save_to")}) == rows.end());  // a destination row
+    g.find(photo)->params["zoom"] = "150";  // changed: always shown
+    rows = remod::hideable_rows(g, *g.find(photo));
+    CHECK(std::ranges::find(rows, remod::HiddenRow{false, slot("zoom")}) == rows.end());
+
+    // Outputs after the first, until something uses them; on a plain block (not advanced), before advanced inputs.
+    CHECK(remod::hideable_rows(g, *g.find(copy)) == std::vector<remod::HiddenRow>{{true, 1}});
+    const int other = g.add_node("SaveTex").id;
+    REQUIRE(g.connect({copy, "streaming", other, "original"}).empty());
+    CHECK(remod::hideable_rows(g, *g.find(copy)).empty());
+
+    remod::set_rows_shown(g, photo, 3);
+    CHECK(remod::rows_shown(*g.find(photo)) == 3);
+    CHECK(remod::rows_shown(*g.find(copy)) == 0);
+    CHECK(std::ranges::none_of(g.validate(), [](const std::string& e) { return e.find("rows_shown") != std::string::npos; }));
+    remod::set_rows_shown(g, photo, 0);
+    CHECK_FALSE(g.find(photo)->params.contains("rows_shown"));
+}
+
 TEST_CASE("texture_target: the selected Original texture block, else the only one") {
     remod::Graph g;
     const int a = g.add_node("LoadTex").id;

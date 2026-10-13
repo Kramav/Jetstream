@@ -162,20 +162,36 @@ Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
   tooltip shows them then. The type name shows in Build layout only, at the title's right. Linked rows don't name
   their source (the line shows it; the row's tooltip says "From: ..."). Build layout's "Tidy up" arranges blocks in
   columns by step order (core `tidy_layout`).
-- **Graph look = design handoff option 1c, "Schematic" (2026-10-01, `docs/design_handoff_node_graph/README.md`),
+- **Graph look = design handoff option 1c, "Schematic" (2026-10-01, `docs/design_handoff_node_graph/README.md`; blocks LabVIEW-style since 2026-10-13, below),
   kept dark.** Palette (`pal::`, `apply_palette`; user, 2026-10-01: the handoff's mono tokens flipped for dark were
   "horrible", and pins/links must keep a colour per kind): cool dark greys from canvas to raised controls, one blue
   accent for selection, green / amber / red for done / waiting / failed. **Pins and links are coloured by kind**
   (`kind_color`): texture orange, image green, text blue, path yellow, folder teal, an open Split grey; reserved
   script purple, AI call pink. Square corners. Fonts: Segoe UI Semibold titles, Consolas values (Barlow Condensed
   isn't on Windows). Sizes are the handoff's px times `unit()` (font / 11).
-  - **Families** (`NodeSpec::family`, core): Source, Transform, Manual, Flow (Split), File, Output, Value (utilities).
-    The app paints the outline itself (`paint_block`; the editor's node frame is switched off): notch, hexagon, folded
-    corner, stacked sheet, parallelogram, a manual step's double frame and hatched header; `+` corner marks, larger in
-    the accent when selected. Pins sit on the outline (slanted edges too, `edge_x`); shape and colour say the kind:
-    texture square, image circle, text/path/folder diamond; an unlinked field a small hollow circle; a multiple's empty
-    slot a dashed square. Links are routed from the block box's side (`pin_anchor`), then drawn on to the pin (a pin
-    inside the box, on a slanted edge or a Far Split dot's centre, would fail the router's clear-first-step check).
+  - **LabVIEW-style blocks (user, 2026-10-13: "LabVIEW's visual grammar ... recognize the interface as a visual
+    programming environment at first glance"; replaces 1c's outline shapes and `+` corner marks).** User's choices: dark
+    blocks kept; every block a plain rectangle with a drop shadow; the family shows as the header band's tint, a 2-unit
+    rule along the top and a glyph left of the title (`family_color`, `family_glyph`: the handoff's palette glyphs);
+    manual steps keep their hatched header; terminal shapes kept, small, on the block's edge.
+    - **Families** (`NodeSpec::family`, core): Source steel blue, Transform violet, Manual ochre, File olive, Output
+      rose, Value and Flow grey. Run states still tint the header (Near) or the block (Far) and outline it.
+    - **Utilities are primitives** (`primitive_symbol`): a short mono symbol instead of the title (`{ }` Text, `=`
+      Value, `?:` If, `??` First of, `!` Not, `+\` Join path ...; a block the user named shows its name), terminals
+      without labels (the label is in the terminal's tooltip, `Outline::bare`), no label column; Far half as wide.
+    - **Terminals:** shape and colour say the kind: texture square, image circle, text/path/folder diamond, condition
+      triangle; an unlinked field a small hollow circle; a multiple's empty slot a dashed square. A side terminal's grab
+      area includes its label (pressing the label starts a link, never moves the block); hovering the marker names its
+      kind ("texture input"). Links are routed from the block box's side (`pin_anchor`), then drawn on to the pin.
+    - **Dragging a link** (`State::drag_pin`, from `BeginCreate`, one frame late): every terminal core would accept is
+      ringed in the accent (`can_connect`, worked out once per drag); the link is drawn by us, right-angled
+      (`elbow_path`) in its kind's colour, red dashes over a terminal core refuses (the editor's own line is hidden).
+    - **List wires** (LabVIEW's arrays): a link carrying a list or one item of one (`PortSpec::list`, or its source is
+      repeated, `list_source`) is a hollow double line. A hovered link is brighter and wider.
+    - **Width follows the labels** (`label_column`): the field labels' column is as wide as the widest (3.5 to 7 fonts).
+    - **Not done:** arithmetic / comparison / loop primitives (remod has no such operations), re-grabbing a link's end,
+      selecting a link (right-click → Delete link stays), grid spacing (imgui-node-editor's fixed 32 px).
+    - **Not checked by eye** (built, tests pass, every example opened and drawn by `--bake` on copies without an assert).
     **Far showed no lines (fixed 2026-10-01):** each Far pin was an empty ImGui group, and ImGui sizes an empty group to
     reach the last item drawn before it, so every Far block's box stretched over the graph and every link became a
     portal. Each pin now holds a zero-size item. Found by dumping the router's input from the running app.
@@ -699,7 +715,7 @@ amed pictures`). Core `match_pictures`: a picture
 - **Files in folder into texture inputs lists only textures** (a pattern like `*.tex*` matched a Noesis leftover
   `x.texout.tga` in the real game folder).
 - **Examples (2026-10-03; user: "a lot of example graphs for users"):** `examples/` (shipped), written by
-  `scripts/make_examples.py` (no positions: tidied on open; `{game}` paths; sample `picture.png`, `logo.png`), listed
+  `scripts/make_examples.py` (no positions; `{game}` paths; sample `picture.png`, `logo.png`), then **every example tidied up and saved by `remod-app --bake examples\*.json` (user, 2026-10-13: every time they're regenerated, all of them; replaces restoring 01-11 with git checkout)**, listed
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
@@ -2236,7 +2252,6 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     helpful" until there's more to do per texture. **Now priority 1 (2026-10-02). First version built (§4 Fan-out):
     lists through links, Files in folder, `{name}`, done per item, stop / skip.** Not done yet:
     - ~~thumbnails show the first item only~~: done, the list block picks which (§4 Fan-out);
-    - list links look like any other (a doubled line?);
     - two lists meeting (zip or cross product) is refused;
     - other list sources (the Browser's selection, a typed list);
     - a game path for textures outside a natives tree (e.g. `{name}` in LoadTex's In-game path works, but only for
@@ -2528,10 +2543,12 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
   - **A Split is its junction dot at every zoom** (was a narrow block at Near): the Far drawing (`draw_far_block`,
     `symbol` in draw_canvas); its links meet at the dot, new ones drag from its right half.
   - **Settings only while in use (user, 2026-10-02: "only display ... ageing, scratches, feathering ... if we are
-    using them"):** `InputSpec::advanced` (Replace photo's Frame width, Grow, Feather, Zoom, Picture X / Y, the four
-    ageing sliders, Show edge; the Preview's Size). Such a field has a row only while changed from its initial value
-    (core `at_initial`: numbers by value) or linked; the rest fold into one "+ N settings at their defaults" row that
-    opens them (per block, while the app runs). The Nodes panel's previews fold them too.
+    using them"; 2026-10-13: LabVIEW's hidden defaults, "drag down" to reveal more inputs and outputs).** Core
+    `hideable_rows`: optional inputs unlinked and still at their initial value (`at_initial`: numbers by value), then
+    the tuning ones (`InputSpec::advanced`: Replace photo's ageing sliders...) last, and outputs after the first that
+    feed nothing (no field, no destination). They have no row until dragged out: a grip on the block's bottom edge
+    ("+N"), dragged down shows them one by one, up folds them; a click shows all or none. How far is the node param
+    `rows_shown`, saved in the graph (user's choice). Far blocks and the Nodes panel's previews hide them too.
   - **Top to bottom (`Graph::downward`, "flow": "down") is built but has no switch (user, 2026-10-02: big blocks like
     Replace photo don't suit it at Near zoom; a later consideration).** Core swaps x and y around the left-to-right
     code (`tidy_layout`, `make_room`, `route_links` take `downward`); the app spreads ports along top and bottom

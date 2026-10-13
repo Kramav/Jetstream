@@ -43,4 +43,14 @@ Routes route_links(const std::vector<Box>& blocks, const std::vector<LinkRoute>&
 // Index of the first path passing within `tolerance` of `p`, or -1. A portal's (`portals`) only by its two stubs.
 int hit_link(const std::vector<std::vector<Pt>>& paths, Pt p, float tolerance, const std::vector<char>& portals = {});
 
+// A plain right-angled path from an output's anchor `a` to an input's `b`, without routing: while blocks are dragged,
+// and a link being dragged out. Into a top edge: out, across over it, down. Forwards: across, down, across.
+// Backwards: out, over to the middle height, back, in. Top to bottom (`down`) swaps x and y.
+std::vector<Pt> elbow_path(Pt a, Pt b, float gap, bool to_top, bool down);
+
+// A route worked out between other anchors (Far zoom: Near's, around the blocks' full boxes) moved onto anchors `a`
+// and `b`: its first and last runs slide to their heights (and out past them), the rest stays, so the line passes
+// every block on the same side. A portal is just its two stubs again. A route of one or two runs becomes an elbow.
+std::vector<Pt> onto_pins(std::vector<Pt> path, Pt a, Pt b, float gap, bool to_top, bool down, bool portal);
+
 }  // namespace remod

@@ -130,6 +130,21 @@ bool is_flipped(const Node& node, std::string_view input);
 std::string block_title(const Node& node);
 void set_block_title(Graph& graph, int node, const std::string& title);  // trimmed; "" = back to the type's title
 
+// Rows a block keeps hidden while unused, as LabVIEW does (user, 2026-10-13): optional inputs with nothing linked and
+// their typed value still the initial one, and outputs after the first that feed nothing and have no field (nor a
+// destination sharing their row). In spec
+// order, the advanced inputs (tuning) last. A block shows the first rows_shown of them (node param "rows_shown", what
+// the user dragged it open to) and every row not in the list. ponytail: a count, not names, so a row that gets changed
+// leaves the list and the next one moves up; store names if that ever bites.
+struct HiddenRow {
+    bool output;
+    size_t slot;  // in the spec's inputs or outputs
+    bool operator==(const HiddenRow&) const = default;
+};
+std::vector<HiddenRow> hideable_rows(const Graph& graph, const Node& node);
+int rows_shown(const Node& node);
+void set_rows_shown(Graph& graph, int node, int count);  // 0 = none: the param is removed
+
 // JSON graph file, schema_version 0. Example: schemas/graph.v0.example.json
 // Older files are migrated on load (PackageMod's former `screenshot` field becomes an ImportImage -> preview; an
 // output feeding several inputs gets a Split block).

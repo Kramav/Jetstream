@@ -1,27 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re4r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "Cutscene",
-      "params": {
-        "cutscene": "cutscenes/play_a_movie.json",
-        "title": "Fade out, the intro movie, fade in"
-      }
-    },
-    {
-      "id": 2,
-      "type": "PackageMod",
-      "params": {
-        "name": "Movie moment",
-        "out": "mods",
-        "version": "1.0",
-        "description": "Press F9 in game: the intro movie plays, then play resumes where it was",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -33,5 +10,38 @@
         "file"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "cutscene": "cutscenes/play_a_movie.json",
+        "editor": "",
+        "title": "Fade out, the intro movie, fade in"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "Cutscene"
+    },
+    {
+      "id": 2,
+      "params": {
+        "author": "",
+        "description": "Press F9 in game: the intro movie plays, then play resumes where it was",
+        "name": "Movie moment",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        476.0,
+        0.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
 }

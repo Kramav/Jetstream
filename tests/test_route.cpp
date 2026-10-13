@@ -318,3 +318,30 @@ TEST_CASE("hit_link finds the path near a point") {
     CHECK(remod::hit_link(paths, {80, 80}, 4) == -1);
 }
 
+
+TEST_CASE("route: moved onto Far's pins, a route passes every block on the same side as before") {
+    // Near: a block in the way that reaches far up, so the line goes under it.
+    const std::vector<Box> blocks{{0, 0, 100, 300}, {200, -400, 300, 280}, {400, 0, 500, 300}};
+    const auto routes = remod::route_links(blocks, {{1, {100, 250}, {400, 250}}}, kGap);
+    REQUIRE(routes.portals[0] == 0);
+    auto under = [](const std::vector<Pt>& path) {  // crosses the block's width below it
+        for (size_t i = 0; i + 1 < path.size(); ++i)
+            if (path[i].y == path[i + 1].y && std::min(path[i].x, path[i + 1].x) <= 200 &&
+                std::max(path[i].x, path[i + 1].x) >= 300)
+                return path[i].y > 280;
+        return false;
+    };
+    REQUIRE(under(routes.paths[0]));
+    // Far: the pins near the blocks' tops, the output's symbol wider than its block.
+    const Pt a{110, 20}, b{400, 20};
+    const auto moved = remod::onto_pins(routes.paths[0], a, b, kGap, false, false, false);
+    CHECK(moved.front() == a);
+    CHECK(moved.back() == b);
+    CHECK((moved[1].y == a.y && moved[1].x >= a.x + kGap));
+    CHECK((moved[moved.size() - 2].y == b.y && moved[moved.size() - 2].x <= b.x - kGap));
+    for (size_t i = 0; i + 1 < moved.size(); ++i) CHECK((moved[i].x == moved[i + 1].x || moved[i].y == moved[i + 1].y));
+    CHECK(under(moved));
+    // A portal: its two stubs from the new pins.
+    CHECK(remod::onto_pins({{100, 250}, {120, 250}, {380, 250}, {400, 250}}, a, b, kGap, false, false, true) ==
+          std::vector<Pt>{a, {a.x + kGap, a.y}, {b.x - kGap, b.y}, b});
+}

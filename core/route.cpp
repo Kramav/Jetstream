@@ -376,4 +376,56 @@ int hit_link(const std::vector<std::vector<Pt>>& paths, Pt p, float tolerance, c
     return -1;
 }
 
+// A plain right-angled path from an output's anchor `a` to an input's `b`, without routing: while blocks are dragged,
+// and a link being dragged out. Into a top edge: out, across over it, down. Forwards: across, down, across.
+// Backwards: out, over to the middle height, back, in. Top to bottom (`down`) swaps x and y.
+std::vector<Pt> elbow_path(Pt a, Pt b, float gap, bool to_top, bool down) {
+    auto flip = [&](Pt p) { return down ? Pt{p.y, p.x} : p; };
+    a = flip(a), b = flip(b);
+    std::vector<Pt> path;
+    if (to_top) {
+        path = {a, {a.x + gap, a.y}, {a.x + gap, b.y - gap}, {b.x, b.y - gap}, b};
+    } else if (b.x - a.x >= 2 * gap) {
+        const float mx = (a.x + b.x) / 2;
+        path = {a, {mx, a.y}, {mx, b.y}, b};
+    } else {
+        const float my = (a.y + b.y) / 2;
+        path = {a, {a.x + gap, a.y}, {a.x + gap, my}, {b.x - gap, my}, {b.x - gap, b.y}, b};
+    }
+    for (auto& p : path) p = flip(p);
+    return path;
+}
+
+// A route worked out between other anchors (Far: Near's, around the blocks' full boxes) moved onto anchors `a` and
+// `b`: its first and last runs slide to their heights (and out past them), the rest stays, so the line passes every
+// block on the same side. A portal (`portal`) is just its two stubs again. ponytail: a route of one or two runs
+// becomes a plain elbow.
+std::vector<Pt> onto_pins(std::vector<Pt> path, Pt a, Pt b, float gap, bool to_top, bool down, bool portal) {
+    auto flip = [&](Pt p) { return down ? Pt{p.y, p.x} : p; };
+    a = flip(a), b = flip(b);
+    if (portal) {
+        path = {a, {a.x + gap, a.y}, to_top ? Pt{b.x, b.y - gap} : Pt{b.x - gap, b.y}, b};
+        for (auto& p : path) p = flip(p);
+        return path;
+    }
+    for (auto& p : path) p = flip(p);
+    path = simplify(path);
+    const size_t n = path.size();
+    if (n < (to_top ? 5u : 4u)) return elbow_path(flip(a), flip(b), gap, to_top, down);
+    path[0] = a;  // out rightwards, then the route's first vertical run
+    path[1] = {std::max(path[1].x, a.x + gap), a.y};
+    path[2].x = path[1].x;
+    path[n - 1] = b;
+    if (to_top) {  // down onto the top edge, after the route's last horizontal run
+        path[n - 2] = {b.x, std::min(path[n - 2].y, b.y - gap)};
+        path[n - 3].y = path[n - 2].y;
+    } else {  // in from the left, after the route's last vertical run
+        path[n - 2] = {std::min(path[n - 2].x, b.x - gap), b.y};
+        path[n - 3].x = path[n - 2].x;
+    }
+    path = simplify(path);
+    for (auto& p : path) p = flip(p);
+    return path;
+}
+
 }  // namespace remod

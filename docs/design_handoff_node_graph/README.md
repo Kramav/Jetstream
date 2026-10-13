@@ -1,5 +1,7 @@
 # Handoff: Jetstream node graph redesign (option 1c, "Schematic")
 
+> **Superseded in part (2026-10-13):** blocks are now LabVIEW-style rectangles with a family-coloured header and glyph; the outline shapes and `+` corner marks below are history. See CLAUDE.md §4, "LabVIEW-style blocks".
+
 ## Overview
 Redesign of the Graph panel in Jetstream, the RE Engine modding workflow tool. It covers both modes (Build layout and Use layout). Goals:
 1. Make blocks recognizable at a glance by **family**, using outline shape.
