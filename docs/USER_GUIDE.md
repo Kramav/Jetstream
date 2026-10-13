@@ -204,6 +204,15 @@ nothing changed reuses it. After a run, a movie block's **Preview movie** button
 viewer: Replace movie's new movie, Export movie's copy, Edit video's edit. Example `12_replace_a_movie` is the test
 card for `mva000`, with its sound packages beeping, ready to run.
 
+### Many movies at once
+
+Example `22_replace_movies_from_a_folder` replaces any of the game's movies with a video of the same name. Make a
+`videos` folder beside the graph and put your videos in it, each named after the movie it replaces
+(`videos\mva000.mp4`); the examples README lists the movies. **Files in folder** lists every movie the game has, and
+**Replace movie** runs for each with **Your video** `videos\{name}.mp4`. Its **If your video isn't there** is set to
+*Leave the movie as it is*, so movies you have no video for stay as the game has them. With **Your video** empty,
+every movie gets a test card instead, to find out which plays where.
+
 ### Editing a movie by hand
 
 1. **Export movie** copies the game's movie (the full-size one) to its **Video file**, e.g. `edits\mva000.mp4`.

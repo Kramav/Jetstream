@@ -497,8 +497,9 @@ amed pictures`). Core `match_pictures`: a picture
     - The run goes block by block, every item in turn, so one run still exports every image to edit, then waits.
     - Two different lists meeting at one block is refused by validate.
   - **`{name}` (user):** in a repeated block, `NodeRun::text` fills `{name}` with the item's name. That's a texture's
-    name before `.tex` (`x.tex.143221013` -> `x`), else the name without its extension. A Value holding it may feed
-    a repeated block. Elsewhere, validate refuses it.
+    name before `.tex` (`x.tex.143221013` -> `x`), a game movie's before `.mov.` (`mva000.mov.1.x64` -> `mva000`,
+    2026-10-13), else the name without its extension. A block holding it may feed a repeated block directly (not
+    through a Split: validate looks one link on). Elsewhere, validate refuses it.
     - Two items writing one file fail the run, with the hint to put `{name}` in the file name (`NodeRun::claim`,
       called by every Write change and by Export image even when it keeps its file).
     - Temporary files are per item (`NodeRun::temp_file`).
@@ -723,10 +724,10 @@ amed pictures`). Core `match_pictures`: a picture
   in `examples/README.md`. **Read-only (user, 2026-10-03):** `save_graph` refuses the examples folder
   (`is_example_path`: `<tool>/examples` beside profiles), so the app, the API and an AI can't change one; the app's
   Save on an example is Save As (opening in Documents) and its title says so. Runs still write their outputs
-  (`edits/`, `mods/`) beside them. Twenty-one: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
+  (`edits/`, `mods/`) beside them. Twenty-two: hand edit, recolour, photo frame, logo, many textures, Recolour part, character
   edit with streaming, conditions filter, channels, if / else, backup, movie test card, movie edited by hand
   (2026-10-06), a game sound replaced, a game movie played from a cutscene, a new movie added, a new sound added
-  (2026-10-07), a cutscene that starts by itself, a new character in a cutscene (2026-10-08), a picture in every photo and painting (2026-10-12: the 10 `cs_ui3210_*` textures holding a photo, found by a contact sheet of all 102, and the 78 frame meshes of `sm34` through Pictures in frames; one package; pictures in `examples/pictures/` named `sample 01..88.png`, given out by Name pictures; the paintings' cards show each frame's number), talk topics (2026-10-13: two in the merchant's menu, two in the talk menu on Ashley, the second of each after the merchant's Talk). **All twenty-one run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
+  (2026-10-07), a cutscene that starts by itself, a new character in a cutscene (2026-10-08), a picture in every photo and painting (2026-10-12: the 10 `cs_ui3210_*` textures holding a photo, found by a contact sheet of all 102, and the 78 frame meshes of `sm34` through Pictures in frames; one package; pictures in `examples/pictures/` named `sample 01..88.png`, given out by Name pictures; the paintings' cards show each frame's number), talk topics (2026-10-13: two in the merchant's menu, two in the talk menu on Ashley, the second of each after the merchant's Talk), movies replaced from a folder of videos named after them (2026-10-13). **All twenty-two run** (the examples test: `--edited true`, the real game files, outputs in a scratch copy;
   example 13's edit stood in by the movie itself); the photo frame and logo results looked at as images. Not opened in
   the app (layout on open not checked by eye).
 - Intermediate `.tex` files go to a per-run temp folder, deleted afterwards.
@@ -1337,6 +1338,13 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     - The run cache: keyed on the files' path, size and write time (not their bytes) and "mf2". `prune_cache` keeps
       every file just written; ponytail: one 512 MB limit, a 4K movie can push every texture out.
     - Example `12_replace_a_movie` (the mva000 test card): 4K in 17 s, 1080p in 5 s, on this PC.
+    - **Many at once (user, 2026-10-13: "a batch cutscene movie replacer graph"):** example
+      `22_replace_movies_from_a_folder`: Files in folder over `{game}/streaming/_chainsaw/movie` (`*.mov.1.x64`,
+      subfolders: all 31) into Replace movie, Your video `videos\{name}.mp4`, and Replace movie's **If your video
+      isn't there** (`missing`: stop, the default, or skip: no outputs, "left as the game has it (no x.mp4)"). A `_fhd`
+      item looks for `<id>_fhd.mp4`, so it's left alone while `<id>.mp4` makes both copies. First tried as File exists
+      + If: `{name}` in a Join path feeding a Split isn't filled (validate refuses it), and File exists isn't repeated.
+      Checked: the examples test with `videos/mva402.mp4` (one encoded, 30 left); the README lists the ids. Not in game.
     - Checked: tests (card, video scaled and retimed to 29.97, the block both copies, without an fhd, the stub
       refused, a re-run unchanged, Package with nothing). ffprobe on the results: profile, level (5.1 / 4.0), size,
       fps and frame count match the originals. Frames looked at as images (card; mva402 fitted into 4K).
