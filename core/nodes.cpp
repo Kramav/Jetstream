@@ -1009,7 +1009,115 @@ std::string file_stamp_of(const fs::path& file) {  // a big file (a model) by it
     return file.string() + '\0' + std::to_string(fs::file_size(file, ec)) + '\0' + write_time(file);
 }
 
+// The AI's settings both AI blocks share (advanced).
+std::vector<InputSpec> ai_settings_inputs(const char* avoid) {
+    return {advanced({.name = "negative", .label = "Avoid", .type = Text, .widget = Widget::Text,
+                      .hint = "What it should avoid (the negative prompt).", .initial = avoid}),
+            advanced(number_input("steps", "Steps", "Sampling steps: more is slower, sometimes finer.", "25", 1, 150,
+                                  "%.0f")),
+            advanced(number_input("cfg", "Prompt weight", "How strictly it follows the prompt (CFG scale).", "6", 1, 30,
+                                  "%.1f")),
+            advanced(number_input("work_size", "Work size", "The longer side the model works at, scaled back after "
+                                  "(SDXL: 1024).", "1024", 256, 2048, "%.0f px")),
+            advanced(number_input("timeout", "Time limit", "Seconds before the AI is stopped.", "1800", 30, 86400,
+                                  "%.0f s"))};
+}
+
+// Runs the AI on `original` (the picture in `image_file`) where `mask` is white (everywhere without one), then puts its
+// picture back through the mask with the original's alpha, and writes the result (write_image). The fields negative,
+// strength, seed, steps, cfg, work_size, timeout and feather are the block's. Kept in the run cache by everything that
+// decides it (a fixed seed gives the same picture), and reused.
+void generate_and_blend(NodeRun& r, const fs::path& image_file, Bgra original, const std::optional<Bgra>& mask,
+                        const std::string& prompt, const std::string& what) {
+    GenerateJob job{.image = original, .mask = mask, .prompt = prompt, .negative = r.text("negative"),
+                    .strength = number(r, "strength") / 100, .seed = static_cast<long long>(number(r, "seed")),
+                    .steps = int(number(r, "steps")), .cfg = number(r, "cfg"),
+                    .work_side = unsigned(number(r, "work_size"))};
+    const ImageAi& ai = image_ai();
+    fs::path exe;
+    try {
+        exe = find_sd_cli(ai.tool);
+    } catch (const ImageAiError& e) {
+        throw GraphError(e.what());
+    }
+    std::string key = "ai2|" + file_bytes(image_file) + '\0' +
+                      (mask ? std::string(mask->pixels.begin(), mask->pixels.end()) : "") + '\0' + job.prompt + '\0' +
+                      job.negative;
+    for (const char* n : {"strength", "seed", "steps", "cfg", "work_size"}) key += '\0' + r.text(n);
+    key += '\0' + file_stamp_of(exe) + '\0' + file_stamp_of(ai.model) + '\0' + (ai.vae.empty() ? "" : file_stamp_of(ai.vae));
+    const fs::path& cache = r.run.options.cache_dir;
+    const fs::path made = cache.empty() ? fs::path() : cache / ("ai_" + hash_hex(key) + ".png");
+    Bgra generated;
+    std::string how;
+    if (std::error_code ec; !made.empty() && fs::is_regular_file(made, ec)) {
+        generated = load_image(made);
+        fs::last_write_time(made, fs::file_time_type::clock::now(), ec);
+        how = "unchanged: reused the AI's picture";
+    } else {
+        const auto start = std::chrono::steady_clock::now();
+        const fs::path temp = r.temp_file("_ai");
+        try {
+            generated = generate_image(ai, job, temp,
+                                       std::chrono::seconds(static_cast<long long>(number(r, "timeout"))));
+        } catch (const ImageAiError& e) {
+            fs::remove_all(temp, ec);
+            throw GraphError(e.what());
+        }
+        fs::remove_all(temp, ec);
+        if (!made.empty()) {
+            fs::create_directories(cache);
+            const fs::path part = cache / (made.stem().string() + ".part.png");
+            save_png(part, generated);
+            fs::rename(part, made, ec);
+            prune_cache(cache, {made});
+        }
+        char took[48];
+        std::snprintf(took, sizeof took, "generated in %.0f s",
+                      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        how = took;
+    }
+    r.set_state("generated", made.empty() ? "" : made.string());
+    if (mask) {
+        Bgra out = original;
+        masked_blend(out, generated, *mask, number(r, "feather"), false);
+        write_image(r, out, how + what);
+    } else {
+        merge_channels(original, &generated, {});  // the original's alpha kept
+        write_image(r, original, how + what);
+    }
+}
+
+// An optional image input's picture at `width` x `height` (stretched), if one is given.
+std::optional<Bgra> optional_picture(NodeRun& r, const char* input, unsigned width, unsigned height) {
+    const std::string t = r.text(input);
+    if (t.empty()) return std::nullopt;
+    return resize_image(load_image(clean_path(t, r.run.options.base_dir)), width, height, Fit::Stretch);
+}
+
+InputSpec optional_image_input(const char* name, const char* label, const char* hint) {
+    InputSpec in = image_input(name, label, hint);
+    in.required = false;
+    return in;
+}
+
+constexpr const char* kAvoid = "blurry, text, watermark, low quality";
+constexpr const char* kCleanAvoid = "blurry, text, watermark, low quality, seam, edge, line, border, smudge, artifacts";
+constexpr const char* kCleanPrompt = "clean seamless surface, continuous with its surroundings, consistent detail";
+
 NodeSpec generate_image_node() {
+    std::vector<InputSpec> inputs{
+        image_input("image", "Image", "The picture to change, e.g. Export image's."),
+        optional_image_input("mask", "Mask", "Optional: a grey image, white where the picture may change (Mesh mask, a "
+                                             "painted mask). Empty: all of it."),
+        {.name = "prompt", .label = "Prompt", .type = Text, .widget = Widget::Text, .required = true,
+         .hint = "What it should show, e.g. old sepia photograph of a castle on a hill, scratches."},
+        number_input("strength", "Strength", "How far from the picture it may go: low keeps its shapes, high follows "
+                     "the prompt. About 45 for a restyle, 80 to fill a masked area anew.", "60", 1, 100, "%.0f%%"),
+        number_input("seed", "Seed", "A number for the randomness: the same seed and settings give the same picture; "
+                     "change it for another try.", "42", 0, 1e9f, "%.0f"),
+        number_input("feather", "Feather", "Pixels the mask's edge is softened over.", "4", 0, 256, "%.0f px")};
+    for (InputSpec& in : ai_settings_inputs(kAvoid)) inputs.push_back(std::move(in));
+    inputs.push_back(save_to_input());
     return {
         .type = "GenerateImage",
         .title = "Generate image (AI)",
@@ -1017,106 +1125,87 @@ NodeSpec generate_image_node() {
                    "mask, only the white area changes and the rest stays exactly as it was. The original's alpha is "
                    "kept. For photos, paintings, documents and UI; not for character texture sheets (their layout "
                    "comes out as mush). Set the tool and model in the Pipeline panel.",
-        .inputs = {image_input("image", "Image", "The picture to change, e.g. Export image's."),
-                   [] {
-                       InputSpec in = image_input("mask", "Mask", "Optional: a grey image, white where the picture "
-                                                  "may change (Mesh mask, a painted mask). Empty: all of it.");
-                       in.required = false;
-                       return in;
-                   }(),
-                   {.name = "prompt", .label = "Prompt", .type = Text, .widget = Widget::Text, .required = true,
-                    .hint = "What it should show, e.g. old sepia photograph of a castle on a hill, scratches."},
-                   number_input("strength", "Strength", "How far from the picture it may go: low keeps its shapes, "
-                                "high follows the prompt. About 45 for a restyle, 80 to fill a masked area anew.",
-                                "60", 1, 100, "%.0f%%"),
-                   number_input("seed", "Seed", "A number for the randomness: the same seed and settings give the "
-                                "same picture; change it for another try.", "42", 0, 2147483647, "%.0f"),
-                   number_input("feather", "Feather", "Pixels the mask's edge is softened over.", "4", 0, 256,
-                                "%.0f px"),
-                   advanced({.name = "negative", .label = "Avoid", .type = Text, .widget = Widget::Text,
-                             .hint = "What it should avoid (the negative prompt).",
-                             .initial = "blurry, text, watermark, low quality"}),
-                   advanced(number_input("steps", "Steps", "Sampling steps: more is slower, sometimes finer.", "25", 1,
-                                         150, "%.0f")),
-                   advanced(number_input("cfg", "Prompt weight", "How strictly it follows the prompt (CFG scale).",
-                                         "6", 1, 30, "%.1f")),
-                   advanced(number_input("work_size", "Work size", "The longer side the model works at, scaled back "
-                                         "after (SDXL: 1024).", "1024", 256, 2048, "%.0f px")),
-                   advanced(number_input("timeout", "Time limit", "Seconds before the AI is stopped.", "1800", 30,
-                                         86400, "%.0f s")),
-                   save_to_input()},
+        .inputs = std::move(inputs),
         .outputs = {{"image", Image, "image"}},
         .state = {"generated"},  // the AI's last picture (before the mask), for the thumbnail
         .family = Family::Transform,
         .thumbnail = true,
         .run = [](NodeRun& r) {
-            const fs::path& base = r.run.options.base_dir;
-            const fs::path image_file = clean_path(r.text("image"), base);
-            const std::string mask_text = r.text("mask");
-            const fs::path mask_file = clean_path(mask_text, base);
-            Bgra original = load_image(image_file);
-            std::optional<Bgra> mask;
-            if (!mask_text.empty()) mask = resize_image(load_image(mask_file), original.width, original.height, Fit::Stretch);
+            const fs::path image_file = clean_path(r.text("image"), r.run.options.base_dir);
+            const Bgra original = load_image(image_file);
+            const auto mask = optional_picture(r, "mask", original.width, original.height);
+            generate_and_blend(r, image_file, original, mask, r.text("prompt"), mask ? ", in the mask" : "");
+        },
+        .preview = image_preview,
+    };
+}
 
-            GenerateJob job{.image = original, .mask = mask, .prompt = r.text("prompt"), .negative = r.text("negative"),
-                            .strength = number(r, "strength") / 100, .seed = static_cast<long long>(number(r, "seed")),
-                            .steps = int(number(r, "steps")), .cfg = number(r, "cfg"),
-                            .work_side = unsigned(number(r, "work_size"))};
-            const ImageAi& ai = image_ai();
-            fs::path exe;
-            try {
-                exe = find_sd_cli(ai.tool);
-            } catch (const ImageAiError& e) {
-                throw GraphError(e.what());
-            }
-            // The same picture, mask, settings, model and tool give the same result (a fixed seed): a generation takes
-            // minutes, so it's kept in the run cache by all of them and reused.
-            std::string key = "ai1|" + file_bytes(image_file) + '\0' + (mask ? file_bytes(mask_file) : "") + '\0' +
-                              job.prompt + '\0' + job.negative;
-            for (const char* n : {"strength", "seed", "steps", "cfg", "work_size"}) key += '\0' + r.text(n);
-            key += '\0' + file_stamp_of(exe) + '\0' + file_stamp_of(ai.model) + '\0' +
-                   (ai.vae.empty() ? "" : file_stamp_of(ai.vae));
-            const fs::path& cache = r.run.options.cache_dir;
-            const fs::path made = cache.empty() ? fs::path() : cache / ("ai_" + hash_hex(key) + ".png");
-            Bgra generated;
-            std::string how;
-            if (std::error_code ec; !made.empty() && fs::is_regular_file(made, ec)) {
-                generated = load_image(made);
-                fs::last_write_time(made, fs::file_time_type::clock::now(), ec);
-                how = "unchanged: reused the AI's picture";
-            } else {
-                const auto start = std::chrono::steady_clock::now();
-                std::string log;
-                const fs::path temp = r.temp_file("_ai");
-                try {
-                    generated = generate_image(ai, job, temp, std::chrono::seconds(static_cast<long long>(number(r, "timeout"))),
-                                               &log);
-                } catch (const ImageAiError& e) {
-                    fs::remove_all(temp, ec);
-                    throw GraphError(e.what());
-                }
-                fs::remove_all(temp, ec);
-                if (!made.empty()) {
-                    fs::create_directories(cache);
-                    const fs::path part = cache / (made.stem().string() + ".part.png");
-                    save_png(part, generated);
-                    fs::rename(part, made, ec);
-                    prune_cache(cache, {made});
-                }
-                char took[48];
-                std::snprintf(took, sizeof took, "generated in %.0f s",
-                              std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
-                how = took;
-            }
-            r.set_state("generated", made.empty() ? "" : made.string());
-            if (mask) {
-                Bgra out = original;
-                masked_blend(out, generated, *mask, number(r, "feather"), false);
-                write_image(r, out, how + ", in the mask");
-            } else {
-                merge_channels(original, &generated, {});  // the original's alpha kept
-                write_image(r, original, how);
-            }
+// The area AI cleanup redraws (user, 2026-10-13: "fixing any imperfections made by the manual modding streamline"):
+// a band along where the edit meets the original (seams, hard edges), and the spots the user painted. Throws if
+// neither is given.
+Bgra cleanup_area(const Bgra& edited, const std::optional<Bgra>& original, const std::optional<Bgra>& spots,
+                  float seam_width, float threshold) {
+    if (!original && !spots) throw GraphError("link the Original (to clean its seams) or a Spots mask, or both");
+    Bgra area{edited.width, edited.height, std::vector<std::uint8_t>(edited.pixels.size(), 0)};
+    if (original)
+        area = seam_mask(edited, *original, std::max(1u, unsigned(std::lround(seam_width))),
+                         unsigned(std::lround(threshold)));
+    if (spots) area = mask_union(area, *spots);
+    return area;
+}
+
+bool blank(const Bgra& mask) {
+    for (size_t i = 2; i < mask.pixels.size(); i += 4)
+        if (mask.pixels[i] > 8) return false;
+    return true;
+}
+
+NodeSpec ai_cleanup_node() {
+    std::vector<InputSpec> inputs{
+        image_input("image", "Edited image", "The picture to clean up: the result of your edit (Edit image, Blend in "
+                                             "mask, Replace photo, Overlay image...)."),
+        optional_image_input("original", "Original", "Optional: the picture before the edit (Export image's). Where "
+                                                     "the edit starts to differ from it gets its seam cleaned."),
+        optional_image_input("spots", "Spots", "Optional: a grey mask you painted, white on flaws to remove (a stray "
+                                               "mark, a leftover of the old picture)."),
+        number_input("seam_width", "Seam width", "Pixels either side of the edit's edge that are redrawn.", "12", 1,
+                     128, "%.0f px"),
+        number_input("strength", "Strength", "How much the area may change: low only smooths, high redraws it.", "45",
+                     1, 100, "%.0f%%"),
+        number_input("seed", "Seed", "Another number for another try.", "42", 0, 1e9f, "%.0f"),
+        number_input("feather", "Feather", "Pixels the area's edge is softened over.", "6", 0, 256, "%.0f px"),
+        {.name = "show_area", .label = "Show the area", .type = Text, .widget = Widget::Checkbox,
+         .hint = "The thumbnail shows what will be redrawn (in red), before running the AI."},
+        advanced({.name = "prompt", .label = "Prompt", .type = Text, .widget = Widget::Text, .required = true,
+                  .hint = "What the area should look like; the default suits most surfaces. Name the material for "
+                          "better results, e.g. worn wood frame, old paper.",
+                  .initial = kCleanPrompt}),
+        advanced(number_input("threshold", "Difference", "How much a pixel must differ from the original (of 255) to "
+                              "count as edited.", "10", 0, 255, "%.0f"))};
+    for (InputSpec& in : ai_settings_inputs(kCleanAvoid)) inputs.push_back(std::move(in));
+    inputs.push_back(save_to_input());
+    return {
+        .type = "AiCleanup",
+        .title = "AI cleanup",
+        .summary = "Fixes what an edit leaves behind: the AI redraws a narrow band along where your edit meets the "
+                   "original (seams, hard edges), and any spots you mark, so they blend in. Everything else stays "
+                   "exactly as it was; alpha is kept. Uses the AI tool and model set in the Pipeline panel.",
+        .inputs = std::move(inputs),
+        .outputs = {{"image", Image, "image"}},
+        .state = {"generated"},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const fs::path image_file = clean_path(r.text("image"), r.run.options.base_dir);
+            const Bgra edited = load_image(image_file);
+            const auto original = optional_picture(r, "original", edited.width, edited.height);
+            const Bgra area = cleanup_area(edited, original, optional_picture(r, "spots", edited.width, edited.height),
+                                           number(r, "seam_width"), number(r, "threshold"));
+            if (blank(area))
+                throw GraphError(original ? "the edit doesn't differ from the original anywhere (or everywhere): no "
+                                            "seam to clean; link Spots to mark flaws"
+                                          : "the Spots mask is all black: paint white on the flaws");
+            generate_and_blend(r, image_file, edited, area, r.text("prompt"), ", in the cleanup area");
         },
         .preview = image_preview,
     };
@@ -3301,7 +3390,7 @@ const std::vector<NodeSpec>& node_specs() {
         load_tex(), files_in_folder(), streaming_copy_node(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
         resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), part_texture_node(),
         mesh_mask_node(),
-        mask_blend_node(), generate_image_node(), replace_photo_node(),
+        mask_blend_node(), generate_image_node(), ai_cleanup_node(), replace_photo_node(),
         preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), new_movie_node(), new_sound_node(), game_sound_node(), replace_sounds_node(),
         lua_script_node(), cutscene_node(), new_character_node(), name_pictures_node(), frame_pictures_node(),
         package_mod(),
@@ -3382,6 +3471,11 @@ const char* ai_note(std::string_view type) {
                           "photo's area, a painted mask): strength ~80 there; ~45 to restyle a whole picture. Keeps "
                           "alpha. Fails until the user has set the AI tool and model in the Pipeline panel; then say "
                           "so, don't work around it."},
+        {"AiCleanup", "After an edit (Blend in mask, Replace photo, Overlay image, a hand edit): link the edit into "
+                      "'image' and the picture before it (Export image's, through a Split) into 'original'; the AI "
+                      "redraws a band along the edit's edge so it blends in. 'spots' takes a painted mask of flaws. "
+                      "Leave the prompt as it is unless the surface needs naming. Untested on character texture "
+                      "sheets; fine on flat pictures. Same AI setup as Generate image."},
         {"MergeChannels", "Put an edited or AI-made picture into an original's colour while keeping its alpha (data): "
                           "base = the original image, Colour from = the new picture. Required after any AI image "
                           "result that will replace a texture with packed channels."},
@@ -3718,23 +3812,47 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
                          text("invert").value_or("") == "true");
             return base;
         }
-        if (n->type == "GenerateImage") {  // never generates: the last run's picture, through the mask as the run does
+        if (n->type == "GenerateImage" || n->type == "AiCleanup") {  // never generates: the last run's picture
+            auto base = image("image");
+            if (!base) return std::nullopt;
+            const unsigned w = base->image.width, h = base->image.height;
+            auto fit = [&](std::optional<ImagePreview> p) -> std::optional<Bgra> {
+                if (!p) return std::nullopt;
+                return resize_image(p->image, w, h, Fit::Stretch);
+            };
+            auto linked = [&](const char* input) {  // an optional image: only when one is given
+                const auto t = text(input);
+                return t && !t->empty() ? fit(image(input)) : std::nullopt;
+            };
+            std::optional<Bgra> mask;
+            if (n->type == "AiCleanup") {  // its area, worked out on the thumbnail as the run does at full size
+                const auto original = linked("original"), spots = linked("spots");
+                const auto width = number_of("seam_width"), threshold = number_of("threshold");
+                if ((!original && !spots) || !width || !threshold) return base;
+                mask = cleanup_area(base->image, original, spots, *width * base->scale, *threshold);
+            } else {
+                mask = linked("mask");
+            }
             const auto made = n->params.find("generated");
             std::error_code ec;
-            if (made == n->params.end() || made->second.empty() || !fs::is_regular_file(made->second, ec))
-                return std::nullopt;
-            auto base = image("image");
-            auto generated = load(made->second);
-            if (!base || !generated) return generated;
-            generated->image = resize_image(generated->image, base->image.width, base->image.height, Fit::Stretch);
-            const auto mask_text = text("mask");
-            if (auto mask = mask_text && !mask_text->empty() ? image("mask") : std::nullopt) {
-                mask->image = resize_image(mask->image, base->image.width, base->image.height, Fit::Stretch);
-                masked_blend(base->image, generated->image, mask->image,
-                             number_of("feather").value_or(0) * base->scale, false);
-            } else {
-                merge_channels(base->image, &generated->image, {});
+            const bool have = made != n->params.end() && !made->second.empty() && fs::is_regular_file(made->second, ec);
+            if (mask && (!have || text("show_area").value_or("") == "true")) {  // the area to redraw, tinted red
+                if (n->type != "AiCleanup") return std::nullopt;  // Generate image: nothing yet
+                for (size_t i = 0; i < base->image.pixels.size(); i += 4) {
+                    const float a = mask->pixels[i + 2] / 255.0f * 0.6f;
+                    std::uint8_t* px = &base->image.pixels[i];
+                    px[0] = std::uint8_t(px[0] * (1 - a)), px[1] = std::uint8_t(px[1] * (1 - a));
+                    px[2] = std::uint8_t(px[2] * (1 - a) + 255 * a);
+                }
+                return base;
             }
+            if (!have) return std::nullopt;
+            const auto generated = fit(load(made->second));
+            if (!generated) return std::nullopt;
+            if (mask)
+                masked_blend(base->image, *generated, *mask, number_of("feather").value_or(0) * base->scale, false);
+            else
+                merge_channels(base->image, &*generated, {});
             return base;
         }
         if (n->type == "PickChannel") {

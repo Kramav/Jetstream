@@ -1,56 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re2r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "FilesInFolder",
-      "params": {
-        "folder": "{game}/sectionroot/ui/ui3200/tex",
-        "pattern": "ui3210_file_6?_iam.tex.*",
-        "title": "The documents"
-      }
-    },
-    {
-      "id": 2,
-      "type": "LoadTex",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 5,
-      "type": "AdjustColour",
-      "params": {
-        "hue": "-40",
-        "saturation": "-30"
-      }
-    },
-    {
-      "id": 6,
-      "type": "PackageMod",
-      "params": {
-        "name": "Faded documents",
-        "out": "mods",
-        "version": "1.0",
-        "description": "The files numbered 60 to 69, faded",
-        "replace": "true"
-      }
-    },
-    {
-      "id": 7,
-      "type": "SaveTex",
-      "params": {}
-    }
-  ],
   "links": [
     {
       "from": [
@@ -122,5 +70,97 @@
         "tex"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "folder": "{game}/sectionroot/ui/ui3200/tex",
+        "on_fail": "stop",
+        "pattern": "ui3210_file_6?_iam.tex.*",
+        "subfolders": "",
+        "title": "The documents"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "FilesInFolder"
+    },
+    {
+      "id": 2,
+      "params": {
+        "game_path": "",
+        "tex": ""
+      },
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        -224.0,
+        170.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        168.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "-40",
+        "image": "",
+        "saturation": "-30",
+        "save_to": ""
+      },
+      "pos": [
+        461.0,
+        168.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 6,
+      "params": {
+        "author": "",
+        "description": "The files numbered 60 to 69, faded",
+        "name": "Faded documents",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        448.0,
+        391.0
+      ],
+      "type": "PackageMod"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        0.0,
+        391.0
+      ],
+      "type": "SaveTex"
+    }
+  ],
+  "profile": "re2r",
+  "schema_version": 0
 }

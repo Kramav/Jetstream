@@ -886,6 +886,77 @@ void merge_channels(Bgra& base, const Bgra* colour, const std::array<const Bgra*
     }
 }
 
+Bgra seam_mask(const Bgra& edited, const Bgra& original, unsigned width, unsigned threshold) {
+    if (edited.width != original.width || edited.height != original.height)
+        throw std::runtime_error("the edit is " + std::to_string(edited.width) + "x" + std::to_string(edited.height) +
+                                 ", the original " + std::to_string(original.width) + "x" +
+                                 std::to_string(original.height) + ": they must be the same size");
+    const int w = int(edited.width), h = int(edited.height);
+    std::vector<std::uint8_t> changed(size_t(w) * h);
+    for (size_t i = 0; i < changed.size(); ++i)
+        for (int c = 0; c < 3; ++c)
+            if (unsigned(std::abs(int(edited.pixels[i * 4 + c]) - int(original.pixels[i * 4 + c]))) > threshold)
+                changed[i] = 1;
+    // Only the edit's outline is a seam. Inside an edit, a patch that happens to match the original (a dark area over a
+    // dark one) is a hole, not a seam: unchanged pixels the image's border can't reach are filled. Specks of changed
+    // pixels smaller than the band itself are noise (a lossy save), not an edit: dropped.
+    // ponytail: 4-connected flood fills, O(pixels).
+    auto at = [&](int x, int y) { return size_t(y) * w + x; };
+    std::vector<int> label(changed.size(), -1);
+    auto flood = [&](size_t seed, std::uint8_t value, int id) {
+        std::vector<size_t> stack{seed}, members;
+        label[seed] = id;
+        while (!stack.empty()) {
+            const size_t i = stack.back();
+            stack.pop_back();
+            members.push_back(i);
+            const int x = int(i % w), y = int(i / w);
+            for (const auto [nx, ny] : {std::pair{x - 1, y}, std::pair{x + 1, y}, std::pair{x, y - 1}, std::pair{x, y + 1}})
+                if (nx >= 0 && ny >= 0 && nx < w && ny < h && label[at(nx, ny)] < 0 && changed[at(nx, ny)] == value)
+                    label[at(nx, ny)] = id, stack.push_back(at(nx, ny));
+        }
+        return members;
+    };
+    for (int y = 0; y < h; ++y)  // the unchanged pixels connected to the border
+        for (int x = 0; x < w; ++x)
+            if ((x == 0 || y == 0 || x == w - 1 || y == h - 1) && !changed[at(x, y)] && label[at(x, y)] < 0)
+                flood(at(x, y), 0, 0);
+    for (size_t i = 0; i < changed.size(); ++i)
+        if (!changed[i] && label[i] < 0) changed[i] = 1;  // a hole
+    const size_t speck = size_t(width) * width;
+    for (size_t i = 0; i < changed.size(); ++i)
+        if (changed[i] && label[i] < 0)
+            if (const auto part = flood(i, 1, 1); part.size() < speck)
+                for (size_t k : part) changed[k] = 0;
+    // Distance (in pixels, 8 neighbours) from the edge between changed and unchanged pixels: two chamfer passes.
+    constexpr int kFar = 1 << 28;
+    std::vector<int> d(changed.size(), kFar);
+    for (int y = 0; y < h; ++y)  // both pixels of each changed / unchanged pair: the band sits evenly across the edge
+        for (int x = 0; x < w; ++x) {
+            if (x + 1 < w && changed[at(x, y)] != changed[at(x + 1, y)]) d[at(x, y)] = d[at(x + 1, y)] = 0;
+            if (y + 1 < h && changed[at(x, y)] != changed[at(x, y + 1)]) d[at(x, y)] = d[at(x, y + 1)] = 0;
+        }
+    auto relax = [&](int x, int y, int nx, int ny) {
+        if (nx >= 0 && ny >= 0 && nx < w && ny < h) d[at(x, y)] = std::min(d[at(x, y)], d[at(nx, ny)] + 1);
+    };
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) relax(x, y, x - 1, y), relax(x, y, x - 1, y - 1), relax(x, y, x, y - 1), relax(x, y, x + 1, y - 1);
+    for (int y = h - 1; y >= 0; --y)
+        for (int x = w - 1; x >= 0; --x) relax(x, y, x + 1, y), relax(x, y, x + 1, y + 1), relax(x, y, x, y + 1), relax(x, y, x - 1, y + 1);
+    Bgra mask{edited.width, edited.height, std::vector<std::uint8_t>(changed.size() * 4, 255)};
+    for (size_t i = 0; i < changed.size(); ++i)
+        if (d[i] >= int(width)) std::fill_n(&mask.pixels[i * 4], 3, std::uint8_t(0));
+    return mask;
+}
+
+Bgra mask_union(const Bgra& a, const Bgra& b) {
+    if (a.width != b.width || a.height != b.height) throw std::runtime_error("the masks' sizes differ");
+    Bgra out{a.width, a.height, std::vector<std::uint8_t>(a.pixels.size(), 255)};
+    for (size_t i = 0; i < a.pixels.size(); i += 4)
+        std::fill_n(&out.pixels[i], 3, std::max(a.pixels[i + 2], b.pixels[i + 2]));
+    return out;
+}
+
 void masked_blend(Bgra& base, const Bgra& edited, const Bgra& mask, float feather, bool invert) {
     for (const Bgra* img : {&edited, &mask})
         if (img->width != base.width || img->height != base.height)

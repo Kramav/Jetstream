@@ -591,6 +591,43 @@ Single steps:
 Add `--noesis <path to Noesis64.exe>` to convert with Noesis. `package` refuses to overwrite an existing mod unless
 you add `--replace true`. Run `.\remod.exe` alone for every option.
 
+## AI images (optional)
+
+The **Generate image (AI)** block changes a picture as your prompt says, with an AI model running on your own graphics
+card. Nothing is sent anywhere.
+
+**Setting it up (once):**
+1. In the Pipeline panel's **AI images** section, click **Download stable-diffusion.cpp** and pick a folder (about
+   30 MB; it works on AMD and NVIDIA cards). Or pick an `sd-cli.exe` you already have.
+2. Download a model yourself and pick it as **AI model**. Tested: SDXL base 1.0 (`sd_xl_base_1.0.safetensors`, about
+   7 GB, from huggingface.co/stabilityai/stable-diffusion-xl-base-1.0).
+3. For SDXL, also download `sdxl_vae.safetensors` from huggingface.co/madebyollin/sdxl-vae-fp16-fix and pick it as
+   **AI VAE**. SDXL's own VAE gives black or noisy pictures.
+
+A graphics card with 8 GB or more is best (tested on 12 GB).
+
+**Using it:**
+- Link a picture into **Image**, write a **Prompt**, run. One picture takes a minute or two.
+- An unchanged run reuses the last picture. Change the **Seed** for another try with the same settings.
+- **Strength:** about 45 restyles a picture and keeps its shapes; about 80 makes something new.
+- **Mask:** a grey picture, white where it may change. Only that area changes; the rest stays exactly as it was. A
+  Mesh mask works, or a mask you painted.
+- The original's alpha is kept (RE textures often hold data there).
+- Example `23_an_ai_photo_in_a_frame` makes `picture.png` into an old photograph and puts it in a photo frame.
+
+**AI cleanup** fixes what an edit leaves behind, with the same AI setup:
+- Link your edited picture into **Edited image** and the picture before the edit (Export image's) into
+  **Original**. The AI then redraws a narrow band, **Seam width** each side, along where your edit meets the
+  original. Torn edges, hard lines and bits of an old photo left showing blend in.
+- **Spots** takes a mask you paint, white on any other flaws, which the AI removes too.
+- Everything else stays exactly as it was.
+- Tick **Show the area** to see in the thumbnail, in red, what will be redrawn before you spend the minute or two.
+- Its prompt suits most surfaces. Naming the material helps, e.g. "worn wooden frame".
+
+**What it's for:** flat pictures, such as photos, paintings, documents and UI. **Not** character or prop textures:
+those are texture sheets (pieces laid out for the 3D model), and the AI turns their layout into mush, even at low
+strength.
+
 ## Letting an AI build graphs (optional)
 
 `remod.exe mcp` is an MCP server. An AI client such as Claude Code can use it to build, check and run graphs with the

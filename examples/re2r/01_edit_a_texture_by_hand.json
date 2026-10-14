@@ -1,56 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re2r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "LoadTex",
-      "params": {
-        "tex": "{game}/sectionroot/ui/ui3200/tex/ui3210_file_17_iam.tex.10",
-        "title": "The texture to change"
-      }
-    },
-    {
-      "id": 2,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "ExportImage",
-      "params": {
-        "png": "edits/document.png"
-      }
-    },
-    {
-      "id": 4,
-      "type": "EditImage",
-      "params": {
-        "title": "Your edit"
-      }
-    },
-    {
-      "id": 5,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 6,
-      "type": "SaveTex",
-      "params": {}
-    },
-    {
-      "id": 7,
-      "type": "PackageMod",
-      "params": {
-        "name": "My first texture mod",
-        "out": "mods",
-        "version": "1.0",
-        "description": "A R.P.D. paper, edited by hand",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -132,5 +80,88 @@
         "preview"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "game_path": "",
+        "tex": "{game}/sectionroot/ui/ui3200/tex/ui3210_file_17_iam.tex.10",
+        "title": "The texture to change"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        400.0,
+        64.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {
+        "png": "edits/document.png"
+      },
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 4,
+      "params": {
+        "editor": "",
+        "title": "Your edit"
+      },
+      "pos": [
+        0.0,
+        290.0
+      ],
+      "type": "EditImage"
+    },
+    {
+      "id": 5,
+      "params": {},
+      "pos": [
+        383.0,
+        386.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        456.0,
+        290.0
+      ],
+      "type": "SaveTex"
+    },
+    {
+      "id": 7,
+      "params": {
+        "author": "",
+        "description": "A R.P.D. paper, edited by hand",
+        "name": "My first texture mod",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        0.0,
+        575.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re2r",
+  "schema_version": 0
 }

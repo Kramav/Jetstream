@@ -1,81 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re3r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "FilesInFolder",
-      "params": {
-        "folder": "{game}/escape/character/player/pl2000/mesh",
-        "pattern": "pl2000_*.tex*",
-        "title": "Jill's textures"
-      }
-    },
-    {
-      "id": 2,
-      "type": "LoadTex",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "TextMatches",
-      "params": {
-        "pattern": "*_alb*",
-        "title": "Is it a colour texture?"
-      }
-    },
-    {
-      "id": 5,
-      "type": "If",
-      "params": {
-        "title": "Only colour textures"
-      }
-    },
-    {
-      "id": 6,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 7,
-      "type": "StreamingCopy",
-      "params": {}
-    },
-    {
-      "id": 8,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 9,
-      "type": "AdjustColour",
-      "params": {
-        "saturation": "-100",
-        "title": "Grey"
-      }
-    },
-    {
-      "id": 10,
-      "type": "custom:convert_with_streaming",
-      "params": {}
-    },
-    {
-      "id": 11,
-      "type": "PackageMod",
-      "params": {
-        "name": "Grey Jill",
-        "out": "mods",
-        "version": "1.0",
-        "description": "Jill's colour textures without colour",
-        "replace": "true"
-      }
-    }
-  ],
   "links": [
     {
       "from": [
@@ -217,5 +140,145 @@
         "tex"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "folder": "{game}/escape/character/player/pl2000/mesh",
+        "on_fail": "stop",
+        "pattern": "pl2000_*.tex*",
+        "subfolders": "",
+        "title": "Jill's textures"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "FilesInFolder"
+    },
+    {
+      "id": 2,
+      "params": {
+        "game_path": "",
+        "tex": ""
+      },
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        -224.0,
+        7.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 4,
+      "params": {
+        "pattern": "*_alb*",
+        "text": "",
+        "title": "Is it a colour texture?"
+      },
+      "pos": [
+        0.0,
+        168.0
+      ],
+      "type": "TextMatches"
+    },
+    {
+      "id": 5,
+      "params": {
+        "condition": "true",
+        "title": "Only colour textures"
+      },
+      "pos": [
+        220.0,
+        0.0
+      ],
+      "type": "If"
+    },
+    {
+      "id": 6,
+      "params": {},
+      "pos": [
+        375.0,
+        63.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        448.0,
+        168.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 8,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        453.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 9,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "0",
+        "image": "",
+        "saturation": "-100",
+        "save_to": "",
+        "title": "Grey"
+      },
+      "pos": [
+        486.0,
+        453.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 10,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        724.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 11,
+      "params": {
+        "author": "",
+        "description": "Jill's colour textures without colour",
+        "name": "Grey Jill",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        471.0,
+        724.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re3r",
+  "schema_version": 0
 }

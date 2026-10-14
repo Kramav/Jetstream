@@ -1,61 +1,4 @@
 {
-  "schema_version": 0,
-  "profile": "re3r",
-  "nodes": [
-    {
-      "id": 1,
-      "type": "FilesInFolder",
-      "params": {
-        "folder": "{game}/escape/ui/ui3200/tex",
-        "pattern": "ui3210_file_32_iam.tex.*;ui3210_file_33_iam.tex.*;ui3210_file_34_iam.tex.*",
-        "title": "The documents"
-      }
-    },
-    {
-      "id": 2,
-      "type": "LoadTex",
-      "params": {}
-    },
-    {
-      "id": 3,
-      "type": "Split",
-      "params": {}
-    },
-    {
-      "id": 4,
-      "type": "ExportImage",
-      "params": {}
-    },
-    {
-      "id": 5,
-      "type": "AdjustColour",
-      "params": {
-        "hue": "-40",
-        "saturation": "-30"
-      }
-    },
-    {
-      "id": 6,
-      "type": "PackageMod",
-      "params": {
-        "name": "Faded documents",
-        "out": "mods",
-        "version": "1.0",
-        "description": "Three of the files, faded",
-        "replace": "true"
-      }
-    },
-    {
-      "id": 7,
-      "type": "StreamingCopy",
-      "params": {}
-    },
-    {
-      "id": 8,
-      "type": "custom:convert_with_streaming",
-      "params": {}
-    }
-  ],
   "links": [
     {
       "from": [
@@ -157,5 +100,110 @@
         "tex"
       ]
     }
-  ]
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "folder": "{game}/escape/ui/ui3200/tex",
+        "on_fail": "stop",
+        "pattern": "ui3210_file_32_iam.tex.*;ui3210_file_33_iam.tex.*;ui3210_file_34_iam.tex.*",
+        "subfolders": "",
+        "title": "The documents"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "FilesInFolder"
+    },
+    {
+      "id": 2,
+      "params": {
+        "game_path": "",
+        "tex": ""
+      },
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "LoadTex"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        394.0,
+        -56.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 4,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        168.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 5,
+      "params": {
+        "brightness": "0",
+        "contrast": "0",
+        "hue": "-40",
+        "image": "",
+        "saturation": "-30",
+        "save_to": ""
+      },
+      "pos": [
+        448.0,
+        168.0
+      ],
+      "type": "AdjustColour"
+    },
+    {
+      "id": 6,
+      "params": {
+        "author": "",
+        "description": "Three of the files, faded",
+        "name": "Faded documents",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        491.0,
+        351.0
+      ],
+      "type": "PackageMod"
+    },
+    {
+      "id": 7,
+      "params": {},
+      "pos": [
+        618.0,
+        0.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 8,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        351.0
+      ],
+      "type": "custom:convert_with_streaming"
+    }
+  ],
+  "profile": "re3r",
+  "schema_version": 0
 }

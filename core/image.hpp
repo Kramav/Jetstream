@@ -67,6 +67,13 @@ void merge_channels(Bgra& base, const Bgra* colour, const std::array<const Bgra*
 // base's size (throws std::runtime_error).
 void masked_blend(Bgra& base, const Bgra& edited, const Bgra& mask, float feather, bool invert);
 
+// Where an edit meets the original (AI cleanup, CLAUDE.md §10 M4): white within `width` pixels of the edge of the area
+// where `edited` differs from `original` (any colour channel by more than `threshold` of 255), black elsewhere. Both
+// the same size (throws std::runtime_error). All black when nothing (or everything) differs.
+Bgra seam_mask(const Bgra& edited, const Bgra& original, unsigned width, unsigned threshold);
+// The lighter of two masks (their red), as a grey mask; the same size (throws std::runtime_error).
+Bgra mask_union(const Bgra& a, const Bgra& b);
+
 // ---- Replace photo: a picture into a framed photo's place, keeping the old photo's ageing ----
 
 // The old photo's area inside an opaque frame. A frame's inner edge runs parallel to its outer outline (alpha, or the

@@ -121,7 +121,7 @@ authors).** `make_converter` picks one:
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
-  OverlayImage, ReplacePhoto, FramePictures, NamePictures, Preview, LuaScript (§10 M2), PackageMod; file steps CopyFile,
+  OverlayImage, ReplacePhoto, FramePictures, NamePictures, GenerateImage and AiCleanup (§10 M4), Preview, LuaScript (§10 M2), PackageMod; file steps CopyFile,
   MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
   CutText, RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
   utility.**
@@ -822,6 +822,7 @@ Bundle only what licensing allows; install or detect the rest on first run, with
 | libvorbis 1.3.7 / libogg 1.3.6, libopus 1.6.1 | Writing (and decoding) Wwise Vorbis / Opus WEMs (`core/wwise.*`) | BSD 3-clause [official] | **Adopted 2026-10-06:** vcpkg, core-private, static in the release zip; in the notices |
 | Lua 5.4.8 | Syntax-checking REFramework scripts (`core/game_code.*`) | MIT [official] | **Adopted 2026-10-07:** vcpkg (override), core-private, static; in the notices |
 | REFramework's SDK dump (`il2cpp_dump.json`) | The game's type names for checking scripts | The user's own file, made by REFramework (MIT) | Never shipped or copied; the user picks it |
+| stable-diffusion.cpp (leejet) | Generate image's AI (`sd-cli.exe`, Vulkan build), §10 M4 | MIT [official] | **Not bundled:** the user picks it, or the app downloads the pinned build (`kSdCppRelease`) into a folder they pick, on their click. Models (e.g. SDXL, OpenRAIL++) are always the user's own download |
 | REtool | PAK extraction / optional PAK creation | No license found | Don't bundle. Detect path; guide manual install |
 | Fluffy Mod Manager | Install/test mods | No license found | Don't bundle. User selects path |
 | texconv (DirectXTex) | Not needed: the DirectXTex library does the encoding (§2, §4) | MIT [official] | — |
@@ -2765,6 +2766,68 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
       colour-transfer mode). Alternatively, structure control (ControlNet tile / canny; for SDXL in sd.cpp,
       untried) or an edit model (Qwen-Image-Edit; heavy for 12 GB).
     - `spikes/out/ai/run.sh` reruns it.
+  - **Generate image block: built 2026-10-13** (user: "both, in order": this, then the material path; "offer a
+    download").
+    - **The block:** `GenerateImage`, Transform, thumbnail; core `image_ai.*`.
+      - In: Image (required: never text alone), Mask (optional), Prompt, Strength (60%), Seed (42), Feather (4).
+      - Advanced: Avoid (negative prompt), Steps 25, Prompt weight (cfg) 6, Work size 1024, Time limit 1800 s.
+      - Save to.
+    - **`generate_image`:**
+      - scales the picture to the work size (longer side, multiples of 64, `work_size`) and makes it opaque;
+      - runs `sd-cli` (`-m -i -o -p -W -H --strength --seed --steps --cfg-scale --vae-tiling`, plus `-n`, `--vae`,
+        `--mask`) on a private desktop in a temp folder;
+      - scales the result back.
+    - **The run puts the result back through the mask** (`masked_blend`, Feather), or with no mask `merge_channels`
+      keeps the alpha.
+    - **Cached:** `ai_<hash>.png` in the run cache, keyed on the image's and mask's bytes, the prompts, the numbers,
+      and sd-cli / model / VAE (path, size, time). An unchanged run reuses it; the tool must still be set.
+      - Node state `generated` (the cache file) gives the thumbnail: the last picture through the mask. A preview
+        never generates.
+    - **Settings (every game's):** `ai_tool` / `ai_model` / `ai_vae`, set by `set_image_ai` (app each frame; CLI,
+      api and mcp from settings).
+    - **App:** the Pipeline panel's "AI images (optional)": AI tool, AI model, AI VAE, and **Download
+      stable-diffusion.cpp**.
+      - The download goes into `<picked folder>\sd-cpp`, only on that click: System32's curl.exe + tar.exe, the
+        pinned tested build `kSdCppRelease` (master-964-1d0a58a, Vulkan).
+      - Models are never downloaded by remod (the tooltips name SDXL base 1.0 + sdxl-vae-fp16-fix).
+    - **Guard:** no `ChangeKind::Run` (a managed tool, like Noesis).
+    - **ai_note:** never on texture sheets; ~45 restyle, ~80 masked.
+    - **Example 23** (`23_an_ai_photo_in_a_frame`, RE4R): picture.png -> Generate image (old sepia photograph, 75%)
+      -> Replace photo into file_039 -> Convert -> Package.
+    - **Tests:**
+      - `tests/fake_sd_cli` (inverts colours, checks -W/-H, "fail" exits 3) stands in for the tool;
+      - covered: work_size, find_sd_cli, the URL, the block (whole picture with alpha kept, cache reuse, mask exact
+        outside, thumbnail, failing tool, no model);
+      - the examples test runs 23 through the stand-in.
+    - **Checked for real** (the user's sd.cpp + SDXL in `E:\Company\LLM`): example 23 from the CLI generated in 80
+      s, a rerun reused it (4.7 s in all), and the result was looked at as an image (a castle on a hill against a
+      big sun, toned and aged in the untouched frame).
+    - **Not checked:** by eye in the app (the AI section, the Download button, the thumbnail); the download itself
+      (only its URL).
+  - **AI cleanup block: built 2026-10-13** (user: "an AI cleanup block ... for fixing any imperfections made by the
+    manual modding streamline"; chose seams / hard edges and marked spots, not upscaling).
+    - **The block:** `AiCleanup`, Transform, thumbnail. In: Edited image, Original (optional), Spots (optional painted
+      mask), Seam width 12, Strength 45, Seed, Feather 6, Show the area. Advanced: Prompt (a generic clean-surface
+      one) and Difference 10 (threshold), plus the shared AI settings.
+    - **Its area:** `cleanup_area` = core `seam_mask` (where the edit differs from the original by more than the
+      threshold; a band of the seam width either side of that region's outline) `mask_union` the spots.
+      - Enclosed unchanged holes are filled first: a patch of the new picture matching the old isn't a seam. The
+        first real run invented a cross and a smudge inside the photo there.
+      - Changed specks smaller than width x width are dropped (noise).
+      - No original and no spots, or an empty area, fails saying what to link.
+    - **Shared with Generate image** (`generate_and_blend`): the AI run, the cache (key now on the mask's pixels;
+      prefix `ai2`), the blend back with alpha kept.
+    - **Thumbnail:** the area tinted red before a run or with Show the area (worked out on the thumbnail as the run
+      does), else the last AI picture through it.
+    - **Example 23** now ends Replace photo -> AI cleanup (original = the exported frame) -> Convert.
+    - **Checked for real (SDXL):** on example 23's photo, the torn light gap between the frame's moulding and the
+      photo and the old photo's leftovers were replaced by continuous moulding; nothing invented inside the photo
+      (after the hole fix). Before / after crops looked at as images.
+    - **Tests:** the seam band (inside, outside, middle, a hole, a stray pixel, sizes) and the block (needs a link,
+      identical pictures, the red area thumbnail, the seam and a spot redrawn, the rest exact, alpha kept).
+    - **Not tried:** on a character texture sheet.
+    - **Next: the material path for character textures** (spike first): an AI swatch onto Mesh-masked parts keeping
+      the original's shading.
   - **Two ways in (user, 2026-10-02):** a single AI call as a block in the graph, and an **AI orchestrator** (an
     MCP-server-style interface) that builds and edits graphs itself. The orchestrator must know which blocks can come
     next and which can't: core already decides this (`node_specs()` with descriptions and pins, `accepts`,
