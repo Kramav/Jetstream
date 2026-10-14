@@ -1,4 +1,69 @@
 {
+  "schema_version": 0,
+  "profile": "re3r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadTex",
+      "params": {
+        "tex": "{game}/escape/ui/ui3200/tex/ui3210_file_03_iam.tex.34",
+        "title": "The texture to change"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "StreamingCopy",
+      "params": {}
+    },
+    {
+      "id": 4,
+      "type": "ExportImage",
+      "params": {}
+    },
+    {
+      "id": 5,
+      "type": "ImportImage",
+      "params": {
+        "png": "logo.png",
+        "title": "Your logo (change me)"
+      }
+    },
+    {
+      "id": 6,
+      "type": "OverlayImage",
+      "params": {
+        "x": "400",
+        "y": "560",
+        "opacity": "85"
+      }
+    },
+    {
+      "id": 7,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 8,
+      "type": "custom:convert_with_streaming",
+      "params": {}
+    },
+    {
+      "id": 9,
+      "type": "PackageMod",
+      "params": {
+        "name": "Stamped R.P.D. paper",
+        "out": "mods",
+        "version": "1.0",
+        "description": "A logo stamped on a R.P.D. paper",
+        "replace": "true"
+      }
+    }
+  ],
   "links": [
     {
       "from": [
@@ -120,117 +185,5 @@
         "preview"
       ]
     }
-  ],
-  "nodes": [
-    {
-      "id": 1,
-      "params": {
-        "game_path": "",
-        "tex": "{game}/escape/ui/ui3200/tex/ui3210_file_03_iam.tex.34",
-        "title": "The texture to change"
-      },
-      "pos": [
-        0.0,
-        0.0
-      ],
-      "type": "LoadTex"
-    },
-    {
-      "id": 2,
-      "params": {},
-      "pos": [
-        400.0,
-        37.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 3,
-      "params": {},
-      "pos": [
-        473.0,
-        0.0
-      ],
-      "type": "StreamingCopy"
-    },
-    {
-      "id": 4,
-      "params": {
-        "png": ""
-      },
-      "pos": [
-        0.0,
-        205.0
-      ],
-      "type": "ExportImage"
-    },
-    {
-      "id": 5,
-      "params": {
-        "png": "logo.png",
-        "title": "Your logo (change me)"
-      },
-      "pos": [
-        0.0,
-        392.0
-      ],
-      "type": "ImportImage"
-    },
-    {
-      "id": 6,
-      "params": {
-        "base": "",
-        "opacity": "85",
-        "save_to": "",
-        "top": "",
-        "x": "400",
-        "y": "560"
-      },
-      "pos": [
-        461.0,
-        205.0
-      ],
-      "type": "OverlayImage"
-    },
-    {
-      "id": 7,
-      "params": {},
-      "pos": [
-        -73.0,
-        669.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 8,
-      "params": {
-        "in1": "",
-        "in2": "",
-        "in3": ""
-      },
-      "pos": [
-        0.0,
-        575.0
-      ],
-      "type": "custom:convert_with_streaming"
-    },
-    {
-      "id": 9,
-      "params": {
-        "author": "",
-        "description": "A logo stamped on a R.P.D. paper",
-        "name": "Stamped R.P.D. paper",
-        "out": "mods",
-        "replace": "true",
-        "version": "1.0"
-      },
-      "pos": [
-        491.0,
-        575.0
-      ],
-      "type": "PackageMod"
-    }
-  ],
-  "profile": "re3r",
-  "schema_version": 0
+  ]
 }

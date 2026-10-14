@@ -1,4 +1,36 @@
 {
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "NewSound",
+      "params": {
+        "name": "beeps",
+        "audio": "beep.wav",
+        "title": "Your new sound"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "cutscenes/play_new_sound.json",
+        "title": "Play your sound"
+      }
+    },
+    {
+      "id": 3,
+      "type": "PackageMod",
+      "params": {
+        "name": "New sound",
+        "out": "mods",
+        "version": "1.0",
+        "description": "Press F7 in game: your own sound plays",
+        "replace": "true"
+      }
+    }
+  ],
   "links": [
     {
       "from": [
@@ -20,51 +52,5 @@
         "file"
       ]
     }
-  ],
-  "nodes": [
-    {
-      "id": 1,
-      "params": {
-        "audio": "beep.wav",
-        "name": "beeps",
-        "title": "Your new sound"
-      },
-      "pos": [
-        0.0,
-        0.0
-      ],
-      "type": "NewSound"
-    },
-    {
-      "id": 2,
-      "params": {
-        "cutscene": "cutscenes/play_new_sound.json",
-        "editor": "",
-        "title": "Play your sound"
-      },
-      "pos": [
-        0.0,
-        206.0
-      ],
-      "type": "Cutscene"
-    },
-    {
-      "id": 3,
-      "params": {
-        "author": "",
-        "description": "Press F7 in game: your own sound plays",
-        "name": "New sound",
-        "out": "mods",
-        "replace": "true",
-        "version": "1.0"
-      },
-      "pos": [
-        476.0,
-        0.0
-      ],
-      "type": "PackageMod"
-    }
-  ],
-  "profile": "re4r",
-  "schema_version": 0
+  ]
 }

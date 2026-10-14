@@ -24,6 +24,9 @@ struct Settings {
     std::string graph_path;      // the open game's last graph
     std::string noesis_path;     // optional: the 3D mesh view, and texture conversion if noesis_textures
     bool noesis_textures = false;  // convert textures with Noesis instead of the built-in converter
+    std::string ai_tool;   // Generate image (CLAUDE.md §10 M4): sd-cli.exe or its folder (stable-diffusion.cpp)
+    std::string ai_model;  // its model (.safetensors / .gguf), the user's own download
+    std::string ai_vae;    // optional separate VAE (SDXL: sdxl-vae-fp16-fix)
     bool show_help = true;
     std::string game_files_dir;  // the open game's extracted files (REtool); empty = ask the RE plugin's NativesPath.txt
     std::string game_dir;        // the open game's folder (the .exe's): Lua script's Test in game

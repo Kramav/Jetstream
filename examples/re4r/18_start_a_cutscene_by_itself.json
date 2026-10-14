@@ -1,4 +1,27 @@
 {
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "cutscenes/started_by_itself.json",
+        "title": "Starts when you get there"
+      }
+    },
+    {
+      "id": 2,
+      "type": "PackageMod",
+      "params": {
+        "name": "Trigger test",
+        "out": "mods",
+        "version": "1.0",
+        "description": "Walk to the spot: a cutscene starts by itself",
+        "replace": "true"
+      }
+    }
+  ],
   "links": [
     {
       "from": [
@@ -10,38 +33,5 @@
         "file"
       ]
     }
-  ],
-  "nodes": [
-    {
-      "id": 1,
-      "params": {
-        "cutscene": "cutscenes/started_by_itself.json",
-        "editor": "",
-        "title": "Starts when you get there"
-      },
-      "pos": [
-        0.0,
-        0.0
-      ],
-      "type": "Cutscene"
-    },
-    {
-      "id": 2,
-      "params": {
-        "author": "",
-        "description": "Walk to the spot: a cutscene starts by itself",
-        "name": "Trigger test",
-        "out": "mods",
-        "replace": "true",
-        "version": "1.0"
-      },
-      "pos": [
-        476.0,
-        0.0
-      ],
-      "type": "PackageMod"
-    }
-  ],
-  "profile": "re4r",
-  "schema_version": 0
+  ]
 }

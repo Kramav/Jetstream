@@ -1,4 +1,103 @@
 {
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "NamePictures",
+      "params": {
+        "title": "Your pictures, named for each place"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "FilesInFolder",
+      "params": {
+        "folder": "{game}/_chainsaw/ui/ui3200/tex",
+        "on_fail": "skip",
+        "pattern": "cs_ui3210_file_033_00_iam.tex.*;cs_ui3210_file_039_00_iam.tex.*;cs_ui3210_file_041_00_iam.tex.*;cs_ui3210_file_048_00_iam.tex.*;cs_ui3210_file_049_00_iam.tex.*;cs_ui3210_file_051_00_iam.tex.*;cs_ui3210_file_078_00_iam.tex.*;cs_ui3210_file_089_00_iam.tex.*;cs_ui3210_questfile_main_002_01_iam.tex.*;cs_ui3210_questfile_main_002_02_iam.tex.*",
+        "title": "Every photo in the files"
+      }
+    },
+    {
+      "id": 4,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 5,
+      "type": "LoadTex",
+      "params": {}
+    },
+    {
+      "id": 6,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 7,
+      "type": "ExportImage",
+      "params": {}
+    },
+    {
+      "id": 8,
+      "type": "JoinPath",
+      "params": {
+        "add": "{name}.png",
+        "title": "Its picture"
+      }
+    },
+    {
+      "id": 9,
+      "type": "ReplacePhoto",
+      "params": {
+        "stains": "0"
+      }
+    },
+    {
+      "id": 10,
+      "type": "SaveTex",
+      "params": {}
+    },
+    {
+      "id": 11,
+      "type": "PackageMod",
+      "params": {
+        "name": "My pictures",
+        "out": "mods",
+        "version": "1.0",
+        "description": "A picture of your own in every photo of the files and painting on the walls",
+        "replace": "true"
+      }
+    },
+    {
+      "id": 12,
+      "type": "FilesInFolder",
+      "params": {
+        "folder": "{game}/_chainsaw/environment/sm/sm3x/sm34",
+        "pattern": "sm34_512_00.mesh.*;sm34_512_01.mesh.*;sm34_512_02.mesh.*;sm34_513_00.mesh.*;sm34_513_01.mesh.*;sm34_513_02.mesh.*;sm34_517_00.mesh.*;sm34_517_01.mesh.*;sm34_517_02.mesh.*;sm34_543_00.mesh.*;sm34_544_00.mesh.*;sm34_545_00.mesh.*;sm34_547_00.mesh.*;sm34_548_00.mesh.*;sm34_549_00.mesh.*;sm34_550_00.mesh.*;sm34_551_00.mesh.*;sm34_552_00.mesh.*;sm34_575_00.mesh.*;sm34_576_00.mesh.*;sm34_579_00.mesh.*;sm34_580_00.mesh.*;sm34_581_00.mesh.*;sm34_582_00.mesh.*;sm34_583_00.mesh.*;sm34_584_00.mesh.*;sm34_596_00.mesh.*;sm34_597_00.mesh.*;sm34_598_00.mesh.*;sm34_599_00.mesh.*;sm34_600_00.mesh.*;sm34_601_00.mesh.*;sm34_602_00.mesh.*;sm34_603_00.mesh.*;sm34_604_00.mesh.*;sm34_605_00.mesh.*;sm34_606_00.mesh.*;sm34_607_00.mesh.*;sm34_608_00.mesh.*;sm34_609_00.mesh.*;sm34_610_00.mesh.*;sm34_611_00.mesh.*;sm34_612_00.mesh.*;sm34_613_00.mesh.*;sm34_614_00.mesh.*;sm34_615_00.mesh.*;sm34_616_00.mesh.*;sm34_617_00.mesh.*;sm34_618_00.mesh.*;sm34_619_00.mesh.*;sm34_620_00.mesh.*;sm34_621_00.mesh.*;sm34_622_00.mesh.*;sm34_623_00.mesh.*;sm34_624_00.mesh.*;sm34_625_00.mesh.*;sm34_626_00.mesh.*;sm34_628_00.mesh.*;sm34_630_00.mesh.*;sm34_631_00.mesh.*;sm34_634_00.mesh.*;sm34_636_00.mesh.*;sm34_669_00.mesh.*;sm34_672_00.mesh.*;sm34_672_01.mesh.*;sm34_672_02.mesh.*;sm34_672_03.mesh.*;sm34_672_04.mesh.*;sm34_672_05.mesh.*;sm34_672_06.mesh.*;sm34_674_00.mesh.*;sm34_675_00.mesh.*;sm34_676_00.mesh.*;sm34_677_00.mesh.*;sm34_678_00.mesh.*;sm34_679_00.mesh.*;sm34_680_00.mesh.*;sm34_681_00.mesh.*",
+        "subfolders": "true",
+        "title": "Every picture frame"
+      }
+    },
+    {
+      "id": 13,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 14,
+      "type": "FramePictures",
+      "params": {
+        "canvas": "sm34_512_a_albd*;sm34_512_b_albd*;sm34_512_c_albd*;sm34_513_a_albd*;sm34_513_b_albd*;sm34_513_c_albd*;sm34_517_a_albd*;sm34_517_b_albd*;sm34_517_c_albd*;sm34_543_a_albd*;sm34_543_b_albd*;sm34_575_a_albd*;sm34_579_c_albd*;sm34_580_a_albd*;sm34_596_a_albd*;sm34_601_a_albd*;sm34_605_a_albd*;sm34_610_a_albd*;sm34_614_a_albd*;sm34_618_a_albd*;sm34_623_a_albd*;sm34_626_a_albd*;sm34_628_albd*;sm34_632_albd*;sm34_635_albd*;sm34_669_albd*;sm34_672_a_albd*;sm34_672_b_albd*;sm34_673_albd*;sm34_676_albd*;sm34_680_albd*"
+      }
+    }
+  ],
   "links": [
     {
       "from": [
@@ -170,185 +269,5 @@
         "tex"
       ]
     }
-  ],
-  "nodes": [
-    {
-      "id": 1,
-      "params": {
-        "folder": "edits\\named pictures",
-        "pictures": "pictures",
-        "title": "Your pictures, named for each place"
-      },
-      "pos": [
-        498.0,
-        294.0
-      ],
-      "type": "NamePictures"
-    },
-    {
-      "id": 2,
-      "params": {},
-      "pos": [
-        -73.0,
-        1011.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 3,
-      "params": {
-        "folder": "{game}/_chainsaw/ui/ui3200/tex",
-        "on_fail": "skip",
-        "pattern": "cs_ui3210_file_033_00_iam.tex.*;cs_ui3210_file_039_00_iam.tex.*;cs_ui3210_file_041_00_iam.tex.*;cs_ui3210_file_048_00_iam.tex.*;cs_ui3210_file_049_00_iam.tex.*;cs_ui3210_file_051_00_iam.tex.*;cs_ui3210_file_078_00_iam.tex.*;cs_ui3210_file_089_00_iam.tex.*;cs_ui3210_questfile_main_002_01_iam.tex.*;cs_ui3210_questfile_main_002_02_iam.tex.*",
-        "subfolders": "",
-        "title": "Every photo in the files"
-      },
-      "pos": [
-        0.0,
-        0.0
-      ],
-      "type": "FilesInFolder"
-    },
-    {
-      "id": 4,
-      "params": {},
-      "pos": [
-        425.0,
-        119.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 5,
-      "params": {
-        "game_path": "",
-        "tex": ""
-      },
-      "pos": [
-        498.0,
-        0.0
-      ],
-      "type": "LoadTex"
-    },
-    {
-      "id": 6,
-      "params": {},
-      "pos": [
-        -73.0,
-        771.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 7,
-      "params": {
-        "png": ""
-      },
-      "pos": [
-        0.0,
-        673.0
-      ],
-      "type": "ExportImage"
-    },
-    {
-      "id": 8,
-      "params": {
-        "add": "{name}.png",
-        "folder": "",
-        "title": "Its picture"
-      },
-      "pos": [
-        0.0,
-        961.0
-      ],
-      "type": "JoinPath"
-    },
-    {
-      "id": 9,
-      "params": {
-        "detail": "0",
-        "feather": "1",
-        "frame": "",
-        "frame_width": "0",
-        "grow": "0",
-        "picture": "",
-        "picture_x": "0",
-        "picture_y": "0",
-        "save_to": "",
-        "shading": "100",
-        "show_outline": "",
-        "stains": "0",
-        "tone": "100",
-        "zoom": "100"
-      },
-      "pos": [
-        448.0,
-        673.0
-      ],
-      "type": "ReplacePhoto"
-    },
-    {
-      "id": 10,
-      "params": {},
-      "pos": [
-        0.0,
-        1154.0
-      ],
-      "type": "SaveTex"
-    },
-    {
-      "id": 11,
-      "params": {
-        "author": "",
-        "description": "A picture of your own in every photo of the files and painting on the walls",
-        "name": "My pictures",
-        "out": "mods",
-        "replace": "true",
-        "version": "1.0"
-      },
-      "pos": [
-        492.0,
-        1154.0
-      ],
-      "type": "PackageMod"
-    },
-    {
-      "id": 12,
-      "params": {
-        "folder": "{game}/_chainsaw/environment/sm/sm3x/sm34",
-        "on_fail": "stop",
-        "pattern": "sm34_512_00.mesh.*;sm34_512_01.mesh.*;sm34_512_02.mesh.*;sm34_513_00.mesh.*;sm34_513_01.mesh.*;sm34_513_02.mesh.*;sm34_517_00.mesh.*;sm34_517_01.mesh.*;sm34_517_02.mesh.*;sm34_543_00.mesh.*;sm34_544_00.mesh.*;sm34_545_00.mesh.*;sm34_547_00.mesh.*;sm34_548_00.mesh.*;sm34_549_00.mesh.*;sm34_550_00.mesh.*;sm34_551_00.mesh.*;sm34_552_00.mesh.*;sm34_575_00.mesh.*;sm34_576_00.mesh.*;sm34_579_00.mesh.*;sm34_580_00.mesh.*;sm34_581_00.mesh.*;sm34_582_00.mesh.*;sm34_583_00.mesh.*;sm34_584_00.mesh.*;sm34_596_00.mesh.*;sm34_597_00.mesh.*;sm34_598_00.mesh.*;sm34_599_00.mesh.*;sm34_600_00.mesh.*;sm34_601_00.mesh.*;sm34_602_00.mesh.*;sm34_603_00.mesh.*;sm34_604_00.mesh.*;sm34_605_00.mesh.*;sm34_606_00.mesh.*;sm34_607_00.mesh.*;sm34_608_00.mesh.*;sm34_609_00.mesh.*;sm34_610_00.mesh.*;sm34_611_00.mesh.*;sm34_612_00.mesh.*;sm34_613_00.mesh.*;sm34_614_00.mesh.*;sm34_615_00.mesh.*;sm34_616_00.mesh.*;sm34_617_00.mesh.*;sm34_618_00.mesh.*;sm34_619_00.mesh.*;sm34_620_00.mesh.*;sm34_621_00.mesh.*;sm34_622_00.mesh.*;sm34_623_00.mesh.*;sm34_624_00.mesh.*;sm34_625_00.mesh.*;sm34_626_00.mesh.*;sm34_628_00.mesh.*;sm34_630_00.mesh.*;sm34_631_00.mesh.*;sm34_634_00.mesh.*;sm34_636_00.mesh.*;sm34_669_00.mesh.*;sm34_672_00.mesh.*;sm34_672_01.mesh.*;sm34_672_02.mesh.*;sm34_672_03.mesh.*;sm34_672_04.mesh.*;sm34_672_05.mesh.*;sm34_672_06.mesh.*;sm34_674_00.mesh.*;sm34_675_00.mesh.*;sm34_676_00.mesh.*;sm34_677_00.mesh.*;sm34_678_00.mesh.*;sm34_679_00.mesh.*;sm34_680_00.mesh.*;sm34_681_00.mesh.*",
-        "subfolders": "true",
-        "title": "Every picture frame"
-      },
-      "pos": [
-        0.0,
-        294.0
-      ],
-      "type": "FilesInFolder"
-    },
-    {
-      "id": 13,
-      "params": {},
-      "pos": [
-        425.0,
-        420.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 14,
-      "params": {
-        "canvas": "sm34_512_a_albd*;sm34_512_b_albd*;sm34_512_c_albd*;sm34_513_a_albd*;sm34_513_b_albd*;sm34_513_c_albd*;sm34_517_a_albd*;sm34_517_b_albd*;sm34_517_c_albd*;sm34_543_a_albd*;sm34_543_b_albd*;sm34_575_a_albd*;sm34_579_c_albd*;sm34_580_a_albd*;sm34_596_a_albd*;sm34_601_a_albd*;sm34_605_a_albd*;sm34_610_a_albd*;sm34_614_a_albd*;sm34_618_a_albd*;sm34_623_a_albd*;sm34_626_a_albd*;sm34_628_albd*;sm34_632_albd*;sm34_635_albd*;sm34_669_albd*;sm34_672_a_albd*;sm34_672_b_albd*;sm34_673_albd*;sm34_676_albd*;sm34_680_albd*",
-        "pictures": "pictures"
-      },
-      "pos": [
-        0.0,
-        1562.0
-      ],
-      "type": "FramePictures"
-    }
-  ],
-  "profile": "re4r",
-  "schema_version": 0
+  ]
 }

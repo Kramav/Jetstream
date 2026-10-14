@@ -339,6 +339,7 @@ TEST_CASE("built-in blocks: each one loads and validates; a block inside another
 
 // ---- The shipped examples (examples\<game>): each one runs on that game's real files ----
 
+#include "image_ai.hpp"
 #include "texture_converter.hpp"
 
 namespace {
@@ -361,6 +362,9 @@ int run_examples(const char* env, const std::string& id, std::string& game) {
     for (const char* sub : {"cutscenes", "pictures"})  // RE4R's cutscene files and example 20's pictures
         if (fs::exists(folder / sub)) fs::copy(folder / sub, tmp.path / sub);
     const auto converter = remod::make_converter({});
+    // Example 23's AI: the stand-in tool (no GPU or model here); the real one was checked by hand (CLAUDE.md §10 M4).
+    test::write_file(tmp.path / "model.safetensors", "weights");
+    remod::set_image_ai({FAKE_SD_CLI, tmp.path / "model.safetensors", {}});
     int ran = 0;
     for (const auto& e : fs::directory_iterator(tmp.path)) {
         if (e.path().extension() != ".json") continue;
@@ -384,6 +388,7 @@ int run_examples(const char* env, const std::string& id, std::string& game) {
         ++ran;
     }
     remod::set_game_files_dir({});
+    remod::set_image_ai({});
     return ran;
 }
 
@@ -393,7 +398,7 @@ TEST_CASE("every RE4R example runs on the game files (set REMOD_GAME to the extr
     std::string game;
     const int ran = run_examples("REMOD_GAME", "re4r", game);
     if (ran < 0) SKIP("set REMOD_GAME to your extracted natives/STM folder to run the examples");
-    CHECK(ran >= 22);
+    CHECK(ran >= 23);
 }
 
 TEST_CASE("every RE3R example runs on its files (set REMOD_GAME_RE3R to its extracted natives/STM)") {

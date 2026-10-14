@@ -1,4 +1,69 @@
 {
+  "schema_version": 0,
+  "profile": "re3r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadTex",
+      "params": {
+        "tex": "{game}/escape/ui/ui3200/tex/ui3210_file_03_iam.tex.34",
+        "title": "The texture to change"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 3,
+      "type": "StreamingCopy",
+      "params": {}
+    },
+    {
+      "id": 4,
+      "type": "ExportImage",
+      "params": {}
+    },
+    {
+      "id": 5,
+      "type": "AdjustColour",
+      "params": {
+        "brightness": "-25"
+      }
+    },
+    {
+      "id": 6,
+      "type": "Split",
+      "params": {}
+    },
+    {
+      "id": 7,
+      "type": "custom:convert_with_streaming",
+      "params": {}
+    },
+    {
+      "id": 8,
+      "type": "PackageMod",
+      "params": {
+        "name": "Darker R.P.D. paper",
+        "out": "mods",
+        "version": "1.0",
+        "description": "A darker R.P.D. paper, with a backup of each build",
+        "replace": "true"
+      }
+    },
+    {
+      "id": 9,
+      "type": "CopyFile",
+      "params": {
+        "dest": "backups/",
+        "if_exists": "overwrite",
+        "create_dirs": "true",
+        "title": "Back up the build"
+      }
+    }
+  ],
   "links": [
     {
       "from": [
@@ -120,120 +185,5 @@
         "source"
       ]
     }
-  ],
-  "nodes": [
-    {
-      "id": 1,
-      "params": {
-        "game_path": "",
-        "tex": "{game}/escape/ui/ui3200/tex/ui3210_file_03_iam.tex.34",
-        "title": "The texture to change"
-      },
-      "pos": [
-        0.0,
-        0.0
-      ],
-      "type": "LoadTex"
-    },
-    {
-      "id": 2,
-      "params": {},
-      "pos": [
-        400.0,
-        64.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 3,
-      "params": {},
-      "pos": [
-        473.0,
-        0.0
-      ],
-      "type": "StreamingCopy"
-    },
-    {
-      "id": 4,
-      "params": {
-        "png": ""
-      },
-      "pos": [
-        0.0,
-        316.0
-      ],
-      "type": "ExportImage"
-    },
-    {
-      "id": 5,
-      "params": {
-        "brightness": "-25",
-        "contrast": "0",
-        "hue": "0",
-        "image": "",
-        "saturation": "0",
-        "save_to": ""
-      },
-      "pos": [
-        145.0,
-        316.0
-      ],
-      "type": "AdjustColour"
-    },
-    {
-      "id": 6,
-      "params": {},
-      "pos": [
-        368.0,
-        362.0
-      ],
-      "type": "Split"
-    },
-    {
-      "id": 7,
-      "params": {
-        "in1": "",
-        "in2": "",
-        "in3": ""
-      },
-      "pos": [
-        441.0,
-        316.0
-      ],
-      "type": "custom:convert_with_streaming"
-    },
-    {
-      "id": 8,
-      "params": {
-        "author": "",
-        "description": "A darker R.P.D. paper, with a backup of each build",
-        "name": "Darker R.P.D. paper",
-        "out": "mods",
-        "replace": "true",
-        "version": "1.0"
-      },
-      "pos": [
-        586.0,
-        316.0
-      ],
-      "type": "PackageMod"
-    },
-    {
-      "id": 9,
-      "params": {
-        "create_dirs": "true",
-        "dest": "backups/",
-        "if_exists": "overwrite",
-        "source": "",
-        "title": "Back up the build"
-      },
-      "pos": [
-        794.0,
-        316.0
-      ],
-      "type": "CopyFile"
-    }
-  ],
-  "profile": "re3r",
-  "schema_version": 0
+  ]
 }

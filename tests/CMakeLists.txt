@@ -2,7 +2,7 @@ find_package(Catch2 3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(lua CONFIG REQUIRED)
 
-add_executable(remod_tests test_profile.cpp test_package.cpp test_process.cpp test_texture.cpp test_graph.cpp test_settings.cpp test_image.cpp test_setup.cpp test_route.cpp test_browse.cpp test_mesh.cpp test_names.cpp test_api.cpp test_run_program.cpp test_custom.cpp test_mcp.cpp test_conditions.cpp test_movie.cpp test_wwise.cpp test_game_code.cpp test_cutscene.cpp test_gui.cpp)
+add_executable(remod_tests test_profile.cpp test_package.cpp test_process.cpp test_texture.cpp test_graph.cpp test_settings.cpp test_image.cpp test_setup.cpp test_route.cpp test_browse.cpp test_mesh.cpp test_names.cpp test_api.cpp test_run_program.cpp test_custom.cpp test_mcp.cpp test_conditions.cpp test_movie.cpp test_wwise.cpp test_game_code.cpp test_cutscene.cpp test_gui.cpp test_image_ai.cpp)
 target_link_libraries(remod_tests PRIVATE remod_core Catch2::Catch2WithMain nlohmann_json::nlohmann_json lua shell32)
 target_compile_definitions(remod_tests PRIVATE
     REMOD_PROFILES_DIR="${PROJECT_SOURCE_DIR}/profiles"
@@ -10,6 +10,12 @@ target_compile_definitions(remod_tests PRIVATE
     REMOD_BLOCKS_DIR="${PROJECT_SOURCE_DIR}/blocks"
     REMOD_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples/re4r"
     REMOD_RUNTIME_DIR="${PROJECT_SOURCE_DIR}/runtime")
+
+# Stands in for stable-diffusion.cpp's sd-cli.exe (Generate image's tests: no GPU or model needed).
+add_executable(fake_sd_cli fake_sd_cli.cpp)
+target_link_libraries(fake_sd_cli PRIVATE remod_core)
+add_dependencies(remod_tests fake_sd_cli)
+target_compile_definitions(remod_tests PRIVATE FAKE_SD_CLI="$<TARGET_FILE:fake_sd_cli>")
 
 include(Catch)
 catch_discover_tests(remod_tests)

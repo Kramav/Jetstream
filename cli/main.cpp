@@ -3,6 +3,7 @@
 #include "custom.hpp"
 #include "game_code.hpp"
 #include "graph.hpp"
+#include "image_ai.hpp"
 #include "mcp.hpp"
 #include "movie.hpp"
 #include "package.hpp"
@@ -123,6 +124,7 @@ int run(int argc, char** argv) {
                 if (p.id == settings.game) game = remod::game_files_dir(settings.noesis_path, p);
         remod::set_game_files_dir(game);
         remod::set_sdk_dump(args.contains("dump") ? args["dump"] : settings.sdk_dump);
+        remod::set_image_ai({settings.ai_tool, settings.ai_model, settings.ai_vae});  // Generate image
     }
     // The built-in and the user's custom nodes are block types (a graph's own copies, registered on load, win).
     for (const remod::CustomNode& c : remod::load_block_library()) remod::register_custom(c);

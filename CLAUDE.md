@@ -1057,6 +1057,58 @@ propose them as next steps before then.
   packet (libvorbis) play cleanly; with Same length off, does a sound of another length play fully without a bank
   edit.
 
+### RE4R release 1.0 (user, 2026-10-13: "a list of what we need to do to get a full release")
+**Parked (user, 2026-10-13: "I want to keep working on stuff"):** the list waits until the user starts the release
+pass; don't propose it as next steps before then. The list above is part of it.
+
+When it starts, the plan:
+1. **A ready-made release test pack (Claude):**
+   - every mod this list needs, built from the examples (textures 01/03/06/07/20, movies 12/13/22, sound 14,
+     cutscenes 15-18/21), into `spikes/out/`;
+   - `spikes/release_test.md`: per mod, what to install, where to go in game, what to look for.
+
+   The user only plays and reports what's on screen; Claude reads the REFramework log for the rest.
+2. **Quick checks (user):** the unzipped app's game picker (below), and the six parked cutscene items' call.
+   Claude's recommendation: known limits, not blockers.
+3. **After the pass:** fix what failed, tick the boxes here, cut those lines from the guide's Known limits,
+   rebuild the zip (§2).
+
+- **Repo side: done 2026-10-13.**
+  - The zip is RE4R-only, without run outputs, and carries the GPL-3.0 `LICENSE` (§2).
+  - Install keeps a replaced script as `.bak`.
+  - The guide has a **Known limits** section; each check passed here takes its line out of it.
+  - Checked:
+    - 247 tests with REMOD_GAME;
+    - the Release zip unzipped, with System32 only on PATH: tex2png → png2tex → package on a real texture, and
+      example 02 run.
+- [ ] **The app from the unzipped zip:** it starts, and the game picker shows RE4R only (user's eyes).
+- [ ] **Texture path (must pass):**
+  - the built-in converter item above;
+  - examples 03 and 20 (photo frames, painting atlases upright);
+  - example 06 (Recolour part: Leon's trousers only);
+  - example 07 (both streaming copies);
+  - a PC without Visual Studio: the app starts, example 01 runs and packages.
+- [ ] **Movies and sounds:** the items above, plus examples 13 (movie edited by hand) and 22 (batch from a folder).
+- [ ] **Scripts:**
+  - Fluffy uninstall (above);
+  - Game errors read from a real REFramework log;
+  - Write with Claude / Ask / Fix by eye.
+- [ ] **Cutscenes on the split runtime** (remod_cutscene.lua + re4.lua; nothing has run since the split):
+  - `spikes/talk_menu_test.md` (example 21) plus example 17's F7: the talk menu on Ashley, picking Ask about Ashley,
+    and whether the cursor skips hidden spares;
+  - then examples 15, 16 and 18.
+- [ ] **Decide (user): the six parked cutscene items** (§10 NEXT: example 19, event animation files in a cutscene,
+  the actors' sides fix, a cutscene from a recording, trigger test part 2, `after` a game movie). Each is either a
+  release blocker or stays in Known limits.
+- [ ] **By eye in the app:**
+  - Sounds viewer (Play, Save as WAV, a line dragged onto the graph), the Show / Language filter;
+  - Movie preview and the block's Preview movie;
+  - the batch YOUR STEP list and Files in folder's ◀ ▶;
+  - the custom node make / edit / Back / "Use the library's";
+  - LabVIEW-style terminals, list wires and the hidden-rows grip;
+  - the materials dropdown, the Value checkbox, the Not needed look;
+  - the Cutscene layout's look: good enough for a release?
+
 ## 10. Milestones after M1
 
 - **Games: one app, a workspace per game (user, 2026-10-13: "partition remod such that RE4R has a different layout
@@ -2686,6 +2738,33 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
 
 - **M4 (was M2, renumbered 2026-10-03): AI.** AI backend as a separate local process (not in the app). GPU/VRAM detection at install.
   img2img/ControlNet for textures, never plain text-to-image for UV-mapped textures.
+  - **Backend survey (2026-10-13; user chose M4 next).** This PC: AMD RX 6700 XT (gfx1031, 12 GB; WMI's AdapterRAM
+    caps at 4 GB), Ryzen 5 3600, 64 GB RAM.
+
+    | Candidate | Covers | Gap | Licence | Maintained |
+    |---|---|---|---|---|
+    | stable-diffusion.cpp (leejet) | One exe (`sd-cli`, `sd-server` with an A1111-style `/sdapi/v1` API), prebuilt Windows **Vulkan** (also CUDA, ROCm, CPU); img2img (`-i`, `--strength`), inpaint (`--mask`), ControlNet (`--control-net` / `--control-image`; docs list SD1.5), edit models via `--ref-image` (Qwen-Image-Edit, FLUX Kontext, Flux.2); SD1.5 / SDXL / SD3 / FLUX / Qwen-Image / Z-Image | Vulkan on AMD had SDXL colour-noise reports (issue 563; not seen here) | MIT | release master-964, 2026-10-13 |
+    | ComfyUI | Everything, HTTP + websocket API | Python; Windows ROCm is official only for newer cards (AMD lists gfx1031 as runtime-only, no HIP SDK); RDNA2 needs community ComfyUI-Zluda / comfyui-rocm | GPL-3.0 | active |
+
+    **Decided: stable-diffusion.cpp** as a managed tool (detected or downloaded with consent, never bundled, run as
+    a process). Models are the user's. ComfyUI is a possible second backend later.
+  - **Spike (2026-10-13), sd.cpp master-964 Vulkan + SDXL base 1.0 + sdxl-vae-fp16-fix**, in the user's
+    `E:\Company\LLM\` (`sdcpp\`, `models\`). Results are in `spikes/out/ai` (git-ignored), looked at as image files.
+    - Vulkan finds the 6700 XT (fp16).
+    - 1024 px, 25 steps, `--vae-tiling`: 74-123 s per image (sampling ~41 s at 0.45 strength, VAE decode ~29 s).
+      No colour noise, no NaN.
+    - **2D textures: good.** `cs_ui3210_file_039_00_iam` at 0.45 without a mask: a sepia castle in the frame's
+      place, but the frame's wood detail washed out (the VAE round trip softens everything). **With a mask** of the
+      photo area at 0.8: a new photo and the frame untouched.
+    - **So every AI result goes back through a mask:** Blend in mask, or Replace photo's area, so unmasked pixels
+      stay the original's exactly.
+    - **UV atlases: unusable by img2img.** Leon's `cha000_00_lowerbody_albd` at 0.35 and at 0.2: the islands are
+      repainted as one picture, blurred and blocky. Even low strength doesn't keep a layout.
+    - For atlases the route is to generate a **material swatch**: a plain picture or tileable fabric, not
+      UV-mapped. It goes onto the parts through Mesh mask, keeping the original's shading (an overlay /
+      colour-transfer mode). Alternatively, structure control (ControlNet tile / canny; for SDXL in sd.cpp,
+      untried) or an edit model (Qwen-Image-Edit; heavy for 12 GB).
+    - `spikes/out/ai/run.sh` reruns it.
   - **Two ways in (user, 2026-10-02):** a single AI call as a block in the graph, and an **AI orchestrator** (an
     MCP-server-style interface) that builds and edits graphs itself. The orchestrator must know which blocks can come
     next and which can't: core already decides this (`node_specs()` with descriptions and pins, `accepts`,

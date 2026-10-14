@@ -1,4 +1,38 @@
 {
+  "schema_version": 0,
+  "profile": "re4r",
+  "nodes": [
+    {
+      "id": 1,
+      "type": "NewCharacter",
+      "params": {
+        "character": "ashley",
+        "name": "rmc002",
+        "hue": "280",
+        "saturation": "55",
+        "title": "Ashley in purple"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Cutscene",
+      "params": {
+        "cutscene": "cutscenes/meet_new_character.json",
+        "title": "Luis and the new character"
+      }
+    },
+    {
+      "id": 3,
+      "type": "PackageMod",
+      "params": {
+        "name": "New character",
+        "out": "mods",
+        "version": "1.0",
+        "description": "Press F6 in game: Luis and a new character (Ashley in purple) meet Leon",
+        "replace": "true"
+      }
+    }
+  ],
   "links": [
     {
       "from": [
@@ -20,58 +54,5 @@
         "file"
       ]
     }
-  ],
-  "nodes": [
-    {
-      "id": 1,
-      "params": {
-        "brightness": "0",
-        "character": "ashley",
-        "contrast": "0",
-        "game": "{game}",
-        "hue": "280",
-        "name": "rmc002",
-        "part": "body",
-        "saturation": "55",
-        "skip": "*hand*",
-        "title": "Ashley in purple"
-      },
-      "pos": [
-        0.0,
-        0.0
-      ],
-      "type": "NewCharacter"
-    },
-    {
-      "id": 2,
-      "params": {
-        "cutscene": "cutscenes/meet_new_character.json",
-        "editor": "",
-        "title": "Luis and the new character"
-      },
-      "pos": [
-        0.0,
-        408.0
-      ],
-      "type": "Cutscene"
-    },
-    {
-      "id": 3,
-      "params": {
-        "author": "",
-        "description": "Press F6 in game: Luis and a new character (Ashley in purple) meet Leon",
-        "name": "New character",
-        "out": "mods",
-        "replace": "true",
-        "version": "1.0"
-      },
-      "pos": [
-        491.0,
-        0.0
-      ],
-      "type": "PackageMod"
-    }
-  ],
-  "profile": "re4r",
-  "schema_version": 0
+  ]
 }

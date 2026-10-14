@@ -77,6 +77,9 @@ Settings load_settings(const fs::path& file) {
         const auto j = nlohmann::json::parse(in);
         s.noesis_path = j.value("noesis_path", "");
         s.noesis_textures = j.value("noesis_textures", false);
+        s.ai_tool = j.value("ai_tool", "");
+        s.ai_model = j.value("ai_model", "");
+        s.ai_vae = j.value("ai_vae", "");
         s.show_help = j.value("show_help", true);
         s.build_mode = j.value("build_mode", false);
         s.show_descriptions = j.value("show_descriptions", true);
@@ -109,7 +112,8 @@ void save_settings(const Settings& s, const fs::path& file) {
     for (const auto& [id, g] : s.other_games) games[id] = game_json(g);
     games[s.game] = game_json(open_game(s));
     out << nlohmann::json{{"game", s.game}, {"games", games}, {"noesis_path", s.noesis_path},
-                          {"noesis_textures", s.noesis_textures}, {"show_help", s.show_help},
+                          {"noesis_textures", s.noesis_textures}, {"ai_tool", s.ai_tool}, {"ai_model", s.ai_model},
+                          {"ai_vae", s.ai_vae}, {"show_help", s.show_help},
                           {"build_mode", s.build_mode}, {"show_descriptions", s.show_descriptions}}
                .dump(2)
         << "\n";

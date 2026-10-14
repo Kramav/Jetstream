@@ -6,6 +6,7 @@
 #include "frames.hpp"
 #include "game_code.hpp"
 #include "image.hpp"
+#include "image_ai.hpp"
 #include "movie.hpp"
 #include "package.hpp"
 #include "process.hpp"
@@ -994,6 +995,128 @@ NodeSpec mask_blend_node() {
                 throw GraphError(e.what());
             }
             write_image(r, base, "blended in the mask");
+        },
+        .preview = image_preview,
+    };
+}
+
+// AI image generation (CLAUDE.md §10 M4): the picture changed by stable-diffusion.cpp as the prompt says, then put
+// back through the mask (outside it, the original's pixels exactly: the model's round trip softens everything) with
+// the original's alpha (data in RE textures). Never from text alone: UV-mapped atlases come out as mush even at low
+// strength (spike 2026-10-13), so this is for flat pictures (photos, paintings, documents, UI) and masked areas.
+std::string file_stamp_of(const fs::path& file) {  // a big file (a model) by its path, size and time, not its bytes
+    std::error_code ec;
+    return file.string() + '\0' + std::to_string(fs::file_size(file, ec)) + '\0' + write_time(file);
+}
+
+NodeSpec generate_image_node() {
+    return {
+        .type = "GenerateImage",
+        .title = "Generate image (AI)",
+        .summary = "Changes a picture as your prompt says, with an AI model on your PC (stable-diffusion.cpp). With a "
+                   "mask, only the white area changes and the rest stays exactly as it was. The original's alpha is "
+                   "kept. For photos, paintings, documents and UI; not for character texture sheets (their layout "
+                   "comes out as mush). Set the tool and model in the Pipeline panel.",
+        .inputs = {image_input("image", "Image", "The picture to change, e.g. Export image's."),
+                   [] {
+                       InputSpec in = image_input("mask", "Mask", "Optional: a grey image, white where the picture "
+                                                  "may change (Mesh mask, a painted mask). Empty: all of it.");
+                       in.required = false;
+                       return in;
+                   }(),
+                   {.name = "prompt", .label = "Prompt", .type = Text, .widget = Widget::Text, .required = true,
+                    .hint = "What it should show, e.g. old sepia photograph of a castle on a hill, scratches."},
+                   number_input("strength", "Strength", "How far from the picture it may go: low keeps its shapes, "
+                                "high follows the prompt. About 45 for a restyle, 80 to fill a masked area anew.",
+                                "60", 1, 100, "%.0f%%"),
+                   number_input("seed", "Seed", "A number for the randomness: the same seed and settings give the "
+                                "same picture; change it for another try.", "42", 0, 2147483647, "%.0f"),
+                   number_input("feather", "Feather", "Pixels the mask's edge is softened over.", "4", 0, 256,
+                                "%.0f px"),
+                   advanced({.name = "negative", .label = "Avoid", .type = Text, .widget = Widget::Text,
+                             .hint = "What it should avoid (the negative prompt).",
+                             .initial = "blurry, text, watermark, low quality"}),
+                   advanced(number_input("steps", "Steps", "Sampling steps: more is slower, sometimes finer.", "25", 1,
+                                         150, "%.0f")),
+                   advanced(number_input("cfg", "Prompt weight", "How strictly it follows the prompt (CFG scale).",
+                                         "6", 1, 30, "%.1f")),
+                   advanced(number_input("work_size", "Work size", "The longer side the model works at, scaled back "
+                                         "after (SDXL: 1024).", "1024", 256, 2048, "%.0f px")),
+                   advanced(number_input("timeout", "Time limit", "Seconds before the AI is stopped.", "1800", 30,
+                                         86400, "%.0f s")),
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .state = {"generated"},  // the AI's last picture (before the mask), for the thumbnail
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const fs::path& base = r.run.options.base_dir;
+            const fs::path image_file = clean_path(r.text("image"), base);
+            const std::string mask_text = r.text("mask");
+            const fs::path mask_file = clean_path(mask_text, base);
+            Bgra original = load_image(image_file);
+            std::optional<Bgra> mask;
+            if (!mask_text.empty()) mask = resize_image(load_image(mask_file), original.width, original.height, Fit::Stretch);
+
+            GenerateJob job{.image = original, .mask = mask, .prompt = r.text("prompt"), .negative = r.text("negative"),
+                            .strength = number(r, "strength") / 100, .seed = static_cast<long long>(number(r, "seed")),
+                            .steps = int(number(r, "steps")), .cfg = number(r, "cfg"),
+                            .work_side = unsigned(number(r, "work_size"))};
+            const ImageAi& ai = image_ai();
+            fs::path exe;
+            try {
+                exe = find_sd_cli(ai.tool);
+            } catch (const ImageAiError& e) {
+                throw GraphError(e.what());
+            }
+            // The same picture, mask, settings, model and tool give the same result (a fixed seed): a generation takes
+            // minutes, so it's kept in the run cache by all of them and reused.
+            std::string key = "ai1|" + file_bytes(image_file) + '\0' + (mask ? file_bytes(mask_file) : "") + '\0' +
+                              job.prompt + '\0' + job.negative;
+            for (const char* n : {"strength", "seed", "steps", "cfg", "work_size"}) key += '\0' + r.text(n);
+            key += '\0' + file_stamp_of(exe) + '\0' + file_stamp_of(ai.model) + '\0' +
+                   (ai.vae.empty() ? "" : file_stamp_of(ai.vae));
+            const fs::path& cache = r.run.options.cache_dir;
+            const fs::path made = cache.empty() ? fs::path() : cache / ("ai_" + hash_hex(key) + ".png");
+            Bgra generated;
+            std::string how;
+            if (std::error_code ec; !made.empty() && fs::is_regular_file(made, ec)) {
+                generated = load_image(made);
+                fs::last_write_time(made, fs::file_time_type::clock::now(), ec);
+                how = "unchanged: reused the AI's picture";
+            } else {
+                const auto start = std::chrono::steady_clock::now();
+                std::string log;
+                const fs::path temp = r.temp_file("_ai");
+                try {
+                    generated = generate_image(ai, job, temp, std::chrono::seconds(static_cast<long long>(number(r, "timeout"))),
+                                               &log);
+                } catch (const ImageAiError& e) {
+                    fs::remove_all(temp, ec);
+                    throw GraphError(e.what());
+                }
+                fs::remove_all(temp, ec);
+                if (!made.empty()) {
+                    fs::create_directories(cache);
+                    const fs::path part = cache / (made.stem().string() + ".part.png");
+                    save_png(part, generated);
+                    fs::rename(part, made, ec);
+                    prune_cache(cache, {made});
+                }
+                char took[48];
+                std::snprintf(took, sizeof took, "generated in %.0f s",
+                              std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+                how = took;
+            }
+            r.set_state("generated", made.empty() ? "" : made.string());
+            if (mask) {
+                Bgra out = original;
+                masked_blend(out, generated, *mask, number(r, "feather"), false);
+                write_image(r, out, how + ", in the mask");
+            } else {
+                merge_channels(original, &generated, {});  // the original's alpha kept
+                write_image(r, original, how);
+            }
         },
         .preview = image_preview,
     };
@@ -3178,7 +3301,7 @@ const std::vector<NodeSpec>& node_specs() {
         load_tex(), files_in_folder(), streaming_copy_node(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
         resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), part_texture_node(),
         mesh_mask_node(),
-        mask_blend_node(), replace_photo_node(),
+        mask_blend_node(), generate_image_node(), replace_photo_node(),
         preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), new_movie_node(), new_sound_node(), game_sound_node(), replace_sounds_node(),
         lua_script_node(), cutscene_node(), new_character_node(), name_pictures_node(), frame_pictures_node(),
         package_mod(),
@@ -3253,6 +3376,12 @@ const char* ai_note(std::string_view type) {
         {"MaskBlend", "Puts an edited or AI-made image into the original only where a mask is white (a Mesh mask, a "
                       "painted mask); feather the edge a few pixels. Then Merge channels if the texture packs data, "
                       "and Convert image to texture."},
+        {"GenerateImage", "AI img2img on the user's GPU (minutes per picture; an unchanged run reuses it). Only for flat "
+                          "pictures: UI, photos, paintings, documents, Replace photo's picture. NEVER on character or "
+                          "prop texture sheets (UV atlases come out as mush). Link a mask to change one area (Replace "
+                          "photo's area, a painted mask): strength ~80 there; ~45 to restyle a whole picture. Keeps "
+                          "alpha. Fails until the user has set the AI tool and model in the Pipeline panel; then say "
+                          "so, don't work around it."},
         {"MergeChannels", "Put an edited or AI-made picture into an original's colour while keeping its alpha (data): "
                           "base = the original image, Colour from = the new picture. Required after any AI image "
                           "result that will replace a texture with packed channels."},
@@ -3587,6 +3716,25 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
                     p->image = resize_image(p->image, base->image.width, base->image.height, Fit::Stretch);
             masked_blend(base->image, edited->image, mask->image, *feather * base->scale,
                          text("invert").value_or("") == "true");
+            return base;
+        }
+        if (n->type == "GenerateImage") {  // never generates: the last run's picture, through the mask as the run does
+            const auto made = n->params.find("generated");
+            std::error_code ec;
+            if (made == n->params.end() || made->second.empty() || !fs::is_regular_file(made->second, ec))
+                return std::nullopt;
+            auto base = image("image");
+            auto generated = load(made->second);
+            if (!base || !generated) return generated;
+            generated->image = resize_image(generated->image, base->image.width, base->image.height, Fit::Stretch);
+            const auto mask_text = text("mask");
+            if (auto mask = mask_text && !mask_text->empty() ? image("mask") : std::nullopt) {
+                mask->image = resize_image(mask->image, base->image.width, base->image.height, Fit::Stretch);
+                masked_blend(base->image, generated->image, mask->image,
+                             number_of("feather").value_or(0) * base->scale, false);
+            } else {
+                merge_channels(base->image, &generated->image, {});
+            }
             return base;
         }
         if (n->type == "PickChannel") {

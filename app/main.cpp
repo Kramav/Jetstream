@@ -8,6 +8,7 @@
 #include "cutscene.hpp"
 #include "game_code.hpp"
 #include "graph.hpp"
+#include "image_ai.hpp"
 #include "package.hpp"
 #include "profile.hpp"
 #include "script_ai.hpp"
@@ -419,6 +420,10 @@ struct State {
     std::string game_files = saved.game_files_dir;  // the game's REtool folder; empty = ask the RE plugin (game_files_dir)
     std::string game_dir = saved.game_dir;  // the game's installed folder: a Lua script's Test in game
     std::string sdk_dump = saved.sdk_dump;  // the game's il2cpp_dump.json (REFramework): names scripts are checked against
+    // Generate image's tool and model (CLAUDE.md §10 M4; every game's): sd-cli.exe, a checkpoint, an optional VAE.
+    std::string ai_tool = saved.ai_tool, ai_model = saved.ai_model, ai_vae = saved.ai_vae;
+    std::future<std::filesystem::path> ai_download;  // Download: stable-diffusion.cpp into a folder the user picked
+    std::string ai_note;                             // what the download did
     bool show_help = saved.show_help;
     bool build_mode = saved.build_mode;  // Build layout (edit structure) vs Use layout (fill in and run)
     bool overview = false;  // zoomed out: blocks show only their title, status and linked rows
@@ -699,6 +704,9 @@ remod::Settings current_settings(const State& s) {
             .graph_path = s.graph_path,
             .noesis_path = s.noesis_path,
             .noesis_textures = s.noesis_textures,
+            .ai_tool = s.ai_tool,
+            .ai_model = s.ai_model,
+            .ai_vae = s.ai_vae,
             .show_help = s.show_help,
             .game_files_dir = s.game_files,
             .game_dir = s.game_dir,
@@ -1158,6 +1166,57 @@ void poll_ai(State& s) {
     if (remod::Node* n = s.graph.find(s.ai_node)) n->params["ai_notes"] = notes;
 }
 
+// Generate image's tool and model (CLAUDE.md §10 M4). Download fetches the tested stable-diffusion.cpp build into a
+// folder the user picks (only on their click); the model is always theirs.
+void ai_settings(State& s) {
+    if (s.ai_download.valid() && s.ai_download.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        try {
+            s.ai_tool = s.ai_download.get().string();
+            s.ai_note = "Downloaded stable-diffusion.cpp. Now pick a model (see the AI model tooltip).";
+            remember_paths(s);
+        } catch (const std::exception& e) {
+            s.ai_note = std::string("Download failed: ") + e.what();
+        }
+    }
+    ImGui::SeparatorText("AI images (optional)");
+    auto row = [&](const char* id, const char* hint, std::string& value, remod::PathKind kind, const char* filter,
+                   const char* label, const char* tip) {
+        ImGui::InputTextWithHint(id, hint, &value);
+        if (ImGui::IsItemDeactivatedAfterEdit()) remember_paths(s);
+        ImGui::SameLine();
+        if (ImGui::Button((std::string("...") + id).c_str()) && browse(kind, filter, value)) remember_paths(s);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(label);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    };
+    row("##aitool", "sd-cli.exe (stable-diffusion.cpp)", s.ai_tool, remod::PathKind::OpenFile, "exe", "AI tool",
+        "stable-diffusion.cpp's sd-cli.exe: runs the Generate image block on your graphics card\n"
+        "(its Vulkan build works on AMD and NVIDIA). Download fetches the version remod was tested with.");
+    const bool downloading = s.ai_download.valid();
+    ImGui::BeginDisabled(downloading);
+    if (ImGui::Button(downloading ? "Downloading..." : "Download stable-diffusion.cpp")) {
+        std::string folder;
+        if (browse(remod::PathKind::Folder, nullptr, folder) && !folder.empty()) {
+            const std::filesystem::path dir = std::filesystem::path(unquote(folder)) / "sd-cpp";
+            s.ai_note = "Downloading into " + dir.string() + "...";
+            s.ai_download = std::async(std::launch::async, [dir] { return remod::download_sd_cpp(dir); });
+        }
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Pick a folder: remod downloads stable-diffusion.cpp %s (MIT licence, about 30 MB)\n"
+                          "from its GitHub releases into <folder>\\sd-cpp. Nothing else is installed.",
+                          remod::kSdCppRelease);
+    row("##aimodel", "model (.safetensors / .gguf)", s.ai_model, remod::PathKind::OpenFile, "safetensors,gguf,ckpt",
+        "AI model",
+        "The model, downloaded yourself. Tested: SDXL base 1.0 (sd_xl_base_1.0.safetensors, ~7 GB,\n"
+        "huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) with the VAE below.");
+    row("##aivae", "optional VAE (.safetensors)", s.ai_vae, remod::PathKind::OpenFile, "safetensors", "AI VAE",
+        "Optional. For SDXL use sdxl-vae-fp16-fix (sdxl_vae.safetensors, huggingface.co/madebyollin/\n"
+        "sdxl-vae-fp16-fix): SDXL's own VAE gives black or noisy pictures at half precision.");
+    if (!s.ai_note.empty()) ImGui::TextWrapped("%s", s.ai_note.c_str());
+}
+
 // A Lua script block's Game errors: the script's errors in REFramework's log since its Test in game (since the game
 // started, if none this session), kept to show under the block.
 void read_game_errors(State& s, int node) {
@@ -1455,6 +1514,7 @@ void draw_side_panel(State& s) {
             ImGui::SetTooltip("The game's code, for checking a Lua script's names (types, methods, fields).\n"
                               "Make it in game once per game update: REFramework's menu > DeveloperTools >\n"
                               "ObjectExplorer > Dump SDK. It's written to the game's folder as il2cpp_dump.json.");
+        ai_settings(s);
     }
 
     // The game is the workspace's (top bar); what remod can't do for it yet, in its profile's words.
@@ -4544,6 +4604,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             remod::set_game_files_dir(game_files_dir(state));
         }
         remod::set_sdk_dump(unquote(state.sdk_dump));  // cheap: the dump is read on a script's first check
+        remod::set_image_ai({unquote(state.ai_tool), unquote(state.ai_model), unquote(state.ai_vae)});
         // The window's title: the graph's file name, with * while it has unsaved changes.
         static std::wstring title;
         if (std::wstring now = L"remod " REMOD_VERSION " - " + std::filesystem::path(state.graph_path).filename().wstring() +
@@ -4568,6 +4629,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // ponytail: Claude still writing a script isn't waited for (a future's destructor would, for minutes): its future
     // is left behind and the process ends; Claude Code finishes on its own and writes nothing (remod writes the file).
     if (state.ai.valid()) new std::future<remod::ScriptAnswer>(std::move(state.ai));
+    if (state.ai_download.valid()) new std::future<std::filesystem::path>(std::move(state.ai_download));
     browser.reset();  // its GPU textures, before the device goes
     for (State::PreviewSet* set : {&state.thumbs, &state.big}) {
         if (set->job.valid()) set->job.wait();

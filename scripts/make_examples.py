@@ -573,6 +573,25 @@ g.link(movie, 'fhd', pkg, 'file')
 g.link(movie, 'sound', pkg, 'file')
 g.save('22_replace_movies_from_a_folder.json')
 
+# 23. AI (CLAUDE.md §10 M4): your picture made into an old photograph by an AI model on your graphics card, then put in
+# an old photo frame as example 3 does (Replace photo: the frame untouched, the old photo's toning and ageing kept).
+# Needs the AI tool and model set in the Pipeline panel. Not on a character texture: the AI turns a texture sheet's
+# layout into mush (spike 2026-10-13).
+g = Graph()
+(src, port), finish = document(g, GAMES[game], GAMES[game]['photo'], 'The framed photo')
+export = g.add('ExportImage')
+picture = g.add('ImportImage', 'Your picture (change me)', png='picture.png')
+ai = g.add('GenerateImage', 'Make it an old photograph',
+           prompt='old sepia photograph of a stone castle on a hill at dusk, 1900s, film grain, detailed',
+           strength=75)
+photo = g.add('ReplacePhoto', picture_y=GAMES[game]['photo_y'])
+g.link(src, port, export, 'tex')
+g.link(picture, 'image', ai, 'image')
+g.link(export, 'png', photo, 'frame')
+g.link(ai, 'image', photo, 'picture')
+finish(photo, 'My AI photo', 'An AI-made old photograph in place of an old photo')
+g.save('23_an_ai_photo_in_a_frame.json')
+
 
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
 def png(name, w, h, pixel):
