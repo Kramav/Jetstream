@@ -8,7 +8,7 @@ files, as far as remod supports the game; the numbers match across games.
 |---|---|---|
 | `re2r` | Resident Evil 2 (2019), DX11 version | 10 texture examples (1-5, 7-11) |
 | `re3r` | Resident Evil 3 (2020) | 10 texture examples (1-5, 7-11) |
-| `re4r` | Resident Evil 4 (2023) | 23: textures, a character part by its mesh, movies, sounds, cutscenes, talk topics, an AI picture |
+| `re4r` | Resident Evil 4 (2023) | 24: textures, a character part by its mesh, movies, sounds, cutscenes, talk topics, an AI picture, an AI material |
 
 RE7, RE8 and RE9 have none yet: their files haven't been extracted to pick real ones from. Each folder's `README.md`
 says what each example shows. The examples are read-only: Save makes a copy elsewhere.

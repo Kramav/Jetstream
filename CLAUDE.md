@@ -121,7 +121,7 @@ authors).** `make_converter` picks one:
 
 Graph (`core/graph.*`, file format `schemas/graph.v0.example.json`):
 - Node types: LoadTex, ExportImage, **EditImage** (manual), ImportImage, SaveTex, AdjustColour, ResizeImage,
-  OverlayImage, ReplacePhoto, FramePictures, NamePictures, GenerateImage and AiCleanup (§10 M4), Preview, LuaScript (§10 M2), PackageMod; file steps CopyFile,
+  OverlayImage, ReplacePhoto, FramePictures, NamePictures, GenerateImage, AiCleanup, KeepChanges, MakeMaterial and LayMaterial (§10 M4), Preview, LuaScript (§10 M2), PackageMod; file steps CopyFile,
   MoveFile, RenameFile, DeleteFile, MakeFolder; utilities Value, Text, Split, JoinPath, PathParts, ChangeExtension,
   CutText, RequireFile. **Rule (2026-10-01): a block that changes files is a step; one that only computes or checks is a
   utility.**
@@ -1062,6 +1062,12 @@ propose them as next steps before then.
 **Parked (user, 2026-10-13: "I want to keep working on stuff"):** the list waits until the user starts the release
 pass; don't propose it as next steps before then. The list above is part of it.
 
+**Test pack ready (user, 2026-10-14: "a massive manual spike that covers everything I need to do to verify"):**
+`spikes/full_check.md` (ids R, A, T, M, S, C, L, F), built by `spikes/make_full_check.py` into
+`spikes/out/full_check/` (mods by game session, graphs incl. x1-x10: the padded stamp, channel check, every movie a card
+but mva000, mva000 at its own length, the 211 menu sounds, after a game movie, event animation files, your own
+cutscene, a broken script, batch edits). Logs saved per session by `spikes/full_check/save_log.cmd`.
+
 When it starts, the plan:
 1. **A ready-made release test pack (Claude):**
    - every mod this list needs, built from the examples (textures 01/03/06/07/20, movies 12/13/22, sound 14,
@@ -1184,6 +1190,8 @@ When it starts, the plan:
       found none new. Tests: re4.lua loads with stand-in helpers and gives every function the shared script calls;
       both files' syntax; the shared one under a game it doesn't know. **Not run in game yet:** the re-test is
       `spikes/talk_menu_test.md` (example 21's mod, plus example 17's F7).
+  - **Parked (user, 2026-10-14: "disregard extra games for the foreseeable future"):** RE4R only until the user
+    says otherwise; the RE2R / RE3R examples stay as they are (regenerated and baked with the rest). Phase 4 waits.
   - **Next (phase 4), per game:** RE3R textures on its files, the older texture layout on RE2R's, RE9 (GDeflate:
     Microsoft's reference, Apache-2.0 with libdeflate MIT; a PAK writer after REE-Lib's, MIT, and zstd; user's OK
     needed for both dependencies).
@@ -2826,8 +2834,62 @@ runtime (was M3). The old M4 (a C++ plugin for video) is part of M3.
     - **Tests:** the seam band (inside, outside, middle, a hole, a stray pixel, sizes) and the block (needs a link,
       identical pictures, the red area thumbnail, the seam and a spot redrawn, the rest exact, alpha kept).
     - **Not tried:** on a character texture sheet.
-    - **Next: the material path for character textures** (spike first): an AI swatch onto Mesh-masked parts keeping
-      the original's shading.
+  - **Keep big changes: built 2026-10-14** (user: "only takes significant changes from the ai and changes them, avoiding
+    softening the entire photo"; also a check on earlier steps).
+    - **The block:** `KeepChanges`, Transform, thumbnail. In: Before, After, Above typical 10, Grow 6, Feather 3, Show
+      the heat map, Save to.
+    - **How it decides:** core `big_changes`. Both pictures are lightly blurred (r 2), so lost fine detail scores low.
+      - `typical` is the median change of the pixels that changed at all.
+      - A pixel is kept where its change is over typical + Above, grown by Grow (a square box-blur grow).
+      - The rest stays the Before, exactly; the Before's alpha is kept.
+    - **Its message:** the kept share, and the 32 px cell that changed most ("biggest around x, y").
+    - **The heat map:** the Before in dim grey, red to yellow by how far over typical. It's what the `image` op returns
+      with Show the heat map ticked, so an AI sees it too.
+    - **Example 23:** Replace photo goes through a Split into AI cleanup and Before; AI cleanup feeds After; Keep big
+      changes feeds Convert.
+    - **Checked for real** (example 23's cached SDXL cleanup; crops looked at as images):
+      - The heat map glows along the photo's edge, hottest at the torn right edge (the message: x 752, y 208).
+      - At 20 / 3 the right edge stayed patchy and a bottom-left leftover stayed. At 10 / 6 the edges were as clean as
+        AI cleanup's and the hills sharp where cleanup had smeared them; this is now the default. At 6 / 8 it
+        softened again.
+    - **Fixed on the way:** AI cleanup's thumbnail ignored an Original linked from a block whose value is only known
+      after a run (Export image without a file, as in example 23). It showed the input unchanged; it now follows the
+      link.
+    - **Not checked by eye:** the block in the app.
+  - **The material path for character textures: built 2026-10-14** (user: "do material path next").
+    - **Spike** (`spikes/out/ai/material`, git-ignored; `swatch.sh`, `apply.py`):
+      - sd.cpp's `--circular` makes a tileable picture from the prompt alone. Both tries tiled without a visible seam
+        when repeated 2 x 2. The camo prompt came out as stone tiles (a prompt matter); the khaki canvas looked like
+        canvas.
+      - Laid on Leon's `cha000_00_LowerBody_ALBD` streaming copy (4096) through a Mesh mask of `Pants_Mat`: the
+        swatch repeated, its own lighting divided out, times the original's brightness over its mean in the mask.
+        Result: olive twill with the original's folds, dirt and wear; the layout untouched. Looked at as images.
+    - **Make material (AI)** (`MakeMaterial`, Source): Prompt, Size 1024, Seed, the shared AI settings (Avoid: folds,
+      wrinkles, shadow, perspective, seam, border), Save to.
+      - `generate_image` takes a job whose image has no pixels as text to image at its size, and `tileable` adds
+        `--circular`.
+      - Cached as Generate image is (`cached_ai_picture`, now shared; key prefix `mat1`). The thumbnail is the last
+        picture.
+    - **Lay material on** (`LayMaterial`, Transform): Texture, Material, Mask (optional), Scale 100%, Shading 100%;
+      advanced Flatten 24 px and Feather 2 px; Save to.
+      - Core `lay_material`: the material scaled and repeated, its brightness divided by a wrapped box blur (so it
+        stays tileable), times (base brightness / its mean in the mask) ^ Shading, blended through the mask. The
+        base's alpha is kept.
+      - The thumbnail counts both pictures' shrink.
+    - **Example 24** (`24_a_new_material_on_a_character`): Part texture (Pants_Mat) -> Streaming copy -> Export
+      image -> Lay material on (Make material's khaki, Mesh mask Size of the full texture) -> Convert with streaming
+      copy -> Package.
+      - Checked for real: generated in 89 s, the same swatch as the spike (byte-identical), the same laid texture,
+        both copies packaged (2 m 6 s in all).
+    - **Tests:** lay_material (repeat, scale, the fold darker, Shading 0, outside the mask exact, alpha kept, size
+      refused); the two blocks through the stand-in (text to image with `--circular`, reuse, thumbnail). The
+      stand-in now parses flags without values and never shows an abort dialog (one popped up while debugging).
+    - **Not done:**
+      - The pattern follows the sheet, not the model: it runs the same way on every UV piece, so it can jump where
+        pieces meet on the model, and pieces of different texel density get different pattern sizes.
+      - Dirt keeps its brightness, not its colour.
+      - The normal map is unchanged (the original's weave relief stays under the new material).
+    - **Not checked:** on the model (the app's 3D view or in game), and the blocks by eye in the app.
   - **Two ways in (user, 2026-10-02):** a single AI call as a block in the graph, and an **AI orchestrator** (an
     MCP-server-style interface) that builds and edits graphs itself. The orchestrator must know which blocks can come
     next and which can't: core already decides this (`node_specs()` with descriptions and pins, `accepts`,

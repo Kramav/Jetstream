@@ -74,6 +74,28 @@ Bgra seam_mask(const Bgra& edited, const Bgra& original, unsigned width, unsigne
 // The lighter of two masks (their red), as a grey mask; the same size (throws std::runtime_error).
 Bgra mask_union(const Bgra& a, const Bgra& b);
 
+// Where `after` changed `before` much more than it changed it typically (Keep big changes, CLAUDE.md §10 M4): an AI's
+// round trip softens every pixel a little, a gap it filled changes a lot. Both are compared lightly blurred (r 2 px x
+// `scale`), so lost fine detail scores low. `typical`: the median change (0-255) of the pixels that changed at all;
+// `mask`: white where the change is over typical + `above`, grown by `grow` px; `heat`: `before` in dim grey, red to
+// yellow by how far over typical; (x, y) the centre of the 32 x `scale` px cell that changed most, `most` its mean
+// change; `kept`: the share of changed pixels in the mask. Same size (throws std::runtime_error).
+struct Changes {
+    Bgra mask, heat;
+    unsigned x = 0, y = 0;
+    float typical = 0, most = 0;
+    double kept = 0;
+};
+Changes big_changes(const Bgra& before, const Bgra& after, float above, float grow, float scale = 1);
+
+// A material on a texture's parts (Lay material on, CLAUDE.md §10 M4): `material` (a tileable picture, e.g. an AI
+// fabric swatch) scaled by `scale` and repeated over `base`, its own lighting taken out (its brightness over a blur of
+// `flatten` px, wrapped so it stays tileable), times the base's shading (its brightness over its mean inside the mask,
+// to the power `shading`: 1 keeps the folds and dirt as they are, 0 none), put in where `mask` is white (none: all of
+// it), its edge softened by `feather`. The base's alpha is kept. `mask` must be base's size (throws std::runtime_error).
+void lay_material(Bgra& base, const Bgra& material, const Bgra* mask, float scale, float flatten, float shading,
+                  float feather);
+
 // ---- Replace photo: a picture into a framed photo's place, keeping the old photo's ageing ----
 
 // The old photo's area inside an opaque frame. A frame's inner edge runs parallel to its outer outline (alpha, or the

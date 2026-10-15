@@ -957,6 +957,107 @@ Bgra mask_union(const Bgra& a, const Bgra& b) {
     return out;
 }
 
+Changes big_changes(const Bgra& before, const Bgra& after, float above, float grow, float scale) {
+    if (before.width != after.width || before.height != after.height)
+        throw std::runtime_error("before is " + std::to_string(before.width) + "x" + std::to_string(before.height) +
+                                 ", after " + std::to_string(after.width) + "x" + std::to_string(after.height) +
+                                 ": they must be the same size");
+    const unsigned w = before.width, h = before.height;
+    const size_t n = size_t(w) * h;
+    const int r = std::max(1, int(std::lround(2 * scale)));
+    Plane d(n, 0.0f);
+    for (int c = 0; c < 3; ++c) {
+        Plane a(n), b(n);
+        for (size_t i = 0; i < n; ++i) a[i] = before.pixels[i * 4 + c], b[i] = after.pixels[i * 4 + c];
+        a = box_blur(std::move(a), w, h, r, 2), b = box_blur(std::move(b), w, h, r, 2);
+        for (size_t i = 0; i < n; ++i) d[i] = std::max(d[i], std::abs(a[i] - b[i]));
+    }
+    Changes out;
+    std::vector<float> changed;
+    for (float v : d)
+        if (v > 1) changed.push_back(v);
+    if (!changed.empty()) {
+        std::nth_element(changed.begin(), changed.begin() + changed.size() / 2, changed.end());
+        out.typical = changed[changed.size() / 2];
+    }
+    Plane m(n);
+    size_t over = 0;
+    for (size_t i = 0; i < n; ++i) m[i] = d[i] > out.typical + above ? (++over, 1.0f) : 0.0f;
+    out.kept = changed.empty() ? 0 : double(over) / double(changed.size());
+    if (grow >= 1) m = box_blur(std::move(m), w, h, int(std::lround(grow)), 1);  // ponytail: a square grow, not a round one
+    out.mask = Bgra{w, h, std::vector<std::uint8_t>(n * 4, 255)};
+    out.heat = Bgra{w, h, std::vector<std::uint8_t>(n * 4, 255)};
+    for (size_t i = 0; i < n; ++i) {
+        std::fill_n(&out.mask.pixels[i * 4], 3, std::uint8_t(m[i] > 1e-4f ? 255 : 0));
+        const std::uint8_t* p = &before.pixels[i * 4];
+        const float grey = (0.114f * p[0] + 0.587f * p[1] + 0.299f * p[2]) * 0.5f;
+        const float t = std::clamp((d[i] - out.typical) / std::max(1.0f, 2 * above), 0.0f, 1.0f);
+        std::uint8_t* q = &out.heat.pixels[i * 4];  // red at half way over, yellow from there
+        q[0] = std::uint8_t(grey * (1 - t));
+        q[1] = std::uint8_t(grey * (1 - t) + 255 * t * std::max(0.0f, 2 * t - 1));
+        q[2] = std::uint8_t(grey * (1 - t) + 255 * t);
+    }
+    const unsigned cell = std::max(1u, unsigned(std::lround(32 * scale)));
+    for (unsigned cy = 0; cy < h; cy += cell)
+        for (unsigned cx = 0; cx < w; cx += cell) {
+            double sum = 0;
+            unsigned count = 0;
+            for (unsigned y = cy; y < std::min(h, cy + cell); ++y)
+                for (unsigned x = cx; x < std::min(w, cx + cell); ++x) sum += d[size_t(y) * w + x], ++count;
+            if (const float mean = float(sum / count); mean > out.most)
+                out.most = mean, out.x = cx + (std::min(w, cx + cell) - cx) / 2, out.y = cy + (std::min(h, cy + cell) - cy) / 2;
+        }
+    return out;
+}
+
+void lay_material(Bgra& base, const Bgra& material, const Bgra* mask, float scale, float flatten, float shading,
+                  float feather) {
+    if (mask && (mask->width != base.width || mask->height != base.height))
+        throw std::runtime_error("the mask is " + std::to_string(mask->width) + "x" + std::to_string(mask->height) +
+                                 ", the picture " + std::to_string(base.width) + "x" + std::to_string(base.height) +
+                                 ": they must be the same size");
+    if (material.width == 0 || material.height == 0) throw std::runtime_error("the material is empty");
+    const unsigned mw = std::max(1u, unsigned(std::lround(material.width * scale)));
+    const unsigned mh = std::max(1u, unsigned(std::lround(material.height * scale)));
+    Bgra m = resize_image(material, mw, mh, Fit::Stretch);
+    // Its own lighting out: its brightness over the blur of it, blurred over 3 x 3 copies so the edges wrap.
+    const Plane l = luma(m);
+    float mean = 0;
+    for (float v : l) mean += v;
+    mean /= float(l.size());
+    if (const int r = int(std::lround(flatten)); r > 0) {
+        Plane big(size_t(mw) * 3 * mh * 3);
+        for (unsigned y = 0; y < mh * 3; ++y)
+            for (unsigned x = 0; x < mw * 3; ++x) big[size_t(y) * mw * 3 + x] = l[size_t(y % mh) * mw + x % mw];
+        big = box_blur(std::move(big), mw * 3, mh * 3, r);
+        for (unsigned y = 0; y < mh; ++y)
+            for (unsigned x = 0; x < mw; ++x) {
+                const float f = mean / std::max(1e-3f, big[size_t(y + mh) * mw * 3 + x + mw]);
+                std::uint8_t* p = &m.pixels[(size_t(y) * mw + x) * 4];
+                for (int c = 0; c < 3; ++c) p[c] = std::uint8_t(std::clamp(p[c] * f, 0.0f, 255.0f));
+            }
+    }
+    // The base's shading: its brightness over its mean where the material goes.
+    const Plane lb = luma(base);
+    double sum = 0, count = 0;
+    for (size_t i = 0; i < lb.size(); ++i)
+        if (!mask || mask->pixels[i * 4 + 2] > 127) sum += lb[i], ++count;
+    const float base_mean = count > 0 ? float(sum / count) : 1.0f;
+    Bgra laid = base;
+    for (unsigned y = 0; y < base.height; ++y)
+        for (unsigned x = 0; x < base.width; ++x) {
+            const size_t i = size_t(y) * base.width + x;
+            const float shade = std::pow(std::max(0.0f, lb[i] / std::max(1e-3f, base_mean)), shading);
+            const std::uint8_t* s = &m.pixels[(size_t(y % mh) * mw + x % mw) * 4];
+            for (int c = 0; c < 3; ++c) laid.pixels[i * 4 + c] = std::uint8_t(std::clamp(s[c] * shade, 0.0f, 255.0f));
+        }
+    if (mask) {
+        masked_blend(base, laid, *mask, feather, false);
+    } else {
+        for (size_t i = 0; i < base.pixels.size(); i += 4) std::copy_n(&laid.pixels[i], 3, &base.pixels[i]);
+    }
+}
+
 void masked_blend(Bgra& base, const Bgra& edited, const Bgra& mask, float feather, bool invert) {
     for (const Bgra* img : {&edited, &mask})
         if (img->width != base.width || img->height != base.height)

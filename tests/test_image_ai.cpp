@@ -196,5 +196,141 @@ TEST_CASE("AI cleanup: the AI redraws only the seam and the marked spots") {
     thumb = remod::preview_image(g, remod::preview_values(g, tmp.path), 1, tmp.path, 256, load);
     REQUIRE(thumb);
     CHECK(px(thumb->image, 16, 32)[0] >= 253);
+
+    // The original linked from a block whose file is only known after a run (here Adjust colour without Save to, as
+    // Export image without a file): the thumbnail still follows the link.
+    remod::Node& same = g.add_node("AdjustColour");
+    same.params["image"] = "original.png";
+    g.find(1)->params.erase("original");
+    REQUIRE(g.connect({same.id, "image", 1, "original"}).empty());
+    thumb = remod::preview_image(g, remod::preview_values(g, tmp.path), 1, tmp.path, 256, load);
+    REQUIRE(thumb);
+    CHECK(px(thumb->image, 16, 32)[0] >= 253);
+    remod::set_image_ai({});
+}
+
+TEST_CASE("big changes: what changed much more than typically, not the softening everywhere") {
+    remod::Bgra before{64, 64, std::vector<std::uint8_t>(64 * 64 * 4, 100)};
+    remod::Bgra after = before;
+    for (size_t i = 0; i < after.pixels.size(); i += 4) after.pixels[i] = 106;  // softening: a little everywhere
+    for (unsigned y = 40; y < 48; ++y)  // a real fix: a lot in one patch
+        for (unsigned x = 40; x < 48; ++x) after.pixels[(y * 64 + x) * 4] = 220;
+    const remod::Changes c = remod::big_changes(before, after, 20, 2);
+    auto on = [&](unsigned x, unsigned y) { return c.mask.pixels[(y * 64 + x) * 4 + 2] == 255; };
+    CHECK((c.typical > 5.9f && c.typical < 6.1f));
+    CHECK(on(44, 44));
+    CHECK(on(39, 44));  // grown
+    CHECK_FALSE(on(10, 10));
+    CHECK((c.x >= 32 && c.x < 64 && c.y >= 32 && c.y < 64));  // the cell holding the patch
+    CHECK(px(c.heat, 44, 44)[2] == 255);
+    CHECK(px(c.heat, 10, 10)[2] == px(c.heat, 10, 10)[1]);  // grey far away
+    CHECK(c.kept > 0);
+    // Only the softening: nothing kept.
+    after = before;
+    for (size_t i = 0; i < after.pixels.size(); i += 4) after.pixels[i] = 106;
+    const remod::Changes even = remod::big_changes(before, after, 20, 2);
+    for (size_t i = 0; i < even.mask.pixels.size(); i += 4) REQUIRE(even.mask.pixels[i + 2] == 0);
+    CHECK(even.kept == 0);
+    CHECK_THROWS(remod::big_changes(before, remod::Bgra{1, 1, {0, 0, 0, 0}}, 20, 2));
+}
+
+TEST_CASE("Keep big changes: the after only where it changed a lot, the before exactly elsewhere") {
+    TempDir tmp;
+    remod::Bgra before = red();
+    remod::Bgra after = before;
+    for (size_t i = 0; i < after.pixels.size(); i += 4) after.pixels[i + 2] = 245, after.pixels[i + 3] = 0;
+    for (unsigned y = 40; y < 48; ++y)
+        for (unsigned x = 40; x < 48; ++x) after.pixels[(y * 64 + x) * 4 + 1] = 200;  // the fix: green
+    remod::save_png(tmp.path / "before.png", before);
+    remod::save_png(tmp.path / "after.png", after);
+
+    Graph g;
+    remod::Node& keep = g.add_node("KeepChanges");
+    keep.params["before"] = "before.png";
+    keep.params["after"] = "after.png";
+    keep.params["feather"] = "0";
+    keep.params["save_to"] = "out.png";
+    REQUIRE(g.validate().empty());
+    NoConverter conv;
+    const remod::RunOptions opts{.profile = re4r(), .converter = conv, .base_dir = tmp.path};
+    const remod::RunResult r = remod::run_graph(g, opts);
+    CHECK_THAT(r.nodes.at(1).message, ContainsSubstring("kept"));
+    const remod::Bgra out = remod::load_image(tmp.path / "out.png");
+    CHECK(px(out, 44, 44)[1] == 200);  // the fix went through
+    CHECK((px(out, 10, 10)[2] == 255 && px(out, 10, 10)[3] == 100));  // the softening didn't; alpha the before's
+    CHECK(px(out, 44, 44)[3] == 100);
+
+    const remod::ImageLoader load = [](const fs::path& p) -> std::optional<remod::ImagePreview> {
+        return remod::ImagePreview{remod::load_image(p), 1};
+    };
+    g.find(1)->params["show_heat"] = "true";
+    const auto thumb = remod::preview_image(g, remod::preview_values(g, tmp.path), 1, tmp.path, 256, load);
+    REQUIRE(thumb);
+    CHECK(px(thumb->image, 10, 10)[2] < 100);   // dim grey far from the fix
+    CHECK(px(thumb->image, 44, 44)[2] == 255);  // hot on it
+}
+
+TEST_CASE("a material laid on: repeated, the base's shading kept, only in the mask, alpha kept") {
+    remod::Bgra base{64, 64, std::vector<std::uint8_t>(64 * 64 * 4, 100)};
+    for (size_t i = 3; i < base.pixels.size(); i += 4) base.pixels[i] = 77;  // data
+    for (unsigned y = 0; y < 64; ++y) std::fill_n(&base.pixels[(y * 64 + 10) * 4], 3, std::uint8_t(50));  // a fold
+    remod::Bgra mask{64, 64, std::vector<std::uint8_t>(64 * 64 * 4, 0)};
+    for (unsigned y = 0; y < 64; ++y)
+        for (unsigned x = 0; x < 32; ++x) std::fill_n(&mask.pixels[(y * 64 + x) * 4], 4, std::uint8_t(255));
+    remod::Bgra stripes{4, 4, std::vector<std::uint8_t>(4 * 4 * 4, 255)};  // red, red, blue, blue columns
+    for (unsigned y = 0; y < 4; ++y)
+        for (unsigned x = 0; x < 4; ++x) {
+            std::uint8_t* p = &stripes.pixels[(y * 4 + x) * 4];
+            p[0] = x < 2 ? 0 : 200, p[1] = 0, p[2] = x < 2 ? 200 : 0;
+        }
+    remod::Bgra out = base;
+    remod::lay_material(out, stripes, &mask, 1, 0, 1, 0);
+    CHECK(px(out, 4, 5)[2] > 150);  // red column of the 4 px repeat
+    CHECK(px(out, 6, 5)[0] > 150);  // blue one
+    CHECK(px(out, 8, 5)[2] > 150);  // repeated
+    CHECK(px(out, 10, 5)[2] < px(out, 8, 5)[2]);  // the fold: darker
+    CHECK((px(out, 40, 5)[0] == 100 && px(out, 40, 5)[2] == 100));  // outside the mask: as it was
+    CHECK(px(out, 4, 5)[3] == 77);
+    out = base;
+    remod::lay_material(out, stripes, &mask, 2, 0, 0, 0);  // twice the size, no shading
+    CHECK(px(out, 2, 5)[2] > 150);
+    CHECK(px(out, 5, 5)[0] > 150);
+    CHECK(px(out, 10, 5)[2] == px(out, 9, 5)[2]);  // the fold doesn't show
+    CHECK_THROWS(remod::lay_material(out, stripes, &stripes, 1, 0, 1, 0));
+}
+
+TEST_CASE("Make material: a repeating picture from the prompt alone, then laid on") {
+    TempDir tmp;
+    remod::save_png(tmp.path / "texture.png", red());
+    test::write_file(tmp.path / "model.safetensors", "weights");
+    remod::set_image_ai({FAKE_SD_CLI, tmp.path / "model.safetensors", {}});
+    Graph g;
+    const int make = g.add_node("MakeMaterial").id;
+    g.find(make)->params["prompt"] = "khaki canvas";
+    g.find(make)->params["size"] = "256";
+    const int lay = g.add_node("LayMaterial").id;
+    g.find(lay)->params["image"] = "texture.png";
+    g.find(lay)->params["save_to"] = "out.png";
+    REQUIRE(g.connect({make, "image", lay, "material"}).empty());
+    REQUIRE(g.validate().empty());
+    NoConverter conv;
+    const remod::RunOptions opts{.profile = re4r(), .converter = conv, .base_dir = tmp.path,
+                                 .cache_dir = tmp.path / "cache"};
+    remod::RunResult r = remod::run_graph(g, opts);
+    remod::apply_run(g, r);
+    CHECK_THAT(r.nodes.at(1).message, ContainsSubstring("generated"));
+    const remod::Bgra out = remod::load_image(tmp.path / "out.png");
+    CHECK(px(out, 5, 5)[2] == 255);   // the stand-in's orange (asked --circular), the texture flat: shading 1
+    CHECK(px(out, 5, 5)[0] == 0);
+    CHECK(px(out, 5, 5)[3] == 100);   // the texture's alpha
+    r = remod::run_graph(g, opts);
+    CHECK_THAT(r.nodes.at(1).message, ContainsSubstring("unchanged: reused"));
+
+    const remod::ImageLoader load = [](const fs::path& p) -> std::optional<remod::ImagePreview> {
+        return remod::ImagePreview{remod::load_image(p), 1};
+    };
+    const auto thumb = remod::preview_image(g, remod::preview_values(g, tmp.path), lay, tmp.path, 256, load);
+    REQUIRE(thumb);
+    CHECK(px(thumb->image, 5, 5)[2] == 255);
     remod::set_image_ai({});
 }

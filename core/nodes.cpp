@@ -1023,16 +1023,10 @@ std::vector<InputSpec> ai_settings_inputs(const char* avoid) {
                                   "%.0f s"))};
 }
 
-// Runs the AI on `original` (the picture in `image_file`) where `mask` is white (everywhere without one), then puts its
-// picture back through the mask with the original's alpha, and writes the result (write_image). The fields negative,
-// strength, seed, steps, cfg, work_size, timeout and feather are the block's. Kept in the run cache by everything that
-// decides it (a fixed seed gives the same picture), and reused.
-void generate_and_blend(NodeRun& r, const fs::path& image_file, Bgra original, const std::optional<Bgra>& mask,
-                        const std::string& prompt, const std::string& what) {
-    GenerateJob job{.image = original, .mask = mask, .prompt = prompt, .negative = r.text("negative"),
-                    .strength = number(r, "strength") / 100, .seed = static_cast<long long>(number(r, "seed")),
-                    .steps = int(number(r, "steps")), .cfg = number(r, "cfg"),
-                    .work_side = unsigned(number(r, "work_size"))};
+// The AI's picture for `job`, run by sd-cli or reused from the run cache: `key` is everything of the block that decides
+// it (a fixed seed gives the same picture); the tool, model and VAE are added. Sets the state "generated" (the cache
+// file, for the thumbnail) and `how` ("generated in N s" / "unchanged: reused ...").
+Bgra cached_ai_picture(NodeRun& r, const GenerateJob& job, std::string key, std::string& how) {
     const ImageAi& ai = image_ai();
     fs::path exe;
     try {
@@ -1040,15 +1034,10 @@ void generate_and_blend(NodeRun& r, const fs::path& image_file, Bgra original, c
     } catch (const ImageAiError& e) {
         throw GraphError(e.what());
     }
-    std::string key = "ai2|" + file_bytes(image_file) + '\0' +
-                      (mask ? std::string(mask->pixels.begin(), mask->pixels.end()) : "") + '\0' + job.prompt + '\0' +
-                      job.negative;
-    for (const char* n : {"strength", "seed", "steps", "cfg", "work_size"}) key += '\0' + r.text(n);
     key += '\0' + file_stamp_of(exe) + '\0' + file_stamp_of(ai.model) + '\0' + (ai.vae.empty() ? "" : file_stamp_of(ai.vae));
     const fs::path& cache = r.run.options.cache_dir;
     const fs::path made = cache.empty() ? fs::path() : cache / ("ai_" + hash_hex(key) + ".png");
     Bgra generated;
-    std::string how;
     if (std::error_code ec; !made.empty() && fs::is_regular_file(made, ec)) {
         generated = load_image(made);
         fs::last_write_time(made, fs::file_time_type::clock::now(), ec);
@@ -1077,6 +1066,24 @@ void generate_and_blend(NodeRun& r, const fs::path& image_file, Bgra original, c
         how = took;
     }
     r.set_state("generated", made.empty() ? "" : made.string());
+    return generated;
+}
+
+// Runs the AI on `original` (the picture in `image_file`) where `mask` is white (everywhere without one), then puts its
+// picture back through the mask with the original's alpha, and writes the result (write_image). The fields negative,
+// strength, seed, steps, cfg, work_size, timeout and feather are the block's.
+void generate_and_blend(NodeRun& r, const fs::path& image_file, Bgra original, const std::optional<Bgra>& mask,
+                        const std::string& prompt, const std::string& what) {
+    GenerateJob job{.image = original, .mask = mask, .prompt = prompt, .negative = r.text("negative"),
+                    .strength = number(r, "strength") / 100, .seed = static_cast<long long>(number(r, "seed")),
+                    .steps = int(number(r, "steps")), .cfg = number(r, "cfg"),
+                    .work_side = unsigned(number(r, "work_size"))};
+    std::string key = "ai2|" + file_bytes(image_file) + '\0' +
+                      (mask ? std::string(mask->pixels.begin(), mask->pixels.end()) : "") + '\0' + job.prompt + '\0' +
+                      job.negative;
+    for (const char* n : {"strength", "seed", "steps", "cfg", "work_size"}) key += '\0' + r.text(n);
+    std::string how;
+    const Bgra generated = cached_ai_picture(r, job, std::move(key), how);
     if (mask) {
         Bgra out = original;
         masked_blend(out, generated, *mask, number(r, "feather"), false);
@@ -1103,6 +1110,8 @@ InputSpec optional_image_input(const char* name, const char* label, const char* 
 constexpr const char* kAvoid = "blurry, text, watermark, low quality";
 constexpr const char* kCleanAvoid = "blurry, text, watermark, low quality, seam, edge, line, border, smudge, artifacts";
 constexpr const char* kCleanPrompt = "clean seamless surface, continuous with its surroundings, consistent detail";
+constexpr const char* kMaterialAvoid = "blurry, text, watermark, low quality, folds, wrinkles, shadow, perspective, "
+                                      "seam, border";
 
 NodeSpec generate_image_node() {
     std::vector<InputSpec> inputs{
@@ -1206,6 +1215,141 @@ NodeSpec ai_cleanup_node() {
                                             "seam to clean; link Spots to mark flaws"
                                           : "the Spots mask is all black: paint white on the flaws");
             generate_and_blend(r, image_file, edited, area, r.text("prompt"), ", in the cleanup area");
+        },
+        .preview = image_preview,
+    };
+}
+
+// Keeps only what an AI (or any edit) changed a lot (user, 2026-10-14: "only takes significant changes from the ai ...
+// avoiding softening the entire photo"), and shows where as a heat map: a hot spot is a flaw the step before left.
+std::string changes_message(const Changes& c, const Bgra& image) {
+    char text[200];
+    if (c.kept <= 0)
+        std::snprintf(text, sizeof text, "nothing changed more than typical (%.0f): kept as it was", c.typical);
+    else
+        std::snprintf(text, sizeof text, "kept %.0f%% of the changes, the biggest around x %u, y %u of %ux%u (typical "
+                      "change %.0f)", std::max(1.0, c.kept * 100), c.x, c.y, image.width, image.height, c.typical);
+    return text;
+}
+
+NodeSpec keep_changes_node() {
+    return {
+        .type = "KeepChanges",
+        .title = "Keep big changes",
+        .summary = "Compares a picture before and after an AI step (or any edit) and keeps the after only where it "
+                   "changed much more than it typically did: the AI's real fixes go through, its overall softening "
+                   "doesn't. Shows where as a heat map. The before's alpha is kept.",
+        .inputs = {image_input("before", "Before", "The picture before the change, e.g. AI cleanup's Edited image; the "
+                                                   "result has its size."),
+                   image_input("after", "After", "The changed picture (same size), e.g. AI cleanup's result."),
+                   number_input("above", "Above typical", "How much more than the typical change (of 255) a spot must "
+                                "change to be kept. Lower keeps more.", "10", 0, 255, "%.0f"),
+                   number_input("grow", "Grow", "Pixels each kept spot is widened by, so its edges come along.", "6", 0,
+                                64, "%.0f px"),
+                   number_input("feather", "Feather", "Pixels the kept spots' edges are softened over.", "3", 0, 64,
+                                "%.0f px"),
+                   {.name = "show_heat", .label = "Show the heat map", .type = Text, .widget = Widget::Checkbox,
+                    .hint = "The thumbnail shows where it changed most, red to yellow: a hot spot is a flaw the step "
+                            "before left (fix it there if you can)."},
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const fs::path& base_dir = r.run.options.base_dir;
+            Bgra before = load_image(clean_path(r.text("before"), base_dir));
+            const Bgra after = load_image(clean_path(r.text("after"), base_dir));
+            Changes c;
+            try {
+                c = big_changes(before, after, number(r, "above"), number(r, "grow"));
+            } catch (const std::runtime_error& e) {
+                throw GraphError(e.what());
+            }
+            const std::string message = changes_message(c, before);
+            masked_blend(before, after, c.mask, number(r, "feather"), false);
+            write_image(r, before, message);
+        },
+        .preview = image_preview,
+    };
+}
+
+// A material for a character's or prop's parts (CLAUDE.md §10 M4, the material path): img2img turns a texture sheet's
+// layout into mush, so the AI makes a plain, repeating picture of the material instead (sd-cli --circular), and Lay
+// material on puts it on the parts.
+NodeSpec make_material_node() {
+    std::vector<InputSpec> inputs{
+        {.name = "prompt", .label = "Prompt", .type = Text, .widget = Widget::Text, .required = true,
+         .hint = "The material, seen flat from above, e.g. seamless khaki canvas fabric texture, flat lay, top-down, "
+                 "evenly lit, fine twill weave."},
+        number_input("size", "Size", "The picture's width and height; it repeats, so its edges join.", "1024", 256,
+                     2048, "%.0f px"),
+        number_input("seed", "Seed", "Another number for another try.", "42", 0, 1e9f, "%.0f")};
+    for (InputSpec& in : ai_settings_inputs(kMaterialAvoid)) inputs.push_back(std::move(in));
+    inputs.push_back(save_to_input());
+    return {
+        .type = "MakeMaterial",
+        .title = "Make material (AI)",
+        .summary = "A picture of a material (fabric, leather, metal...) from your prompt, made by an AI model on your "
+                   "PC, that repeats without seams. Lay material on puts it on a character's or prop's parts. Uses the "
+                   "AI tool and model set in the Pipeline panel.",
+        .inputs = std::move(inputs),
+        .outputs = {{"image", Image, "material"}},
+        .state = {"generated"},
+        .family = Family::Source,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const unsigned size = unsigned(number(r, "size"));
+            const GenerateJob job{.image = Bgra{size, size, {}}, .tileable = true, .prompt = r.text("prompt"),
+                                  .negative = r.text("negative"), .seed = static_cast<long long>(number(r, "seed")),
+                                  .steps = int(number(r, "steps")), .cfg = number(r, "cfg"),
+                                  .work_side = unsigned(number(r, "work_size"))};
+            std::string key = "mat1|" + job.prompt + '\0' + job.negative;
+            for (const char* n : {"size", "seed", "steps", "cfg", "work_size"}) key += '\0' + r.text(n);
+            std::string how;
+            const Bgra made = cached_ai_picture(r, job, std::move(key), how);
+            write_image(r, made, how);
+        },
+        .preview = image_preview,
+    };
+}
+
+NodeSpec lay_material_node() {
+    return {
+        .type = "LayMaterial",
+        .title = "Lay material on",
+        .summary = "Puts a repeating material (Make material's, or any tileable picture) on a texture's parts: where "
+                   "the mask is white (a Mesh mask), the material repeated over the texture, with the texture's own "
+                   "folds, dirt and wear kept as shading. The texture's layout and alpha stay as they are.",
+        .inputs = {image_input("image", "Texture", "The texture's picture (Export image's), e.g. a character's colour "
+                                                   "texture at full size."),
+                   image_input("material", "Material", "A picture that repeats without seams, e.g. Make material's."),
+                   optional_image_input("mask", "Mask", "Optional: white where the material goes (Mesh mask of the "
+                                                        "parts). Empty: all of it."),
+                   number_input("scale", "Scale", "The material's size on the texture: larger makes its pattern "
+                                "bigger.", "100", 5, 1000, "%.0f%%"),
+                   number_input("shading", "Shading", "How much of the texture's folds, dirt and wear show on the "
+                                "material.", "100", 0, 200, "%.0f%%"),
+                   advanced(number_input("flatten", "Flatten", "Takes the material's own light and shadow out over this "
+                                         "many pixels, so only the texture's shading shows. 0: keep it.", "24", 0, 256,
+                                         "%.0f px")),
+                   advanced(number_input("feather", "Feather", "Pixels the mask's edge is softened over.", "2", 0, 64,
+                                         "%.0f px")),
+                   save_to_input()},
+        .outputs = {{"image", Image, "image"}},
+        .family = Family::Transform,
+        .thumbnail = true,
+        .run = [](NodeRun& r) {
+            const fs::path& base_dir = r.run.options.base_dir;
+            Bgra base = load_image(clean_path(r.text("image"), base_dir));
+            const Bgra material = load_image(clean_path(r.text("material"), base_dir));
+            const auto mask = optional_picture(r, "mask", base.width, base.height);
+            try {
+                lay_material(base, material, mask ? &*mask : nullptr, number(r, "scale") / 100, number(r, "flatten"),
+                             number(r, "shading") / 100, number(r, "feather"));
+            } catch (const std::runtime_error& e) {
+                throw GraphError(e.what());
+            }
+            write_image(r, base, mask ? "laid the material on, in the mask" : "laid the material on");
         },
         .preview = image_preview,
     };
@@ -3390,7 +3534,8 @@ const std::vector<NodeSpec>& node_specs() {
         load_tex(), files_in_folder(), streaming_copy_node(), export_image(), edit_image(), import_image(), save_tex(), adjust_colour_node(),
         resize_image_node(), overlay_image_node(), pick_channel_node(), merge_channels_node(), part_texture_node(),
         mesh_mask_node(),
-        mask_blend_node(), generate_image_node(), ai_cleanup_node(), replace_photo_node(),
+        mask_blend_node(), generate_image_node(), ai_cleanup_node(), keep_changes_node(), make_material_node(), lay_material_node(),
+        replace_photo_node(),
         preview_node(), export_movie_node(), edit_video_node(), replace_movie_node(), new_movie_node(), new_sound_node(), game_sound_node(), replace_sounds_node(),
         lua_script_node(), cutscene_node(), new_character_node(), name_pictures_node(), frame_pictures_node(),
         package_mod(),
@@ -3476,6 +3621,17 @@ const char* ai_note(std::string_view type) {
                       "redraws a band along the edit's edge so it blends in. 'spots' takes a painted mask of flaws. "
                       "Leave the prompt as it is unless the surface needs naming. Untested on character texture "
                       "sheets; fine on flat pictures. Same AI setup as Generate image."},
+        {"MakeMaterial", "The AI way for character and prop textures (texture sheets): a repeating picture of a "
+                         "material from a prompt alone (describe it flat, top-down, evenly lit), into Lay material on. "
+                         "Minutes per picture, reused when unchanged. Same AI setup as Generate image."},
+        {"LayMaterial", "Puts a material (Make material's) on a texture's parts keeping their folds and dirt: image = "
+                        "Export image of the full-size texture (Streaming copy's full), mask = Mesh mask of the parts' "
+                        "materials (Size of: that texture). Then Convert with streaming copy. Scale sets the "
+                        "pattern's size."},
+        {"KeepChanges", "After Generate image or AI cleanup: 'before' = the AI's input (through a Split), 'after' = "
+                        "its result; only the big changes (real fixes) go through, so the rest isn't softened. With "
+                        "show_heat true, its image is a heat map: hot spots are flaws an earlier step left, so fix "
+                        "them there if possible. Its message names the biggest change's place."},
         {"MergeChannels", "Put an edited or AI-made picture into an original's colour while keeping its alpha (data): "
                           "base = the original image, Colour from = the new picture. Required after any AI image "
                           "result that will replace a texture with packed channels."},
@@ -3812,6 +3968,45 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
                          text("invert").value_or("") == "true");
             return base;
         }
+        if (n->type == "MakeMaterial") {  // never generates: the last run's picture
+            const auto made = n->params.find("generated");
+            std::error_code ec;
+            if (made == n->params.end() || made->second.empty() || !fs::is_regular_file(made->second, ec))
+                return std::nullopt;
+            return load(made->second);
+        }
+        if (n->type == "LayMaterial") {
+            auto base = image("image");
+            const auto material = image("material");
+            const auto scale = number_of("scale"), flatten = number_of("flatten"), shading = number_of("shading"),
+                       feather = number_of("feather");
+            if (!base || !material || !scale || !flatten || !shading || !feather) return std::nullopt;
+            std::optional<Bgra> mask;
+            if (const auto t = text("mask"); source("mask") || (t && !t->empty())) {
+                auto m = image("mask");
+                if (!m) return std::nullopt;
+                mask = resize_image(m->image, base->image.width, base->image.height, Fit::Stretch);
+            }
+            // The material at its real size times Scale, on the shrunk texture: both pictures' own shrink counted.
+            lay_material(base->image, material->image, mask ? &*mask : nullptr,
+                         *scale / 100 * base->scale / material->scale, *flatten * base->scale, *shading / 100,
+                         *feather * base->scale);
+            return base;
+        }
+        if (n->type == "KeepChanges") {
+            auto before = image("before");
+            auto after = image("after");
+            const auto above = number_of("above"), grow = number_of("grow"), feather = number_of("feather");
+            if (!before || !after || !above || !grow || !feather) return std::nullopt;
+            if (after->image.width != before->image.width || after->image.height != before->image.height)
+                after->image = resize_image(after->image, before->image.width, before->image.height, Fit::Stretch);
+            Changes c = big_changes(before->image, after->image, *above, *grow * before->scale, before->scale);
+            if (text("show_heat").value_or("") == "true")
+                before->image = std::move(c.heat);
+            else
+                masked_blend(before->image, after->image, c.mask, *feather * before->scale, false);
+            return before;
+        }
         if (n->type == "GenerateImage" || n->type == "AiCleanup") {  // never generates: the last run's picture
             auto base = image("image");
             if (!base) return std::nullopt;
@@ -3820,9 +4015,10 @@ std::optional<ImagePreview> preview_image(const Graph& g, const RunValues& previ
                 if (!p) return std::nullopt;
                 return resize_image(p->image, w, h, Fit::Stretch);
             };
-            auto linked = [&](const char* input) {  // an optional image: only when one is given
-                const auto t = text(input);
-                return t && !t->empty() ? fit(image(input)) : std::nullopt;
+            auto linked = [&](const char* input) -> std::optional<Bgra> {  // an optional image: only when one is given
+                // A link counts even when its value is only known after a run (Export image without a file).
+                if (const auto t = text(input); !source(input) && (!t || t->empty())) return std::nullopt;
+                return fit(image(input));
             };
             std::optional<Bgra> mask;
             if (n->type == "AiCleanup") {  // its area, worked out on the thumbnail as the run does at full size

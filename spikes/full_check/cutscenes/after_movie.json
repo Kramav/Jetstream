@@ -1,0 +1,8 @@
+{
+  "schema_version": 0,
+  "name": "After the opening movie",
+  "length": 5.0,
+  "letterbox": 0.12,
+  "trigger": {"after": {"movie": "mva000"}, "once": "session"},
+  "subtitles": [{"t": 0.5, "until": 4.5, "text": "remod check: this started after the opening movie (mva000)"}]
+}

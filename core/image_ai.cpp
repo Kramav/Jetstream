@@ -71,17 +71,21 @@ Bgra generate_image(const ImageAi& ai, const GenerateJob& job, const fs::path& t
     const auto [w, h] = work_size(job.image.width, job.image.height, job.work_side);
     fs::create_directories(temp_dir);
     const fs::path in = temp_dir / "init.png", mask = temp_dir / "mask.png", out = temp_dir / "out.png";
-    Bgra init = resize_image(job.image, w, h, Fit::Stretch);
-    for (size_t i = 3; i < init.pixels.size(); i += 4) init.pixels[i] = 255;  // colour only: alpha is often data
-    save_png(in, init);
-    std::vector<std::wstring> args{L"-m", ai.model.wstring(), L"-i", in.wstring(), L"-o", out.wstring(),
+    std::vector<std::wstring> args{L"-m", ai.model.wstring(), L"-o", out.wstring(),
                                    L"-p", fs::path(job.prompt).wstring(), L"-W", std::to_wstring(w),
-                                   L"-H", std::to_wstring(h), L"--strength", number(std::clamp(job.strength, 0.f, 1.f)),
-                                   L"--seed", std::to_wstring(job.seed), L"--steps", std::to_wstring(job.steps),
-                                   L"--cfg-scale", number(job.cfg), L"--vae-tiling"};
+                                   L"-H", std::to_wstring(h), L"--seed", std::to_wstring(job.seed),
+                                   L"--steps", std::to_wstring(job.steps), L"--cfg-scale", number(job.cfg),
+                                   L"--vae-tiling"};
+    if (!job.image.pixels.empty()) {
+        Bgra init = resize_image(job.image, w, h, Fit::Stretch);
+        for (size_t i = 3; i < init.pixels.size(); i += 4) init.pixels[i] = 255;  // colour only: alpha is often data
+        save_png(in, init);
+        args.insert(args.end(), {L"-i", in.wstring(), L"--strength", number(std::clamp(job.strength, 0.f, 1.f))});
+    }
+    if (job.tileable) args.push_back(L"--circular");
     if (!job.negative.empty()) args.insert(args.end(), {L"-n", fs::path(job.negative).wstring()});
     if (!ai.vae.empty()) args.insert(args.end(), {L"--vae", ai.vae.wstring()});
-    if (job.mask) {
+    if (job.mask && !job.image.pixels.empty()) {
         save_png(mask, resize_image(*job.mask, w, h, Fit::Stretch));
         args.insert(args.end(), {L"--mask", mask.wstring()});
     }

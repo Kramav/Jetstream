@@ -1,0 +1,303 @@
+{
+  "links": [
+    {
+      "from": [
+        1,
+        "tex"
+      ],
+      "to": [
+        2,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        3,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        2,
+        "out"
+      ],
+      "to": [
+        10,
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "full"
+      ],
+      "to": [
+        4,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "out"
+      ],
+      "to": [
+        5,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        4,
+        "out"
+      ],
+      "to": [
+        6,
+        "size_of"
+      ]
+    },
+    {
+      "from": [
+        5,
+        "png"
+      ],
+      "to": [
+        8,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        7,
+        "image"
+      ],
+      "to": [
+        8,
+        "material"
+      ]
+    },
+    {
+      "from": [
+        6,
+        "image"
+      ],
+      "to": [
+        8,
+        "mask"
+      ]
+    },
+    {
+      "from": [
+        8,
+        "image"
+      ],
+      "to": [
+        9,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "out"
+      ],
+      "to": [
+        10,
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "out"
+      ],
+      "to": [
+        11,
+        "preview"
+      ]
+    },
+    {
+      "from": [
+        3,
+        "streaming"
+      ],
+      "to": [
+        10,
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "out9"
+      ],
+      "to": [
+        11,
+        "tex"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "out10"
+      ],
+      "to": [
+        11,
+        "tex"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "material": "",
+        "materials": "Pants_Mat",
+        "mesh": "{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797",
+        "texture": "",
+        "title": "Leon's trousers"
+      },
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "PartTexture"
+    },
+    {
+      "id": 2,
+      "params": {},
+      "pos": [
+        400.0,
+        37.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 3,
+      "params": {},
+      "pos": [
+        473.0,
+        0.0
+      ],
+      "type": "StreamingCopy"
+    },
+    {
+      "id": 4,
+      "params": {},
+      "pos": [
+        -231.0,
+        201.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 5,
+      "params": {
+        "png": ""
+      },
+      "pos": [
+        0.0,
+        178.0
+      ],
+      "type": "ExportImage"
+    },
+    {
+      "id": 6,
+      "params": {
+        "grow": "2",
+        "materials": "Pants_Mat",
+        "mesh": "{game}/_chainsaw/character/ch/cha0/cha000/00/cha000_00.mesh.221108797",
+        "save_to": "",
+        "size_of": "",
+        "title": "Where the trousers are"
+      },
+      "pos": [
+        0.0,
+        369.0
+      ],
+      "type": "MeshMask"
+    },
+    {
+      "id": 7,
+      "params": {
+        "cfg": "6",
+        "negative": "blurry, text, watermark, low quality, folds, wrinkles, shadow, perspective, seam, border",
+        "prompt": "seamless khaki canvas fabric texture, flat lay, top-down, evenly lit, fine twill weave, high detail",
+        "save_to": "",
+        "seed": "42",
+        "size": "1024",
+        "steps": "25",
+        "timeout": "1800",
+        "title": "Khaki canvas (change me)",
+        "work_size": "1024"
+      },
+      "pos": [
+        0.0,
+        555.0
+      ],
+      "type": "MakeMaterial"
+    },
+    {
+      "id": 8,
+      "params": {
+        "feather": "2",
+        "flatten": "24",
+        "image": "",
+        "mask": "",
+        "material": "",
+        "save_to": "",
+        "scale": "100",
+        "shading": "100"
+      },
+      "pos": [
+        479.0,
+        178.0
+      ],
+      "type": "LayMaterial"
+    },
+    {
+      "id": 9,
+      "params": {},
+      "pos": [
+        -73.0,
+        713.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 10,
+      "params": {
+        "in1": "",
+        "in2": "",
+        "in3": ""
+      },
+      "pos": [
+        0.0,
+        649.0
+      ],
+      "type": "custom:convert_with_streaming"
+    },
+    {
+      "id": 11,
+      "params": {
+        "author": "",
+        "description": "Leon's trousers in an AI-made khaki canvas",
+        "name": "Khaki trousers",
+        "out": "mods",
+        "replace": "true",
+        "version": "1.0"
+      },
+      "pos": [
+        503.0,
+        649.0
+      ],
+      "type": "PackageMod"
+    }
+  ],
+  "profile": "re4r",
+  "schema_version": 0
+}

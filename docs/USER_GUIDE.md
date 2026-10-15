@@ -624,9 +624,32 @@ A graphics card with 8 GB or more is best (tested on 12 GB).
 - Tick **Show the area** to see in the thumbnail, in red, what will be redrawn before you spend the minute or two.
 - Its prompt suits most surfaces. Naming the material helps, e.g. "worn wooden frame".
 
+**Keep big changes** keeps only an AI step's real fixes:
+- The AI softens every pixel it touches a little.
+- Link the picture before the AI step into **Before** and its result into **After**. The block keeps the After only
+  where it changed much more than usual (a gap filled, a leftover removed), and the Before everywhere else.
+- **Above typical** sets how much more counts. Lower keeps more of the AI's change, including more of its softening.
+- **Grow** widens each kept spot so its edges come along.
+- Tick **Show the heat map** to see in the thumbnail where the AI changed most, from red to yellow. A hot spot is a
+  flaw the step before left, worth fixing there if you can.
+- Its message names the place of the biggest change.
+
 **What it's for:** flat pictures, such as photos, paintings, documents and UI. **Not** character or prop textures:
 those are texture sheets (pieces laid out for the 3D model), and the AI turns their layout into mush, even at low
-strength.
+strength. For those, use a material instead (below).
+
+**A new material on a character's or prop's parts:**
+- **Make material (AI)** makes a picture of a material from your prompt alone, which repeats without seams. Describe
+  it flat: e.g. "seamless khaki canvas fabric texture, flat lay, top-down, evenly lit, fine twill weave".
+- **Lay material on** puts it on the texture where a **Mesh mask** of the parts is white. The material is repeated over
+  the texture, and the texture's own folds, dirt and wear stay on it as shading.
+  - **Scale** sets the pattern's size.
+  - **Shading** sets how much of the folds and dirt show.
+  - The layout and alpha stay as they are.
+- Example `24_a_new_material_on_a_character` puts a khaki canvas on Leon's trousers, both copies.
+- Known limits:
+  - The pattern runs the same way on every piece of the sheet, so where two pieces meet on the model it can jump.
+  - Dirt keeps its brightness, not its colour.
 
 ## Letting an AI build graphs (optional)
 

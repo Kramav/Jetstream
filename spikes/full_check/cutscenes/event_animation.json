@@ -1,0 +1,23 @@
+{
+  "schema_version": 0,
+  "name": "Event animation check",
+  "length": 12.0,
+  "start": {"key": "F11"},
+  "letterbox": 0.12,
+  "actors": [{"name": "luis", "puppet": "luis", "offset": [0.8, 0.0, 2.0]}],
+  "animation_files": [
+    {"actor": "luis", "file": "_Chainsaw/Event/cs/csa012/csa012_s00/chara/cha300_00/cha300_00.motlist", "bank": 9000},
+    {"actor": "player", "file": "_Chainsaw/Event/cs/csa012/csa012_s00/chara/cha000_00/cha000_00.motlist", "bank": 9001}
+  ],
+  "motions": [
+    {"t": 0.5, "actor": "luis", "bank": 9000, "motion": 3},
+    {"t": 0.5, "actor": "player", "bank": 9001, "motion": 3},
+    {"t": 6.0, "actor": "luis", "bank": 9000, "motion": 5},
+    {"t": 6.0, "actor": "player", "bank": 9001, "motion": 5}
+  ],
+  "subtitles": [
+    {"t": 0.5, "until": 5.5, "text": "remod check: csa012 cut 3 on Luis and Leon"},
+    {"t": 6.0, "until": 11.5, "text": "remod check: csa012 cut 5 on Luis and Leon"}
+  ],
+  "fades": [{"t": 11.5, "until": 12.0, "from": 0.0, "to": 1.0}]
+}

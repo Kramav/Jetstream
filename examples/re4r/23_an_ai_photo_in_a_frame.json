@@ -76,16 +76,6 @@
         "image"
       ],
       "to": [
-        8,
-        "image"
-      ]
-    },
-    {
-      "from": [
-        8,
-        "image"
-      ],
-      "to": [
         9,
         "in"
       ]
@@ -96,7 +86,47 @@
         "out"
       ],
       "to": [
+        8,
+        "image"
+      ]
+    },
+    {
+      "from": [
+        9,
+        "out"
+      ],
+      "to": [
         10,
+        "before"
+      ]
+    },
+    {
+      "from": [
+        8,
+        "image"
+      ],
+      "to": [
+        10,
+        "after"
+      ]
+    },
+    {
+      "from": [
+        10,
+        "image"
+      ],
+      "to": [
+        11,
+        "in"
+      ]
+    },
+    {
+      "from": [
+        11,
+        "out"
+      ],
+      "to": [
+        12,
         "image"
       ]
     },
@@ -106,27 +136,27 @@
         "out"
       ],
       "to": [
-        10,
+        12,
         "original"
       ]
     },
     {
       "from": [
-        10,
+        12,
         "tex"
       ],
       "to": [
-        11,
+        13,
         "tex"
       ]
     },
     {
       "from": [
-        9,
+        11,
         "out"
       ],
       "to": [
-        11,
+        13,
         "preview"
       ]
     }
@@ -264,22 +294,49 @@
       "id": 9,
       "params": {},
       "pos": [
-        202.0,
-        534.0
+        -94.0,
+        659.0
       ],
       "type": "Split"
     },
     {
       "id": 10,
-      "params": {},
+      "params": {
+        "above": "10",
+        "after": "",
+        "before": "",
+        "feather": "3",
+        "grow": "6",
+        "save_to": "",
+        "show_heat": "",
+        "title": "Only the real fixes"
+      },
       "pos": [
         441.0,
         561.0
       ],
-      "type": "SaveTex"
+      "type": "KeepChanges"
     },
     {
       "id": 11,
+      "params": {},
+      "pos": [
+        -243.0,
+        845.0
+      ],
+      "type": "Split"
+    },
+    {
+      "id": 12,
+      "params": {},
+      "pos": [
+        0.0,
+        766.0
+      ],
+      "type": "SaveTex"
+    },
+    {
+      "id": 13,
       "params": {
         "author": "",
         "description": "An AI-made old photograph in place of an old photo",
@@ -289,7 +346,7 @@
         "version": "1.0"
       },
       "pos": [
-        0.0,
+        498.0,
         766.0
       ],
       "type": "PackageMod"

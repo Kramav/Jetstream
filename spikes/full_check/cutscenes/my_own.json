@@ -1,0 +1,8 @@
+{
+  "schema_version": 0,
+  "name": "My own cutscene",
+  "length": 4.0,
+  "start": {"key": "F3"},
+  "letterbox": 0.12,
+  "subtitles": [{"t": 0.3, "until": 3.7, "text": "remod check: your own camera and spot"}]
+}

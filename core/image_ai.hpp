@@ -30,7 +30,9 @@ const ImageAi& image_ai();
 std::filesystem::path find_sd_cli(const std::filesystem::path& tool);
 
 struct GenerateJob {
-    Bgra image;                 // the picture to change (img2img: never text alone, CLAUDE.md §10 M4)
+    Bgra image;                 // the picture to change (img2img: never text alone for a texture, CLAUDE.md §10 M4);
+                                // no pixels: a new picture of its size from the prompt (a material swatch)
+    bool tileable = false;      // its edges continue on the opposite side (sd-cli --circular), for repeating
     std::optional<Bgra> mask;   // white = may change (inpainting); any size, stretched to the image's
     std::string prompt, negative;
     float strength = 0.6f;      // 0..1: how far from the image it may go

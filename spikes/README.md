@@ -8,6 +8,7 @@ callbacks (`re.on_frame`, `re.on_pre_application_entry`) are fine. (The user upd
 
 | Spike | Answers | Guide | Status |
 |---|---|---|---|
+| Full check | Everything left to check by eye or in game, in one pass: the release zip, the app, textures, movies, sounds, cutscenes (the parked ones too), scripts, Fluffy's uninstall | [full_check.md](full_check.md) (pack: `make_full_check.py`) | Ready 2026-10-14 |
 | Movie probe | Can Lua start the game's movie player on our video? (M3 route 2) | [movie_probe.md](movie_probe.md) | Run 2026-10-07: data captured; the game then crashed (old REFramework, see the guide) |
 | New movie probe | Our movie under a new movie id, in a cinematic state (paused, player locked, state unchanged after) (M3 route 2) | [new_movie_probe.md](new_movie_probe.md) | Done 2026-10-07 (run 3): our movie under a new id plays in the cinematic state; everything in [docs/re4r_movies.md](../docs/re4r_movies.md) |
 | Trigger test | Cutscenes that start by themselves: the Now line, example 18's spot, Make a trigger here + Use trigger | [trigger_test.md](trigger_test.md) | Run 2026-10-08: example 18 started by itself; your own spot (part 2) not tried yet. Part 3 (talking to the merchant, story flags, after the game's cutscene, once per save) ready |

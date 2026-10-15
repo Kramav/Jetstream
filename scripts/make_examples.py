@@ -575,7 +575,8 @@ g.save('22_replace_movies_from_a_folder.json')
 
 # 23. AI (CLAUDE.md §10 M4): your picture made into an old photograph by an AI model on your graphics card, then put in
 # an old photo frame as example 3 does (Replace photo: the frame untouched, the old photo's toning and ageing kept), then
-# AI cleanup redraws the seam where the new photo meets the frame.
+# AI cleanup redraws the seam where the new photo meets the frame, and Keep big changes lets only its real fixes through
+# (its overall softening doesn't).
 # Needs the AI tool and model set in the Pipeline panel. Not on a character texture: the AI turns a texture sheet's
 # layout into mush (spike 2026-10-13).
 g = Graph()
@@ -588,15 +589,54 @@ ai = g.add('GenerateImage', 'Make it an old photograph',
 photo = g.add('ReplacePhoto', picture_y=GAMES[game]['photo_y'])
 frame = g.add('Split')
 clean = g.add('AiCleanup', 'Clean the seam', prompt='old photograph in a worn dark wooden frame, seamless edge')
+replaced = g.add('Split')
+keep = g.add('KeepChanges', 'Only the real fixes')
 g.link(src, port, export, 'tex')
 g.link(picture, 'image', ai, 'image')
 g.link(export, 'png', frame, 'in')
 g.link(frame, 'out', photo, 'frame')
 g.link(frame, 'out', clean, 'original')
 g.link(ai, 'image', photo, 'picture')
-g.link(photo, 'image', clean, 'image')
-finish(clean, 'My AI photo', 'An AI-made old photograph in place of an old photo')
+g.link(photo, 'image', replaced, 'in')
+g.link(replaced, 'out', clean, 'image')
+g.link(replaced, 'out', keep, 'before')
+g.link(clean, 'image', keep, 'after')
+finish(keep, 'My AI photo', 'An AI-made old photograph in place of an old photo')
 g.save('23_an_ai_photo_in_a_frame.json')
+
+# 24. AI on a character (CLAUDE.md §10 M4, the material path): the AI can't repaint a texture sheet (its layout turns
+# to mush), so Make material makes a repeating picture of a material from the prompt alone, and Lay material on puts it
+# on the trousers' parts (Mesh mask), keeping the original's folds, dirt and wear; both copies written.
+g = Graph()
+texture = g.add('PartTexture', "Leon's trousers", mesh=LEON, materials='Pants_Mat')
+split = g.add('Split')
+stream = g.add('StreamingCopy')
+full = g.add('Split')
+export = g.add('ExportImage')
+mask = g.add('MeshMask', 'Where the trousers are', mesh=LEON, materials='Pants_Mat')
+material = g.add('MakeMaterial', 'Khaki canvas (change me)',
+                 prompt='seamless khaki canvas fabric texture, flat lay, top-down, evenly lit, fine twill weave, '
+                        'high detail')
+lay = g.add('LayMaterial')
+lsplit = g.add('Split')
+convert = g.add('custom:convert_with_streaming')
+pkg = package(g, 'Khaki trousers', "Leon's trousers in an AI-made khaki canvas")
+g.link(texture, 'tex', split, 'in')
+g.link(split, 'out', stream, 'tex')
+g.link(split, 'out', convert, 'in2')
+g.link(stream, 'full', full, 'in')
+g.link(full, 'out', export, 'tex')
+g.link(full, 'out', mask, 'size_of')
+g.link(export, 'png', lay, 'image')
+g.link(material, 'image', lay, 'material')
+g.link(mask, 'image', lay, 'mask')
+g.link(lay, 'image', lsplit, 'in')
+g.link(lsplit, 'out', convert, 'in1')
+g.link(lsplit, 'out', pkg, 'preview')
+g.link(stream, 'streaming', convert, 'in3')
+g.link(convert, 'out9', pkg, 'tex')
+g.link(convert, 'out10', pkg, 'tex')
+g.save('24_a_new_material_on_a_character.json')
 
 
 # Sample pictures: a picture to put in a frame, and a logo with transparency.
